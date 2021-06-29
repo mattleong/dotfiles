@@ -47,8 +47,8 @@ gl() {
 }
 
 # git
-alias gs='git status -sbu'
-alias ga='git add -A'
+alias gs='git status -sb'
+alias ga='git add -u'
 alias gd='git diff'
 alias gds='git diff --stat'
 alias gca='git commit --amend'
@@ -57,8 +57,6 @@ alias glg='git log --graph --abbrev-commit --decorate --format=format:"%C(bold b
 gc() {
 	git commit -m "$1"
 }
-
-alias dots='git --work-tree=$HOME/.config'
 
 # mcd: Makes new directory and jumps into it
 mcd () { mkdir -p "$1" && cd "$1"; }
