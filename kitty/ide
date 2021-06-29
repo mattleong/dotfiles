@@ -1,0 +1,3 @@
+#!/bin/bash
+
+kitty --session=/home/mrchu001/.config/kitty/ide.conf --detach
