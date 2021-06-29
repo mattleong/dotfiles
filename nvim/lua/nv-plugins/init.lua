@@ -78,6 +78,13 @@ packer.startup(
 			end
 		}
 
+		use {
+			'rmagatti/auto-session',
+			config = function()
+				require('auto-session').setup()
+			end,
+		}
+
 		-- autocomplete/ide
 		use {'neoclide/coc.nvim', branch = 'release'}
 
