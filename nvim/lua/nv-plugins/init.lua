@@ -78,10 +78,13 @@ packer.startup(
 			end
 		}
 
+		-- session management
 		use {
 			'rmagatti/auto-session',
 			config = function()
-				require('auto-session').setup()
+				require('auto-session').setup {
+					pre_save_cmds = {'call MaybeCloseCocExplorer()'},
+				}
 			end,
 		}
 
