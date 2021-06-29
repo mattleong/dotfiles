@@ -8,7 +8,7 @@ function! MaybeCloseCocExplorer()
 endfunction
 
 "coc-explorer
-nnoremap <C-n> :CocCommand explorer<CR>
+" nnoremap <C-n> :CocCommand explorer<CR>
 
 " Use `[g` and `]g` to navigate diagnostics
 nmap <silent> [g <Plug>(coc-diagnostic-prev)

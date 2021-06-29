@@ -16,6 +16,9 @@ packer.startup(
 	function()
 		use 'wbthomason/packer.nvim'
 
+		use 'kyazdani42/nvim-web-devicons' -- for file icons
+		use 'kyazdani42/nvim-tree.lua'
+
 		-- lang stuff
 		use {
 			'nvim-treesitter/nvim-treesitter',
@@ -83,7 +86,7 @@ packer.startup(
 			'rmagatti/auto-session',
 			config = function()
 				require('auto-session').setup {
-					pre_save_cmds = {'call MaybeCloseCocExplorer()'},
+					pre_save_cmds = {'NvimTreeClose'},
 				}
 			end,
 		}
@@ -104,4 +107,5 @@ packer.startup(
 
 require('nv-plugins.nv-treesitter')
 require('nv-plugins.nv-floatterm')
+require("nv-plugins.nv-nvimtree")
 cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'
