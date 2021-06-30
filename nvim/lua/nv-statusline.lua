@@ -119,7 +119,12 @@ local BracketProvider = function(icon, condition)
 	end
 end
 
-galaxy.short_line_list = { 'coc-explorer', 'packer' }
+galaxy.short_line_list = {
+	'packer',
+	'NvimTree',
+	'fugitive',
+    'fugitiveblame',
+}
 
 gls.left = {
 	{

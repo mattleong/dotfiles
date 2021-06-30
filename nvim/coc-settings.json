@@ -1,5 +1,11 @@
 {
-	"explorer.icon.enableNerdfont": true,
+	"diagnostic.enableSign": true,
+	"diagnostic.enableHighlightLineNumber": true,
+	"coc.preferences.highlightTimeout": 5000,
+	"diagnostic.errorSign": "",
+	"diagnostic.warningSign": "",
+	"diagnostic.infoSign": "",
+	"diagnostic.hintSign": "",
 	"suggest.completionItemKindLabels": {
 		"keyword":  "\uf1de", //  sliders
 		"variable": "\ue79b", //  isometric box
@@ -27,5 +33,5 @@
 		"snippet": "\ue60b", //  pair of curly braces
 		"typeParameter": "\uf728", //  file presentation box
 		"default": "\uf29c" //  question mark in circle
-	},
+	}
 }

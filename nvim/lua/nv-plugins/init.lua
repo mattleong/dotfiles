@@ -41,14 +41,6 @@ packer.startup(
 			requires = {'kyazdani42/nvim-web-devicons', opt = true},
 		}
 
-		use {
-			'wadackel/vim-dogrun',
-			config = function()
-				vim.cmd 'color dogrun'
-				vim.cmd 'highlight Normal guibg=none'
-			end,
-		}
-
 		-- floating terminal
 		use {
 			'voldikss/vim-floaterm',
@@ -92,7 +84,7 @@ packer.startup(
 		}
 
 		-- autocomplete/ide
-		use {'neoclide/coc.nvim', branch = 'release'}
+		use { 'neoclide/coc.nvim', branch = 'release' }
 
 		-- colorized hex codes
 		use {
@@ -100,6 +92,14 @@ packer.startup(
 			config = function()
 				require'colorizer'.setup()
 			end
+		}
+
+		use {
+			'wadackel/vim-dogrun',
+			config = function()
+				vim.cmd 'color dogrun'
+				vim.cmd 'highlight Normal guibg=none'
+			end,
 		}
 
 	end
