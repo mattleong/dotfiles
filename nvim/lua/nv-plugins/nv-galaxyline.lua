@@ -62,15 +62,11 @@ local check_width_and_git_and_buffer = function()
 	return condition.hide_in_width() and condition.check_git_workspace() and condition.buffer_not_empty()
 end
 
-local check_git_and_buffer = function()
-	return condition.buffer_not_empty() and condition.check_git_workspace()
-end
-
 local check_git_and_width = function()
 	return condition.buffer_not_empty() and condition.hide_in_width()
 end
 
-local check_width_and_buffer = function()
+local check_buffer_and_width = function()
 	return condition.buffer_not_empty() and condition.hide_in_width()
 end
 
@@ -95,7 +91,7 @@ end
 local PercentProvider = function()
 	local line_column = fileinfo.current_line_percent()
 	line_column = line_column:gsub("%s+", "")
-	return '☰' .. line_column
+	return  line_column .. ' ☰'
 end
 
 local BracketProvider = function(icon, cond)
@@ -201,27 +197,28 @@ gls.left = {
 		FileIcon = {
 			provider = function()
 				local fileinfo = require('galaxyline.provider_fileinfo')
+				local icon = fileinfo.get_file_icon()
 				if condition.check_git_workspace() then
-					return ' ' .. fileinfo.get_file_icon()
+					return ' ' .. icon
 				end
 
-				return '  ' .. fileinfo.get_file_icon()
+				return '  ' .. icon
 			end,
-			condition = check_width_and_buffer,
+			condition = check_buffer_and_width,
 			highlight = 'GalaxyViModeInv',
 		},
 	},
 	{
 		FilePath = {
 			provider = FilePathShortProvider,
-			condition = check_width_and_buffer,
+			condition = check_buffer_and_width,
 			highlight = 'GalaxyViModeInv',
 		},
 	},
 	{
 		FileName = {
 			provider = 'FileName',
-			condition = check_width_and_buffer,
+			condition = check_buffer_and_width,
 			highlight = 'GalaxyViModeInv',
 			separator = icons.arrow_right_filled,
 			separator_highlight = 'GalaxyViModeNestedInv',
