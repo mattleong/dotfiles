@@ -35,6 +35,7 @@ local icons = {
 	info = '',
 	error = '',
 	branch = '',
+	file = '',
 }
 
 local get_mode = function()
@@ -61,6 +62,17 @@ local check_width_and_git_and_buffer = function()
 	return condition.hide_in_width() and condition.check_git_workspace() and condition.buffer_not_empty()
 end
 
+local check_git_and_buffer = function()
+	return condition.buffer_not_empty() and condition.check_git_workspace()
+end
+
+local check_git_and_width = function()
+	return condition.buffer_not_empty() and condition.hide_in_width()
+end
+
+local check_width_and_buffer = function()
+	return condition.buffer_not_empty() and condition.hide_in_width()
+end
 
 local FilePathShortProvider = function()
 	local fp = vim.fn.fnamemodify(vim.fn.expand '%', ':~:.:h')
@@ -133,21 +145,30 @@ gls.left = {
 		ViMode = {
 			provider = function()
 				local label, mode_color, mode_nested = unpack(get_mode())
-
 				highlight('GalaxyViMode', mode_color, mode_nested)
 				highlight('GalaxyViModeInv', mode_nested, mode_color)
 				highlight('GalaxyViModeNested', mode_nested, colors.bg)
 				highlight('GalaxyViModeNestedInv', colors.bg, mode_nested)
-				highlight('GalaxyBracket', colors.bg, mode_color)
+				highlight('GalaxyPercentBracket', colors.bg, mode_color)
 
+				highlight('GalaxyGitLCBracket', mode_nested, mode_color)
+
+				if condition.buffer_not_empty() then
+					highlight('GalaxyViModeBracket', mode_nested, mode_color)
+				else
+					if condition.check_git_workspace() then
+						highlight('GalaxyGitLCBracket', colors.bg, mode_color)
+					end
+					highlight('GalaxyViModeBracket', colors.bg, mode_color)
+				end
 				return '  ' .. label .. ' '
 			end,
 		},
 	},
 	{
-		ViModeRightBracket = {
+		ViModeBracket = {
 			provider = BracketProvider(icons.arrow_right_filled, true),
-			highlight = 'GalaxyViModeInv',
+			highlight = 'GalaxyViModeBracket',
 		},
 	},
 	{
@@ -172,28 +193,35 @@ gls.left = {
 			end,
 			condition = check_width_and_git_and_buffer,
 			highlight = 'GalaxyViModeInv',
-			separator = icons.arrow_right .. ' ',
+			separator = icons.arrow_right,
 			separator_highlight = 'GalaxyViModeInv',
 		}
 	},
 	{
 		FileIcon = {
-			provider = 'FileIcon',
-			condition = check_width_and_git_and_buffer,
+			provider = function()
+				local fileinfo = require('galaxyline.provider_fileinfo')
+				if condition.check_git_workspace() then
+					return ' ' .. fileinfo.get_file_icon()
+				end
+
+				return '  ' .. fileinfo.get_file_icon()
+			end,
+			condition = check_width_and_buffer,
 			highlight = 'GalaxyViModeInv',
 		},
 	},
 	{
 		FilePath = {
 			provider = FilePathShortProvider,
-			condition = check_width_and_git_and_buffer,
+			condition = check_width_and_buffer,
 			highlight = 'GalaxyViModeInv',
 		},
 	},
 	{
 		FileName = {
 			provider = 'FileName',
-			condition = check_width_and_git_and_buffer,
+			condition = check_width_and_buffer,
 			highlight = 'GalaxyViModeInv',
 			separator = icons.arrow_right_filled,
 			separator_highlight = 'GalaxyViModeNestedInv',
@@ -304,6 +332,7 @@ gls.right = {
 		DiagnosticInfo = {
 			provider = function()
 				local info_result = diag.get_diagnostic_info()
+				local label, mode_color, mode_nested = unpack(get_mode())
 				highlight('DiagnosticInfo', colors.info, colors.bg)
 				highlight('DiagnosticInfoInv', colors.bg, colors.info)
 
@@ -328,14 +357,15 @@ gls.right = {
 	{
 		GitBranchRightBracket = {
 			provider = BracketProvider(icons.arrow_left_filled, true),
+			condition = check_git_and_width,
 			highlight = 'GalaxyViModeNestedInv',
 		}
 	},
 	{
 		GitRoot = {
 			provider = utils.get_git_root,
-			condition = condition.buffer_not_empty,
-			icon = '   ',
+			condition = check_git_and_width,
+			icon = '  '.. icons.file .. ' ',
 			highlight = 'GalaxyViModeInv',
 		},
 	},
@@ -347,7 +377,7 @@ gls.right = {
 			},
 			highlight = 'GalaxyViMode',
 			separator = icons.arrow_left_filled,
-			separator_highlight = 'GalaxyViModeInv',
+			separator_highlight = 'GalaxyGitLCBracket',
 		}
 	},
 	{
@@ -363,12 +393,30 @@ gls.right = {
 	{
 		PercentRightBracket = {
 			provider = BracketProvider(icons.rounded_right_filled, true),
-			highlight = 'GalaxyBracket',
+			highlight = 'GalaxyPercentBracket',
 		},
 	},
 }
 
 gls.short_line_left = {
+	{
+		GhostLeftBracketShort = {
+			provider = BracketProvider(icons.rounded_left_filled, true),
+			highlight = { colors.white, colors.bg }
+		}
+	},
+	{
+		GhostShort = {
+			provider = BracketProvider(icons.ghost, true),
+			highlight = { colors.bg, colors.white },
+		},
+	},
+	{
+		GhostRightBracketShort = {
+			provider = BracketProvider(icons.rounded_right_filled, true),
+			highlight = { colors.white, colors.bg }
+		}
+	},
 	{
 		FileIconShort = {
 			provider = {
@@ -402,20 +450,22 @@ gls.short_line_right = {
 	{
 		GitRootShortLeftBracket = {
 			provider = BracketProvider(icons.arrow_left_filled, true),
-			highlight = 'GalaxyGitRootShortInv'
+			condition = condition.buffer_not_empty,
+			highlight = 'GalaxyGitRootShortInv',
 		}
 	},
 	{
 		GitRootShort = {
 			provider = utils.get_git_root,
 			condition = condition.buffer_not_empty,
-			icon = '   ',
+			icon = '  '.. icons.file .. ' ',
 			highlight = { colors.bg, colors.white },
 		},
 	},
 	{
 		GitRootShortRightBracket = {
 			provider = BracketProvider(icons.rounded_right_filled, true),
+			condition = condition.buffer_not_empty,
 			highlight = 'GalaxyGitRootShortInv'
 		}
 	},
