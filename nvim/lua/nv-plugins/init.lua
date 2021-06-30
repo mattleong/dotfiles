@@ -36,9 +36,9 @@ packer.startup(
 		  'glepnir/galaxyline.nvim',
 			branch = 'main',
 			config = function()
-				require 'nv-statusline'
+				require 'nv-plugins.nv-galaxyline'
 			end,
-			requires = {'kyazdani42/nvim-web-devicons', opt = true},
+			requires = { 'kyazdani42/nvim-web-devicons', opt = true },
 		}
 
 		use {
@@ -53,7 +53,7 @@ packer.startup(
 		use {
 			'voldikss/vim-floaterm',
 			opt = true,
-			cmd = {'FloatermToggle', 'FloatermNew', 'FloatermSend'},
+			cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend' },
 			config = function()
 				vim.cmd 'hi FloatermBorder guibg=None'
 			end,
@@ -86,7 +86,7 @@ packer.startup(
 			'rmagatti/auto-session',
 			config = function()
 				require('auto-session').setup {
-					pre_save_cmds = {'NvimTreeClose'},
+					pre_save_cmds = { 'NvimTreeClose' },
 				}
 			end,
 		}
@@ -105,7 +105,8 @@ packer.startup(
 	end
 )
 
+require('nv-plugins.nv-fzf')
 require('nv-plugins.nv-treesitter')
-require('nv-plugins.nv-floatterm')
+require('nv-plugins.nv-floaterm')
 require("nv-plugins.nv-nvimtree")
 cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'

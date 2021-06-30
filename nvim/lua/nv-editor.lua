@@ -3,13 +3,12 @@ local opt = vim.opt
 local indent = 4
 
 cmd [[
-	syntax enable
 	filetype plugin indent on
 	autocmd BufWritePre * :%s/\s\+$//e
-	set termguicolors
 ]]
 
 -- misc
+opt.syntax = 'enable'
 opt.hidden = true
 opt.encoding = 'utf-8'
 opt.clipboard = 'unnamedplus'
@@ -62,7 +61,7 @@ opt.writebackup = false
 
 -- autocomplete
 opt.completeopt = { 'menuone', 'noinsert', 'noselect' }
-opt.shortmess = opt.shortmess + 'c'
+opt.shortmess = opt.shortmess + { c = true}
 
 -- perfomance
 opt.updatetime = 100

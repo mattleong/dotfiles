@@ -4,6 +4,7 @@ local diag = require('galaxyline.provider_diagnostic')
 local condition = require 'galaxyline.condition'
 local fileinfo = require('galaxyline.provider_fileinfo')
 local utils = require('nv-utils');
+local highlight = utils.highlight;
 
 local colors = {
 	brown = '#a9323d',
@@ -56,31 +57,14 @@ local get_mode = function()
 	end
 end
 
-local function split(str, sep)
-	local res = {}
-	for w in str:gmatch('([^' .. sep .. ']*)') do
-		if w ~= '' then
-			table.insert(res, w)
-		end
-	end
-	return res
-end
-
 local check_width_and_git_and_buffer = function()
 	return condition.hide_in_width() and condition.check_git_workspace() and condition.buffer_not_empty()
 end
 
-local highlight = function(group, bg, fg, gui)
-	if (gui ~= nil and gui ~= '') then
-		vim.api.nvim_command(string.format('hi %s guibg=%s guifg=%s gui=%s', group, bg, fg, gui))
-	else
-		vim.api.nvim_command(string.format('hi %s guibg=%s guifg=%s', group, bg, fg))
-	end
-end
 
 local FilePathShortProvider = function()
 	local fp = vim.fn.fnamemodify(vim.fn.expand '%', ':~:.:h')
-	local tbl = split(fp, '/')
+	local tbl = utils.split(fp, '/')
 	local len = #tbl
 
 	if len > 2 and tbl[1] ~= '~' then
@@ -121,8 +105,9 @@ end
 galaxy.short_line_list = {
 	'packer',
 	'NvimTree',
+	'floaterm',
 	'fugitive',
-    'fugitiveblame',
+	'fugitiveblame',
 }
 
 gls.left = {
