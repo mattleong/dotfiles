@@ -1,15 +1,3 @@
-"COC
-" close coc explorer if open
-function! MaybeCloseCocExplorer()
-	let opened = CocAction('runCommand', 'explorer.getNodeInfo', 'closest') is v:null
-	if opened == 0
-		:CocCommand explorer
-	endif
-endfunction
-
-"coc-explorer
-" nnoremap <C-n> :CocCommand explorer<CR>
-
 " Use `[g` and `]g` to navigate diagnostics
 nmap <silent> [g <Plug>(coc-diagnostic-prev)
 nmap <silent> ]g <Plug>(coc-diagnostic-next)
@@ -56,9 +44,6 @@ endfunction
 
 " Use <c-space> to trigger completion.
 inoremap <silent><expr> <c-space> coc#refresh()
-
-" Use auocmd to force lightline update.
-" autocmd User CocStatusChange,CocDiagnosticChange call lightline#update()
 
 " Remap <C-f> and <C-b> for scroll float windows/popups.
 if has('nvim-0.4.0') || has('patch-8.2.0750')

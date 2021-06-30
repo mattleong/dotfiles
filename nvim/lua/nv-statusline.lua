@@ -1,6 +1,5 @@
 local galaxy = require('galaxyline');
 local gls = galaxy.section
-local vcs = require('galaxyline.provider_vcs')
 local diag = require('galaxyline.provider_diagnostic')
 local condition = require 'galaxyline.condition'
 local fileinfo = require('galaxyline.provider_fileinfo')
@@ -103,14 +102,14 @@ local PercentProvider = function()
 	return '☰' .. line_column
 end
 
-local BracketProvider = function(icon, condition)
+local BracketProvider = function(icon, cond)
 	return function()
 		local result
 
-		if (condition == true or condition == false) then
-			result = condition
+		if (cond == true or cond == false) then
+			result = cond
 		else
-			result = condition()
+			result = cond()
 		end
 
 		if (result ~= nil and result ~= '') then
@@ -257,7 +256,6 @@ gls.right = {
 	{
 		DiagnosticError = {
 			provider = function()
-				local label, mode_color, mode_nested = unpack(get_mode())
 				local error_result = diag.get_diagnostic_error()
 				highlight('DiagnosticError', colors.error, colors.bg)
 				highlight('DiagnosticErrorInv', colors.bg, colors.error)
