@@ -55,7 +55,7 @@ packer.startup(
 			opt = true,
 			cmd = {'FloatermToggle', 'FloatermNew', 'FloatermSend'},
 			config = function()
-				vim.cmd 'hi FloatermNC guibg=gray'
+				vim.cmd 'hi FloatermBorder guibg=None'
 			end,
 		}
 
