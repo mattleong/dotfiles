@@ -7,7 +7,7 @@ if fn.empty(fn.glob(install_path)) > 0 then
 	cmd('!git clone https://github.com/wbthomason/packer.nvim ' .. install_path)
 end
 
-local packer = require('packer')
+local packer = require 'packer'
 local use = packer.use
 
 cmd [[packadd packer.nvim]]
@@ -28,17 +28,17 @@ packer.startup(
 				'windwp/nvim-ts-autotag',
 				-- Dynamically set commentstring based on cursor location in file
 				'JoosepAlviste/nvim-ts-context-commentstring',
-			}
+			},
 		}
 
 		-- theme stuff
 		use {
-		  'glepnir/galaxyline.nvim',
+			'glepnir/galaxyline.nvim',
 			branch = 'main',
-			config = function()
-				require 'nv-plugins.nv-galaxyline'
-			end,
-			requires = { 'kyazdani42/nvim-web-devicons', opt = true },
+			requires = {
+				'kyazdani42/nvim-web-devicons',
+				opt = true
+			},
 		}
 
 		use {
@@ -54,17 +54,12 @@ packer.startup(
 			'voldikss/vim-floaterm',
 			opt = true,
 			cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend' },
-			config = function()
-				vim.cmd 'hi FloatermBorder guibg=None'
-			end,
 		}
 
 		-- file management
 		use {
 			'junegunn/fzf',
-			run = function()
-				vim.fn['fzf#install']()
-			end
+			run = vim.fn['fzf#install']
 		}
 		use 'junegunn/fzf.vim'
 
@@ -92,7 +87,10 @@ packer.startup(
 		}
 
 		-- autocomplete/ide
-		use { 'neoclide/coc.nvim', branch = 'release' }
+		use {
+			'neoclide/coc.nvim',
+			branch = 'release',
+		}
 
 		-- colorized hex codes
 		use {
@@ -105,8 +103,9 @@ packer.startup(
 	end
 )
 
-require('nv-plugins.nv-fzf')
-require('nv-plugins.nv-treesitter')
-require('nv-plugins.nv-floaterm')
-require("nv-plugins.nv-nvimtree")
+require 'nv-plugins.nv-fzf'
+require 'nv-plugins.nv-treesitter'
+require 'nv-plugins.nv-nvimtree'
+require 'nv-plugins.nv-galaxyline'
+require 'nv-plugins.nv-floaterm'
 cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'
