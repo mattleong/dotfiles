@@ -99,6 +99,8 @@ packer.startup(
 		-- colorized hex codes
 		use {
 			'norcalli/nvim-colorizer.lua',
+			opt = true,
+			cmd = { 'ColorizerToggle', },
 			config = function()
 				require'colorizer'.setup()
 			end
