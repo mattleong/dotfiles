@@ -7,23 +7,22 @@ local utils = require('nv-utils');
 local highlight = utils.highlight;
 
 local colors = {
-	brown = '#a9323d',
-	aqua = '#5b9c9c',
-	beige = '#686765',
-	yellow = '#a8a384',
-	pink = '#9e619e',
-	green = '#63976f',
+	diffAdd = '#266d6a',
+	diffModified = '#bb7a61',
+	diffDeleted = '#914c54',
 	white = '#9ea3c0',
 	bg = '#111219',
-	blue = '#2A306E',
-	lightBlue = '#7176A9',
-	purple = '#5e3e5e',
-	lightPurple = '#917891',
+	blue = '#3d59a1',
+	lightBlue = '#889DD3',
+	purple = '#6039A6',
+	lightPurple = '#9d7cd8',
+	yellow = '#BA873D',
+	lightYellow = '#FFE7C5',
+	teal = '#23A68C',
+	lightTeal = '#A1D8CD',
 	info = '#5d8fac',
-	error = '#c2616b',
-	warn = '#c59f96',
-	teal = '#206E6E',
-	lightTeal = '#8FC4C4',
+	error = '#db4b4b',
+	warn = '#ff9e64',
 }
 
 local icons = {
@@ -44,15 +43,15 @@ local icons = {
 local get_mode = function()
 	local mode_colors = {
 		[110] = { 'NORMAL', colors.blue, colors.lightBlue },
-		[105] = { 'INSERT', colors.purple, colors.pink },
-		[99] = { 'COMMAND', colors.beige, colors.yellow },
-		[116] = { 'TERMINAL', colors.aqua, colors.info },
+		[105] = { 'INSERT', colors.purple, colors.lightPurple },
+		[99] = { 'COMMAND', colors.yellow, colors.lightYellow },
+		[116] = { 'TERMINAL', colors.blue, colors.lightBlue },
 		[118] = { 'VISUAL', colors.teal, colors.lightTeal, },
 		[22] = { 'V-BLOCK', colors.teal, colors.lightTeal, },
 		[86] = { 'V-LINE', colors.teal, colors.lightTeal, },
-		[82] = { 'REPLACE', colors.brown, colors.error, },
-		[115] = { 'SELECT', colors.brown, colors.error, },
-		[83] = { 'S-LINE', colors.brown, colors.error, },
+		[82] = { 'REPLACE', colors.error, colors.white, },
+		[115] = { 'SELECT', colors.error, colors.white, },
+		[83] = { 'S-LINE', colors.error, colors.white, },
 	}
 
 	local mode_data = mode_colors[vim.fn.mode():byte()]
@@ -231,7 +230,7 @@ gls.left = {
 			provider = 'DiffAdd',
 			icon = '  ',
 			condition = check_width_and_git_and_buffer,
-			highlight = { colors.green, colors.bg },
+			highlight = { colors.diffAdd, colors.bg },
 		},
 	},
 	{
@@ -239,7 +238,7 @@ gls.left = {
 			provider = 'DiffModified',
 			condition = check_width_and_git_and_buffer,
 			icon = '  ',
-			highlight = { colors.warn, colors.bg },
+			highlight = { colors.diffModified, colors.bg },
 		},
 	},
 	{
@@ -247,7 +246,7 @@ gls.left = {
 			provider = 'DiffRemove',
 			condition = check_width_and_git_and_buffer,
 			icon = '  ',
-			highlight = { colors.error, colors.bg },
+			highlight = { colors.diffDeleted, colors.bg },
 		},
 	},
 	{
