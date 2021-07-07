@@ -42,10 +42,17 @@ packer.startup(
 		}
 
 		use {
-			'wadackel/vim-dogrun',
+			'folke/tokyonight.nvim',
 			config = function()
-				vim.cmd 'color dogrun'
-				vim.cmd 'highlight Normal guibg=none'
+				vim.g.tokyonight_style = 'night'
+				vim.o.background = 'dark'
+				vim.cmd [[
+					color tokyonight
+					highlight Normal guibg=none
+					highlight NormalNC guibg=none
+					highlight SignColumn guibg=none
+					highlight NvimTreeNormal guibg=none
+				]]
 			end,
 		}
 
@@ -87,10 +94,7 @@ packer.startup(
 		}
 
 		-- autocomplete/ide
-		use {
-			'neoclide/coc.nvim',
-			branch = 'release',
-		}
+		use { 'neoclide/coc.nvim', branch = 'release', }
 
 		-- colorized hex codes
 		use {

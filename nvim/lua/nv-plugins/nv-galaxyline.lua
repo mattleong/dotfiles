@@ -199,7 +199,6 @@ gls.left = {
 	{
 		FileIcon = {
 			provider = function()
-				local fileinfo = require('galaxyline.provider_fileinfo')
 				local icon = fileinfo.get_file_icon()
 				if condition.check_git_workspace() then
 					return ' ' .. icon
@@ -332,7 +331,6 @@ gls.right = {
 		DiagnosticInfo = {
 			provider = function()
 				local info_result = diag.get_diagnostic_info()
-				local label, mode_color, mode_nested = unpack(get_mode())
 				highlight('DiagnosticInfo', colors.info, colors.bg)
 				highlight('DiagnosticInfoInv', colors.bg, colors.info)
 
