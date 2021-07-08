@@ -43,6 +43,7 @@ packer.startup(
 			'folke/tokyonight.nvim',
 			config = function()
 				vim.g.tokyonight_style = 'night'
+				vim.g.tokyonight_sidebars = { "qf", "floaterm", "terminal", "packer" }
 				vim.cmd 'color tokyonight'
 			end,
 		}
@@ -56,18 +57,19 @@ packer.startup(
 
 		use {
 			'nvim-telescope/telescope.nvim',
+			config = function()
+				require('telescope').setup {
+					defaults = {
+						-- Your defaults config goes in here
+						prompt_prefix = '🔍',
+					},
+				}
+			end,
 			requires = {
 				{'nvim-lua/popup.nvim'},
 				{'nvim-lua/plenary.nvim'}
 			},
 		}
-
-		-- file management
---		use {
---			'junegunn/fzf',
---			run = vim.fn['fzf#install']
---		}
---		use 'junegunn/fzf.vim'
 
 		-- git
 		use 'tpope/vim-fugitive'
