@@ -1,3 +1,4 @@
+local actions = require('telescope.actions')
 local map = require('nv-utils').map
 local M = {}
 
@@ -20,10 +21,26 @@ function M.init()
 		pickers ={
 			buffers = {
 				prompt_title = 'Search Buffers',
+				mappings = {
+					n = {
+						['d'] = actions.delete_buffer
+					}
+				}
 			},
 			find_files = {
 				prompt_title = 'Search Project',
-				find_command = {"rg", "--hidden", "--ignore", "--files", "--smart-case"},
+				find_command = {'rg', '--hidden', '--ignore', '--files', '--smart-case'},
+				mappings = {
+					n = {
+						['Q'] =  actions.smart_add_to_qflist + actions.open_qflist,
+						['q'] =  actions.smart_send_to_qflist + actions.open_qflist,
+						['<tab>'] = actions.toggle_selection + actions.move_selection_next,
+						['<s-tab>'] = actions.move_selection_previous,
+						['v'] =  actions.file_vsplit,
+						['s'] =  actions.file_split,
+						['<cr>'] = actions.file_edit,
+					}
+				}
 			}
 		},
 		extensions = {
