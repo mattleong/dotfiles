@@ -60,7 +60,7 @@ opt.backup = false
 opt.writebackup = false
 
 -- autocomplete
-opt.completeopt = { 'menuone', 'noinsert', 'noselect' }
+opt.completeopt = { 'menuone', 'noselect' }
 opt.shortmess = opt.shortmess + { c = true}
 
 -- perfomance

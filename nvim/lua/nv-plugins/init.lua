@@ -57,22 +57,6 @@ packer.startup(
 
 		use {
 			'nvim-telescope/telescope.nvim',
-			config = function()
-				require('telescope').setup {
-					defaults = {
-						prompt_prefix = '🔍 ',
-						selection_caret = '➜ ',
-					},
-					extensions = {
-						fzy_native = {
-							override_generic_sorter = false,
-							override_file_sorter = true,
-						},
-					},
-				}
-
-				require('telescope').load_extension('fzy_native')
-			end,
 			requires = {
 				{'nvim-lua/popup.nvim'},
 				{'nvim-lua/plenary.nvim'},
@@ -128,7 +112,7 @@ packer.startup(
 	end
 )
 
-require 'nv-plugins.nv-telescope'
+require 'nv-plugins.nv-telescope'.init()
 require 'nv-plugins.nv-treesitter'
 require 'nv-plugins.nv-nvimtree'
 require 'nv-plugins.nv-galaxyline'
