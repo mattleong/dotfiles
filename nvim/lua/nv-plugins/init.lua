@@ -60,14 +60,22 @@ packer.startup(
 			config = function()
 				require('telescope').setup {
 					defaults = {
-						-- Your defaults config goes in here
 						prompt_prefix = '🔍',
 					},
+					extensions = {
+						fzy_native = {
+							override_generic_sorter = false,
+							override_file_sorter = true,
+						},
+					},
 				}
+
+				require('telescope').load_extension('fzy_native')
 			end,
 			requires = {
 				{'nvim-lua/popup.nvim'},
-				{'nvim-lua/plenary.nvim'}
+				{'nvim-lua/plenary.nvim'},
+				{'nvim-telescope/telescope-fzy-native.nvim'}
 			},
 		}
 
@@ -76,9 +84,7 @@ packer.startup(
 		use 'tpope/vim-rhubarb'
 		use {
 			'lewis6991/gitsigns.nvim',
-			requires = {
-				'nvim-lua/plenary.nvim'
-			},
+			requires = { 'nvim-lua/plenary.nvim' },
 			config = function()
 				require('gitsigns').setup()
 			end
@@ -99,9 +105,9 @@ packer.startup(
 			opt = true,
 			cmd = { 'SearchSession' },
 			config = function()
-				require('session-lens').setup({
+				require('session-lens').setup {
 					shorten_path = true,
-				})
+				}
 			end
 		}
 
