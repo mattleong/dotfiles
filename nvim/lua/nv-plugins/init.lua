@@ -43,7 +43,7 @@ packer.startup(
 			'folke/tokyonight.nvim',
 			config = function()
 				vim.g.tokyonight_style = 'night'
-				vim.g.tokyonight_sidebars = { "qf", "floaterm", "terminal", "packer" }
+				vim.g.tokyonight_sidebars = { "qf", "packer" }
 				vim.cmd 'color tokyonight'
 			end,
 		}
@@ -92,6 +92,17 @@ packer.startup(
 					pre_save_cmds = { 'NvimTreeClose' },
 				}
 			end,
+		}
+		use {
+			'rmagatti/session-lens',
+			requires = {'rmagatti/auto-session', 'nvim-telescope/telescope.nvim'},
+			opt = true,
+			cmd = { 'SearchSession' },
+			config = function()
+				require('session-lens').setup({
+					shorten_path = true,
+				})
+			end
 		}
 
 		-- autocomplete/ide
