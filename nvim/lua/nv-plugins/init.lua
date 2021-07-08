@@ -54,12 +54,20 @@ packer.startup(
 			cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend' },
 		}
 
-		-- file management
 		use {
-			'junegunn/fzf',
-			run = vim.fn['fzf#install']
+			'nvim-telescope/telescope.nvim',
+			requires = {
+				{'nvim-lua/popup.nvim'},
+				{'nvim-lua/plenary.nvim'}
+			},
 		}
-		use 'junegunn/fzf.vim'
+
+		-- file management
+--		use {
+--			'junegunn/fzf',
+--			run = vim.fn['fzf#install']
+--		}
+--		use 'junegunn/fzf.vim'
 
 		-- git
 		use 'tpope/vim-fugitive'
@@ -100,7 +108,7 @@ packer.startup(
 	end
 )
 
-require 'nv-plugins.nv-fzf'
+require 'nv-plugins.nv-telescope'
 require 'nv-plugins.nv-treesitter'
 require 'nv-plugins.nv-nvimtree'
 require 'nv-plugins.nv-galaxyline'
