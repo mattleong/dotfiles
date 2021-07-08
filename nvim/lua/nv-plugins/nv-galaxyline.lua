@@ -7,19 +7,18 @@ local utils = require('nv-utils');
 local highlight = utils.highlight;
 
 local colors = {
+	white = '#9ea3c0',
+	bg = '#1f2335',
+	bg_highlight = '#292e42',
+	blue = '#7aa2f7',
+	blue1 = '#0db9d7',
+	purple = '#9d7cd8',
+	yellow = '#e0af68',
+	teal = '#1abc9c',
+	red = '#db4b4b',
 	diffAdd = '#266d6a',
 	diffModified = '#bb7a61',
 	diffDeleted = '#914c54',
-	white = '#9ea3c0',
-	bg = '#111219',
-	blue = '#3d59a1',
-	lightBlue = '#889DD3',
-	purple = '#6039A6',
-	lightPurple = '#9d7cd8',
-	yellow = '#BA873D',
-	lightYellow = '#FFE7C5',
-	teal = '#23A68C',
-	lightTeal = '#A1D8CD',
 	info = '#5d8fac',
 	error = '#db4b4b',
 	warn = '#ff9e64',
@@ -42,16 +41,16 @@ local icons = {
 
 local get_mode = function()
 	local mode_colors = {
-		[110] = { 'NORMAL', colors.blue, colors.lightBlue },
-		[105] = { 'INSERT', colors.purple, colors.lightPurple },
-		[99] = { 'COMMAND', colors.yellow, colors.lightYellow },
-		[116] = { 'TERMINAL', colors.blue, colors.lightBlue },
-		[118] = { 'VISUAL', colors.teal, colors.lightTeal, },
-		[22] = { 'V-BLOCK', colors.teal, colors.lightTeal, },
-		[86] = { 'V-LINE', colors.teal, colors.lightTeal, },
-		[82] = { 'REPLACE', colors.error, colors.white, },
-		[115] = { 'SELECT', colors.error, colors.white, },
-		[83] = { 'S-LINE', colors.error, colors.white, },
+		[110] = { 'NORMAL', colors.blue, colors.bg_highlight },
+		[105] = { 'INSERT', colors.teal, colors.bg_highlight },
+		[99] = { 'COMMAND', colors.blue1, colors.bg_highlight },
+		[116] = { 'TERMINAL', colors.blue, colors.bg_highlight },
+		[118] = { 'VISUAL', colors.purple, colors.bg_highlight, },
+		[22] = { 'V-BLOCK', colors.purple, colors.bg_highlight, },
+		[86] = { 'V-LINE', colors.purple, colors.bg_highlight, },
+		[82] = { 'REPLACE', colors.red, colors.bg_highlight, },
+		[115] = { 'SELECT', colors.red, colors.bg_highlight, },
+		[83] = { 'S-LINE', colors.red, colors.bg_highlight, },
 	}
 
 	local mode_data = mode_colors[vim.fn.mode():byte()]
@@ -448,7 +447,7 @@ gls.short_line_right = {
 		GitRootShortLeftBracket = {
 			provider = BracketProvider(icons.arrow_left_filled, true),
 			condition = condition.buffer_not_empty,
-			highlight = 'GalaxyGitRootShortInv',
+			highlight = { colors.white, colors.bg },
 		}
 	},
 	{
@@ -463,7 +462,7 @@ gls.short_line_right = {
 		GitRootShortRightBracket = {
 			provider = BracketProvider(icons.rounded_right_filled, true),
 			condition = condition.buffer_not_empty,
-			highlight = 'GalaxyGitRootShortInv'
+			highlight = { colors.white, colors.bg },
 		}
 	},
 }
