@@ -8,4 +8,5 @@
 - [x] Enable treesitter
 - [x] Choose theme (tokyonight)
 - [ ] Native LSP
+- [ ] Add screenshots to readme
 - [ ] Pick official name
