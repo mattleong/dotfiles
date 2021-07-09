@@ -2,7 +2,7 @@ local actions = require('telescope.actions')
 local map = require('nv-utils').map
 local M = {}
 
-local function init_mappings()
+local function set_telescope_mapping()
 	map('n', '<leader>f', ':lua require("telescope.builtin").find_files()<CR>', { noremap = true })
 	map('n', '<leader>k', ':lua require("telescope.builtin").buffers()<CR>', { noremap = true })
 	map('n', '<leader>s', ':lua require("telescope.builtin").live_grep()<CR>', { noremap = true })
@@ -62,7 +62,7 @@ function M.init()
 	}
 
 	require('telescope').load_extension('fzy_native')
-	init_mappings()
+	set_telescope_mapping()
 end
 
 return M
