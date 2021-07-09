@@ -50,6 +50,7 @@ function M.init()
 				mappings = normal_file_mappings,
 			},
 			live_grep = {
+				prompt_title = '✨ Live Grep ✨',
 				mappings = normal_file_mappings,
 			},
 		},
