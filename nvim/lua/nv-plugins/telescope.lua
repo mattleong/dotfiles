@@ -33,7 +33,7 @@ function M.init()
 		},
 		pickers ={
 			buffers = {
-				prompt_title = 'Search Buffers',
+				prompt_title = '✨ Search Buffers ✨',
 				mappings = {
 					n = {
 						['d'] = actions.delete_buffer
@@ -41,12 +41,12 @@ function M.init()
 				}
 			},
 			find_files = {
-				prompt_title = 'Search Project',
+				prompt_title = '✨ Search Project ✨',
 				find_command = {'rg', '--hidden', '--ignore', '--files', '--smart-case'},
 				mappings = normal_file_mappings,
 			},
 			git_files = {
-				prompt_title = 'Search Git Project',
+				prompt_title = '✨ Search Git Project ✨',
 				mappings = normal_file_mappings,
 			},
 			live_grep = {
