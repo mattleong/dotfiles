@@ -112,9 +112,9 @@ packer.startup(
 	end
 )
 
-require 'nv-plugins.nv-telescope'.init()
-require 'nv-plugins.nv-treesitter'
-require 'nv-plugins.nv-nvimtree'
-require 'nv-plugins.nv-galaxyline'
-require 'nv-plugins.nv-floaterm'
+require 'nv-plugins.telescope'.init()
+require 'nv-plugins.treesitter'
+require 'nv-plugins.nvimtree'
+require 'nv-plugins.galaxyline'
+require 'nv-plugins.floaterm'
 cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'
