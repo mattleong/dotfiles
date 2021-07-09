@@ -14,17 +14,15 @@ packer.startup(
 	function()
 		use 'wbthomason/packer.nvim'
 
-		use 'kyazdani42/nvim-web-devicons' -- for file icons
+		use 'kyazdani42/nvim-web-devicons'
 		use 'kyazdani42/nvim-tree.lua'
 
-		-- lang stuff
+		-- lang/syntax stuff
 		use {
 			'nvim-treesitter/nvim-treesitter',
 			run = ':TSUpdate',
 			requires = {
-				-- Automatically end & rename tags
 				'windwp/nvim-ts-autotag',
-				-- Dynamically set commentstring based on cursor location in file
 				'JoosepAlviste/nvim-ts-context-commentstring',
 			},
 		}
@@ -52,15 +50,15 @@ packer.startup(
 		use {
 			'voldikss/vim-floaterm',
 			opt = true,
-			cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend' },
+			cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend', },
 		}
 
 		use {
 			'nvim-telescope/telescope.nvim',
 			requires = {
-				{'nvim-lua/popup.nvim'},
-				{'nvim-lua/plenary.nvim'},
-				{'nvim-telescope/telescope-fzy-native.nvim'}
+				'nvim-lua/popup.nvim',
+				'nvim-lua/plenary.nvim',
+				'nvim-telescope/telescope-fzy-native.nvim'
 			},
 		}
 
@@ -86,7 +84,10 @@ packer.startup(
 		}
 		use {
 			'rmagatti/session-lens',
-			requires = {'rmagatti/auto-session', 'nvim-telescope/telescope.nvim'},
+			requires = {
+				'rmagatti/auto-session',
+				'nvim-telescope/telescope.nvim'
+			},
 			opt = true,
 			cmd = { 'SearchSession' },
 			config = function()
@@ -113,7 +114,7 @@ packer.startup(
 )
 
 require 'nv-plugins.telescope'.init()
-require 'nv-plugins.treesitter'
+require 'nv-plugins.treesitter'.init()
 require 'nv-plugins.nvimtree'
 require 'nv-plugins.galaxyline'
 require 'nv-plugins.floaterm'

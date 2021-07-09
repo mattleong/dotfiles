@@ -3,7 +3,6 @@ local map = require('nv-utils').map
 
 map('n', '<C-n>', ':NvimTreeToggle<CR>', { noremap = true })
 map('n', '<leader>r', ':NvimTreeRefresh<CR>', { noremap = true })
-map('n', '<leader>n', ':NvimTreeFindFile<CR>', { noremap = true })
 
 g.nvim_tree_disable_netrw = 0
 g.nvim_tree_add_trailing = 1
