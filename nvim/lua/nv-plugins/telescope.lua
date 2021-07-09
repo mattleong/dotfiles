@@ -42,7 +42,6 @@ function M.init()
 			},
 			find_files = {
 				prompt_title = '✨ Search Project ✨',
-				find_command = {'rg', '--hidden', '--ignore', '--files', '--smart-case'},
 				mappings = normal_file_mappings,
 			},
 			git_files = {
