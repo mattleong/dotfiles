@@ -5,8 +5,6 @@ export EDITOR=nvim
 
 export ZSH_CUSTOM=~/.zsh
 
-export DT_PATH="/home/mrchu001/dev/developer"
-
 # Set name of the theme to load.
 # Look in ~/.oh-my-zsh/themes/
 # Optionally, if you set this to "random", it'll load a random theme each
@@ -71,13 +69,7 @@ alias .5='cd ../../../../../'               # Go back 5 directory levels
 alias .6='cd ../../../../../../'            # Go back 6 directory levels
 alias c='clear'                             # c:            Clear
 
-export DEV_ENV_PATH=/home/mrchu001/dev/developer-ng
-export DEV_DEFAULT_STACK=wordpress
-source $DEV_ENV_PATH/dev.sh
-
-source $HOME/dev/developer/bash_functions
 export DENO_INSTALL="/home/mrchu001/.deno"
 export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin"
 
 source $ZSH/oh-my-zsh.sh
-
