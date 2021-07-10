@@ -29,7 +29,7 @@ function M.init()
 	require('telescope').setup {
 		defaults = {
 			prompt_prefix = '🔍 ',
-			selection_caret = '➜ ',
+			selection_caret = ' ',
 		},
 		pickers ={
 			buffers = {
