@@ -4,7 +4,7 @@ local map = require('nv-utils').map
 
 g.floaterm_width = 0.8
 g.floaterm_height = 0.8
-g.floaterm_title = '|🖥️  ($1/$2)|'
+g.floaterm_title = '|terminal ($1/$2)|'
 g.floaterm_opener = 'vsplit'
 
 cmd 'hi FloatermBorder guibg=None guifg=#3d59a1'
