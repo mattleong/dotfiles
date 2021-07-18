@@ -97,7 +97,8 @@ packer.startup(
 		}
 
 		-- autocomplete/ide
-		use { 'neoclide/coc.nvim', branch = 'release', }
+		use { 'neovim/nvim-lspconfig' }
+		use { 'hrsh7th/nvim-compe' }
 
 		-- colorized hex codes
 		use {
@@ -112,9 +113,9 @@ packer.startup(
 	end
 )
 
+require 'nv-plugins.lsp'
 require 'nv-plugins.telescope'.init()
 require 'nv-plugins.treesitter'.init()
 require 'nv-plugins.nvimtree'
 require 'nv-plugins.galaxyline'
 require 'nv-plugins.floaterm'
-cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'

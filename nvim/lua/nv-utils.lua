@@ -1,14 +1,11 @@
-local condition = require 'galaxyline.condition'
 local M = {}
-
-local scopes = {o = vim.o, b = vim.bo, w = vim.wo}
 
 local function get_basename(file)
 	return file:match '^.+/(.+)$'
 end
 
 function M.map(mode, lhs, rhs, opts)
-	local options = {noremap = true}
+	local options = {noremap = true, silent = true}
 	if opts then options = vim.tbl_extend('force', options, opts) end
 	vim.api.nvim_set_keymap(mode, lhs, rhs, options)
 end
