@@ -42,18 +42,18 @@ map('i', '<Tab>', 'v:lua.tab_complete()', { expr = true })
 map('s', '<Tab>', 'v:lua.tab_complete()', { expr = true })
 map('i', '<S-Tab>', 'v:lua.s_tab_complete()', { expr = true })
 map('s', '<S-Tab>', 'v:lua.s_tab_complete()', { expr = true })
--- map('i', '<CR>', "call compe#confirm('<CR>')", { expr = true })
+map('i', '<CR>', "compe#confirm('<CR>')", { expr = true })
 
 require'compe'.setup {
 	source = {
-		path = true;
-		buffer = true;
-		calc = true;
-		nvim_lsp = true;
-		nvim_lua = true;
-		vsnip = false;
-		ultisnips = false;
-		luasnip = false;
-		treesitter = false;
-	};
+		path = true,
+		nvim_lsp = true,
+		nvim_lua = true,
+		buffer = false,
+		calc = false,
+		vsnip = false,
+		ultisnips = false,
+		luasnip = false,
+		treesitter = false,
+	},
 }
