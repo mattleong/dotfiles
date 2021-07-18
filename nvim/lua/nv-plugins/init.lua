@@ -98,7 +98,9 @@ packer.startup(
 
 		-- autocomplete/ide
 		use { 'neovim/nvim-lspconfig' }
-		use { 'hrsh7th/nvim-compe' }
+		use {
+			'hrsh7th/nvim-compe',
+		}
 
 		-- colorized hex codes
 		use {
@@ -114,6 +116,7 @@ packer.startup(
 )
 
 require 'nv-plugins.lsp'
+require 'nv-plugins.compe'
 require 'nv-plugins.telescope'.init()
 require 'nv-plugins.treesitter'.init()
 require 'nv-plugins.nvimtree'
