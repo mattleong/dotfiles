@@ -30,6 +30,17 @@ function M.init()
 		defaults = {
 			prompt_prefix = '🔍 ',
 			selection_caret = ' ',
+			vimgrep_arguments = {
+				'rg',
+				'--ignore',
+				'--hidden',
+				'--color=never',
+				'--no-heading',
+				'--with-filename',
+				'--line-number',
+				'--column',
+				'--smart-case'
+			},
 		},
 		pickers ={
 			buffers = {
@@ -43,10 +54,12 @@ function M.init()
 			find_files = {
 				prompt_title = '✨ Search Project ✨',
 				mappings = normal_file_mappings,
+				hidden = true,
 			},
 			git_files = {
 				prompt_title = '✨ Search Git Project ✨',
 				mappings = normal_file_mappings,
+				hidden = true,
 			},
 			live_grep = {
 				prompt_title = '✨ Live Grep ✨',
