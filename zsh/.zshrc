@@ -39,9 +39,9 @@ alias v='nvim'
 gl() {
 	if [ $1 ] ; then
 		git log --oneline -"$1" ;
-	 else
+	else
 		git log --oneline -25
-	 fi
+	fi
 }
 
 # git
