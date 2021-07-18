@@ -46,7 +46,7 @@ gl() {
 
 # git
 alias gs='git status -sb'
-alias ga='git add -u'
+alias ga='git add -A'
 alias gd='git diff'
 alias gds='git diff --stat'
 alias gca='git commit --amend'
