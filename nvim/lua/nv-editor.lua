@@ -23,8 +23,10 @@ opt.smartindent = true
 opt.tabstop = indent
 opt.softtabstop = indent
 opt.shiftwidth = indent
+-- force tabs over spaces
+opt.expandtab = true
 
--- -- search
+-- search
 opt.wildmenu = true
 opt.ignorecase = true
 opt.smartcase = true
