@@ -21,14 +21,8 @@ plugins=(wd sudo fzf zsh-syntax-highlighting)
 DISABLE_UPDATE_PROMPT=true
 SAVEHIST=10000
 
-# asdf
-# source $HOME/.asdf/asdf.sh
-# source $HOME/.asdf/completions/asdf.bash
-
-# kitty
-# autoload -Uz compinit
-# compinit
-# kitty + complete setup zsh | source /dev/stdin
+# dots alias
+alias dots='/usr/bin/git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
 
 # neovim
 alias v='nvim'
