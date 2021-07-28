@@ -1,4 +1,4 @@
-let g:coc_global_extensions = ['coc-json', 'coc-tsserver', 'coc-phpls', 'coc-lua', 'coc-eslint', 'coc-html', 'coc-css', 'coc-prettier']
+let g:coc_global_extensions = ['coc-json', 'coc-tsserver', 'coc-phpls', 'coc-lua', 'coc-eslint', 'coc-html', 'coc-css', 'coc-prettier', 'coc-python']
 
 " Use `[g` and `]g` to navigate diagnostics
 nmap <silent> [g <Plug>(coc-diagnostic-prev)
@@ -12,8 +12,8 @@ nmap <silent> gr <Plug>(coc-references)
 nmap <silent> gn <Plug>(coc-rename)
 
 command! -nargs=0 Prettier :CocCommand prettier.formatFile
-vmap <leader>fs  <Plug>(coc-format-selected)
-nmap <leader>fs  <Plug>(coc-format-selected)
+" vmap <leader>fs  <Plug>(coc-format-selected)
+" nmap <leader>fs  <Plug>(coc-format-selected)
 
 function! s:show_documentation()
 	if (index(['vim','help'], &filetype) >= 0)

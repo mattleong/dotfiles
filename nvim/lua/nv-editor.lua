@@ -24,7 +24,7 @@ opt.tabstop = indent
 opt.softtabstop = indent
 opt.shiftwidth = indent
 -- force tabs over spaces
-opt.expandtab = true
+-- opt.expandtab = true
 
 -- search
 opt.wildmenu = true
@@ -46,6 +46,7 @@ opt.list = true
 opt.listchars = {
 	tab = '❘-',
 	trail = '·',
+	lead = '·',
 	extends = '»',
 	precedes = '«',
 	nbsp = '×'
