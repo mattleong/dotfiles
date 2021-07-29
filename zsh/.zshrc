@@ -23,9 +23,6 @@ plugins=(wd sudo fzf zsh-syntax-highlighting)
 DISABLE_UPDATE_PROMPT=true
 SAVEHIST=10000
 
-# dots alias
-alias dots='/usr/bin/git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
-
 # neovim
 alias v='nvim'
 
@@ -52,6 +49,40 @@ gc() {
 	git commit -m "$1"
 }
 
+if [[ -f "$HOME/.config/dotfiles/zsh/.env" ]]; then
+	source ~/.config/dotfiles/zsh/.env
+fi
+
+pw() {
+	case $1 in
+		mj)
+			if [[ $2 == "ssh" ]]; then
+				ssh -A -p 22 mleong@$MJ_PREPROD_IP
+			fi
+
+			if [[ $2 == "storybook" ]]; then
+				wd react-components
+				nvm use default
+				yarn storybook
+			fi
+		;;
+		mg)
+			if [[ $2 == "start" ]]; then
+				osascript \
+					-e 'tell application "iTerm" to activate' \
+					-e 'tell application "System Events" to tell process "iTerm" to keystroke "t" using command down' \
+					-e 'tell application "System Events" to tell process "iTerm" to keystroke "wd cp; nvm use 12.8; yarn start"' \
+					-e 'tell application "System Events" to tell process "iTerm" to key code 52'
+			fi
+
+			if [[ $2 == "login" ]]; then
+				workon cockpit
+				cp_login $MG_CP_LOGIN
+			fi
+		;;
+	esac
+}
+
 # mcd: Makes new directory and jumps into it
 mcd () { mkdir -p "$1" && cd "$1"; }
 
@@ -68,7 +99,10 @@ alias c='clear'                             # c:            Clear
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
 
-source '/usr/local/bin/virtualenvwrapper.sh'
+if [[ -f "/usr/local/bin/virtualenvwrapper.sh" ]]; then
+	source '/usr/local/bin/virtualenvwrapper.sh'
+fi
+
 export DENO_INSTALL="/home/mrchu001/.deno"
 export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin"
 
