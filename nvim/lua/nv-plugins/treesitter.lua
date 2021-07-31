@@ -13,7 +13,8 @@ function M.init()
 			"json",
 			"python",
 			"php",
-			"scss"
+			"scss",
+			"go",
 		},
 		highlight = {
 			enable = true,

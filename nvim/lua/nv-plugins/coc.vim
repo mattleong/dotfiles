@@ -1,4 +1,4 @@
-let g:coc_global_extensions = ['coc-json', 'coc-tsserver', 'coc-phpls', 'coc-lua', 'coc-eslint', 'coc-html', 'coc-css', 'coc-prettier', 'coc-python', 'coc-marketplace', 'coc-go']
+let g:coc_global_extensions = ['coc-json', 'coc-tsserver', 'coc-phpls', 'coc-lua', 'coc-eslint', 'coc-html', 'coc-css', 'coc-prettier', 'coc-python', 'coc-marketplace', 'coc-go', 'coc-pairs']
 
 " Use `[g` and `]g` to navigate diagnostics
 nmap <silent> [g <Plug>(coc-diagnostic-prev)
