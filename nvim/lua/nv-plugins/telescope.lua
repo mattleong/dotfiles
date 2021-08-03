@@ -30,6 +30,9 @@ function M.init()
 		defaults = {
 			prompt_prefix = '🔍 ',
 			selection_caret = ' ',
+			file_ignore_patterns = {
+				".git/"
+			},
 			vimgrep_arguments = {
 				'rg',
 				'--ignore',
