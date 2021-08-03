@@ -5,12 +5,8 @@ export EDITOR=nvim
 
 export ZSH_CUSTOM=~/.zsh
 
-export DOTS=~/.config/dotfiles
-
 # Set name of the theme to load.
 # Look in ~/.oh-my-zsh/themes/
-# Optionally, if you set this to "random", it'll load a random theme each
-# time that oh-my-zsh is loaded.
 ZSH_THEME="powerlevel10k/powerlevel10k"
 
 # Which plugins would you like to load? (plugins can be found in ~/.oh-my-zsh/plugins/*)
@@ -23,11 +19,12 @@ plugins=(wd sudo fzf zsh-syntax-highlighting)
 DISABLE_UPDATE_PROMPT=true
 SAVEHIST=10000
 
+# end zsh settings
+source $ZSH/oh-my-zsh.sh
+
 # neovim
 alias v='nvim'
 
-# User configuration
-# Development
 # Git shit
 gl() {
 	if [ $1 ] ; then
@@ -37,7 +34,6 @@ gl() {
 	fi
 }
 
-# git
 alias gs='git status -sb'
 alias ga='git add -A'
 alias gd='git diff'
@@ -49,21 +45,48 @@ gc() {
 	git commit -m "$1"
 }
 
+# source secrets
 if [[ -f "$HOME/.config/dotfiles/zsh/.env" ]]; then
 	source ~/.config/dotfiles/zsh/.env
 fi
 
+# mcd: Makes new directory and jumps into it
+mcd () { mkdir -p "$1" && cd "$1"; }
+
+alias cd..='cd ../'                         # Go back 1 directory
+# level (for fast typers)
+alias ..='cd ../'                           # Go back 1 directory level
+alias ...='cd ../../'                       # Go back 2 directory levels
+alias .3='cd ../../../'                     # Go back 3 directory levels
+alias .4='cd ../../../../'                  # Go back 4 directory levels
+alias .5='cd ../../../../../'               # Go back 5 directory levels
+alias .6='cd ../../../../../../'            # Go back 6 directory levels
+alias c='clear'                             # c:            Clear
+
+if command -v exa &>/dev/null; then
+	alias ls='exa'
+fi
+
+export WORKON_HOME=$HOME/.virtualenvs
+export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python
+export VIRTUALENVWRAPPER_VIRTUALENV=/usr/local/bin/virtualenv
+if [[ -f "/usr/local/bin/virtualenvwrapper.sh" ]]; then
+	source '/usr/local/bin/virtualenvwrapper.sh'
+fi
+
+export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+
+export DENO_INSTALL="/home/mrchu001/.deno"
+# export GOPATH="/Users/matt/dev/playground/go"
+export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin:$GOPATH"
+
+# work stuff
 pw() {
 	case $1 in
 		mj)
 			if [[ $2 == "ssh" ]]; then
 				ssh -A -p 22 mleong@$MJ_PREPROD_IP
-			fi
-
-			if [[ $2 == "storybook" ]]; then
-				wd react-components
-				nvm use default
-				yarn storybook
 			fi
 		;;
 		mg)
@@ -83,27 +106,3 @@ pw() {
 	esac
 }
 
-# mcd: Makes new directory and jumps into it
-mcd () { mkdir -p "$1" && cd "$1"; }
-
-alias cd..='cd ../'                         # Go back 1 directory
-# level (for fast typers)
-alias ..='cd ../'                           # Go back 1 directory level
-alias ...='cd ../../'                       # Go back 2 directory levels
-alias .3='cd ../../../'                     # Go back 3 directory levels
-alias .4='cd ../../../../'                  # Go back 4 directory levels
-alias .5='cd ../../../../../'               # Go back 5 directory levels
-alias .6='cd ../../../../../../'            # Go back 6 directory levels
-alias c='clear'                             # c:            Clear
-
-export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
-
-if [[ -f "/usr/local/bin/virtualenvwrapper.sh" ]]; then
-	source '/usr/local/bin/virtualenvwrapper.sh'
-fi
-
-export DENO_INSTALL="/home/mrchu001/.deno"
-export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin"
-
-source $ZSH/oh-my-zsh.sh
