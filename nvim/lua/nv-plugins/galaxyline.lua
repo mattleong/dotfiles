@@ -36,6 +36,7 @@ local icons = {
 	error = '',
 	branch = '',
 	file = '',
+	dotdotdot = '…',
 }
 
 local get_mode = function()
@@ -76,7 +77,7 @@ local FilePathShortProvider = function()
 	local len = #tbl
 
 	if len > 2 and tbl[1] ~= '~' then
-		return '…/' .. table.concat(tbl, '/', len - 1) .. '/'
+		return icons.dotdotdot .. '/' .. table.concat(tbl, '/', len - 1) .. '/'
 	else
 		return fp .. '/'
 	end
@@ -183,7 +184,7 @@ gls.left = {
 					return ' no git '
 				end
 				if (string.len(branch_name) > 28) then
-					return string.sub(branch_name, 1, 25)..'...'
+					return string.sub(branch_name, 1, 25)..icons.dotdotdot
 				end
 				return branch_name .. ' '
 			end,
