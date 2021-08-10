@@ -60,7 +60,7 @@ local get_mode = function()
 end
 
 local check_width_and_git_and_buffer = function()
-	return condition.hide_in_width() and condition.check_git_workspace() and condition.buffer_not_empty()
+	return condition.check_git_workspace() and condition.buffer_not_empty()
 end
 
 local check_git_and_width = function()
@@ -204,7 +204,7 @@ gls.left = {
 
 				return '  ' .. icon
 			end,
-			condition = check_buffer_and_width,
+			condition = condition.buffer_not_empty,
 			highlight = 'GalaxyViModeInv',
 		},
 	},
@@ -218,7 +218,7 @@ gls.left = {
 	{
 		FileName = {
 			provider = 'FileName',
-			condition = check_buffer_and_width,
+			condition = condition.buffer_not_empty,
 			highlight = 'GalaxyViModeInv',
 			separator = icons.arrow_right_filled,
 			separator_highlight = 'GalaxyViModeNestedInv',
@@ -261,6 +261,7 @@ gls.right = {
 		DiagnosticErrorLeftBracket = {
 			provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_error),
 			highlight = 'DiagnosticErrorInv',
+			condition = condition.buffer_not_empty,
 		}
 	},
 	{
@@ -276,7 +277,7 @@ gls.right = {
 			end,
 			icon = icons.error .. ' ',
 			highlight = 'DiagnosticError',
-			condition = check_width_and_git_and_buffer,
+			condition = condition.buffer_not_empty,
 		}
 	},
 	{
@@ -286,12 +287,14 @@ gls.right = {
 				BracketProvider(' ', diag.get_diagnostic_error),
 			},
 			highlight = 'DiagnosticErrorInv',
+			condition = condition.buffer_not_empty,
 		}
 	},
 	{
 		DiagnosticWarnLeftBracket = {
 			provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_warn),
 			highlight = 'DiagnosticWarnInv',
+			condition = condition.buffer_not_empty,
 		}
 	},
 	{
@@ -307,7 +310,7 @@ gls.right = {
 			end,
 			highlight = 'DiagnosticWarn',
 			icon = icons.warn .. ' ',
-			condition = check_width_and_git_and_buffer,
+			condition = condition.buffer_not_empty,
 		}
 	},
 	{
@@ -317,6 +320,7 @@ gls.right = {
 				BracketProvider(' ', diag.get_diagnostic_warn),
 			},
 			highlight = 'DiagnosticWarnInv',
+			condition = condition.buffer_not_empty,
 		}
 	},
 	{
@@ -348,6 +352,7 @@ gls.right = {
 				BracketProvider(' ', diag.get_diagnostic_info),
 			},
 			highlight = 'DiagnosticInfoInv',
+			condition = condition.buffer_not_empty,
 		}
 	},
 	{
