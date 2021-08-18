@@ -141,7 +141,12 @@ gls.left = {
 	{
 		ViMode = {
 			provider = function()
-				local label, mode_color, mode_nested = unpack(get_mode())
+				local m = get_mode()
+				if m == nil then
+					return
+				end
+
+				local label, mode_color, mode_nested = unpack(m)
 				highlight('GalaxyViMode', mode_color, mode_nested)
 				highlight('GalaxyViModeInv', mode_nested, mode_color)
 				highlight('GalaxyViModeNested', mode_nested, colors.bg)
