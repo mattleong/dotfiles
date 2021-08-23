@@ -78,31 +78,22 @@ export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || pr
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
 
 export DENO_INSTALL="/home/mrchu001/.deno"
-# export GOPATH="/Users/matt/dev/playground/go"
 export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin:$GOPATH"
 
+alias mj='ssh -A -p 22 mleong@$MJ_PREPROD_IP'
+
 # work stuff
-pw() {
-	case $1 in
-		mj)
-			if [[ $2 == "ssh" ]]; then
-				ssh -A -p 22 mleong@$MJ_PREPROD_IP
-			fi
-		;;
-		mg)
-			if [[ $2 == "start" ]]; then
-				osascript \
-					-e 'tell application "iTerm" to activate' \
-					-e 'tell application "System Events" to tell process "iTerm" to keystroke "t" using command down' \
-					-e 'tell application "System Events" to tell process "iTerm" to keystroke "wd cp; nvm use 12.8; yarn start"' \
-					-e 'tell application "System Events" to tell process "iTerm" to key code 52'
-			fi
+mg() {
+	if [[ $2 == "start" ]]; then
+		osascript \
+			-e 'tell application "iTerm" to activate' \
+			-e 'tell application "System Events" to tell process "iTerm" to keystroke "t" using command down' \
+			-e 'tell application "System Events" to tell process "iTerm" to keystroke "wd cp; nvm use 12.8; yarn start"' \
+			-e 'tell application "System Events" to tell process "iTerm" to key code 52'
+	fi
 
-			if [[ $2 == "login" ]]; then
-				workon cockpit
-				cp_login $MG_CP_LOGIN
-			fi
-		;;
-	esac
+	if [[ $2 == "login" ]]; then
+		workon cockpit
+		cp_login $MG_CP_LOGIN
+	fi
 }
-
