@@ -51,8 +51,9 @@ function M.init()
 				mappings = {
 					n = {
 						['d'] = actions.delete_buffer
-					}
-				}
+					},
+				},
+				sort_mru = true,
 			},
 			find_files = {
 				prompt_title = '✨ Search Project ✨',
