@@ -1,6 +1,6 @@
 local cmd = vim.cmd
 local opt = vim.opt
-local indent = 4
+local indent = 2
 
 cmd [[
 	filetype plugin indent on
@@ -23,8 +23,7 @@ opt.smartindent = true
 opt.tabstop = indent
 opt.softtabstop = indent
 opt.shiftwidth = indent
--- force tabs over spaces
--- opt.expandtab = true
+opt.expandtab = true
 
 -- search
 opt.wildmenu = true

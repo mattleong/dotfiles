@@ -18,6 +18,7 @@ packer.startup(
 		use 'kyazdani42/nvim-tree.lua'
 
 		-- lang/syntax stuff
+		use 'ChristianChiarulli/vim-solidity'
 		use {
 			'nvim-treesitter/nvim-treesitter',
 			run = ':TSUpdate',
