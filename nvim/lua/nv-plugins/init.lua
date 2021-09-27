@@ -113,6 +113,7 @@ packer.startup(
 	end
 )
 
+require 'nv-plugins.nvimtree'.init()
 require 'nv-plugins.telescope'.init()
 require 'nv-plugins.treesitter'.init()
 require 'nv-plugins.nvimtree'

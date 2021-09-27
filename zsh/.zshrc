@@ -85,11 +85,9 @@ alias mj='ssh -A -p 22 mleong@$MJ_PREPROD_IP'
 # work stuff
 mg() {
 	if [[ $2 == "start" ]]; then
-		osascript \
-			-e 'tell application "iTerm" to activate' \
-			-e 'tell application "System Events" to tell process "iTerm" to keystroke "t" using command down' \
-			-e 'tell application "System Events" to tell process "iTerm" to keystroke "wd cp; nvm use 12.8; yarn start"' \
-			-e 'tell application "System Events" to tell process "iTerm" to key code 52'
+		wd cp_login
+		nvm use 12.8
+		yarn start
 	fi
 
 	if [[ $2 == "login" ]]; then
