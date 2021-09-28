@@ -14,7 +14,7 @@ function M.map(mode, lhs, rhs, opts)
 end
 
 function M.get_git_root()
-	local git_dir = require('galaxyline.provider_vcs').get_git_dir()
+	local git_dir = require('galaxyline.providers.vcs').get_git_dir()
 	if not git_dir then
 		return 'not a git dir '
 	end

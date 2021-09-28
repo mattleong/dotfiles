@@ -1,8 +1,8 @@
 local galaxy = require('galaxyline');
 local gls = galaxy.section
-local diag = require('galaxyline.provider_diagnostic')
+local diag = require('galaxyline.providers.diagnostic')
 local condition = require 'galaxyline.condition'
-local fileinfo = require('galaxyline.provider_fileinfo')
+local fileinfo = require('galaxyline.providers.fileinfo')
 local utils = require('nv-utils');
 local highlight = utils.highlight;
 
@@ -183,7 +183,7 @@ gls.left = {
 	{
 		GitBranch = {
 			provider = function()
-				local vcs = require('galaxyline.provider_vcs')
+				local vcs = require('galaxyline.providers.vcs')
 				local branch_name = vcs.get_git_branch()
 				if (not branch_name) then
 					return ' no git '
@@ -431,7 +431,7 @@ gls.short_line_left = {
 			},
 			condition = condition.buffer_not_empty,
 			highlight = {
-				require('galaxyline.provider_fileinfo').get_file_icon,
+				require('galaxyline.providers.fileinfo').get_file_icon,
 				colors.bg,
 			},
 		},
