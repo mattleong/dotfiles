@@ -1,7 +1,6 @@
 {
 	"diagnostic.enableSign": true,
 	"diagnostic.enableHighlightLineNumber": true,
-	"coc.preferences.highlightTimeout": 5000,
 	"diagnostic.errorSign": "",
 	"diagnostic.warningSign": "",
 	"diagnostic.infoSign": "",
