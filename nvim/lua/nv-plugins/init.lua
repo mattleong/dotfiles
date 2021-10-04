@@ -18,7 +18,7 @@ packer.startup(
     use 'kyazdani42/nvim-tree.lua'
 
     -- lang/syntax stuff
-    use 'ChristianChiarulli/vim-solidity'
+    -- use 'ChristianChiarulli/vim-solidity'
     use {
       'nvim-treesitter/nvim-treesitter',
       run = ':TSUpdate',
@@ -43,10 +43,7 @@ packer.startup(
     use {
       'NTBBloodbath/galaxyline.nvim',
       branch = 'main',
---      requires = {
---        'kyazdani42/nvim-web-devicons',
---        opt = true
---      },
+      requires = { "kyazdani42/nvim-web-devicons", opt = true }
     }
 
     use {
@@ -96,7 +93,6 @@ packer.startup(
         require'colorizer'.setup()
       end
     }
-
   end
 )
 

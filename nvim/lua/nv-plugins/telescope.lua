@@ -1,5 +1,7 @@
+local cmd = vim.cmd
 local actions = require('telescope.actions')
 local map = require('nv-utils').map
+local colors = require('nv-plugins.colors')
 local M = {}
 
 local function set_telescope_mapping()
@@ -26,6 +28,9 @@ local normal_file_mappings = {
 };
 
 function M.init()
+  -- highlights
+  cmd(string.format('hi TelescopeBorder guibg=None guifg=%s', colors.darkBlue))
+
 	require('telescope').setup {
 		defaults = {
 			prompt_prefix = '🔍 ',
