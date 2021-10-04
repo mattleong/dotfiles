@@ -18,15 +18,7 @@ packer.startup(
     use 'kyazdani42/nvim-tree.lua'
 
     -- lang/syntax stuff
-    use 'ChristianChiarulli/vim-solidity'
-    use {
-      'nvim-treesitter/nvim-treesitter',
-      run = ':TSUpdate',
-      requires = {
-        'windwp/nvim-ts-autotag',
-        'JoosepAlviste/nvim-ts-context-commentstring',
-      },
-    }
+    use 'sheerun/vim-polyglot'
 
     -- git
     use 'tpope/vim-fugitive'
@@ -43,10 +35,6 @@ packer.startup(
     use {
       'NTBBloodbath/galaxyline.nvim',
       branch = 'main',
---      requires = {
---        'kyazdani42/nvim-web-devicons',
---        opt = true
---      },
     }
 
     use {
@@ -73,14 +61,12 @@ packer.startup(
       },
     }
 
-
     -- session management
     use {
       'rmagatti/auto-session',
       config = function()
         require('auto-session').setup {
-          pre_save_cmds = { 'NvimTreeClose' },
-        }
+          pre_save_cmds = { 'NvimTreeClose' }, }
       end,
     }
 
@@ -102,7 +88,7 @@ packer.startup(
 
 require 'nv-plugins.nvimtree'.init()
 require 'nv-plugins.telescope'.init()
-require 'nv-plugins.treesitter'.init()
+-- require 'nv-plugins.treesitter'.init()
 require 'nv-plugins.galaxyline'
 require 'nv-plugins.floaterm'
 cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'
