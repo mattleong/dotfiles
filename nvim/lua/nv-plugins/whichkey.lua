@@ -19,7 +19,6 @@ local keymap = {
   k = 'find buffers',
   s = 'search project',
   af = 'code action for qf',
-  a = 'code action',
   r = 'refresh tree',
   c = {
     name = '+quickfix',
@@ -29,9 +28,10 @@ local keymap = {
     f = 'search & replace quickfix list',
   },
   g = {
-    name = '+git',
+    name = '+code',
     c = 'git commits',
     s = 'git status',
+    a = 'code action',
   },
   h = {
     name = '+gitsigns'

@@ -78,7 +78,7 @@ export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || pr
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
 
 export DENO_INSTALL="/home/mrchu001/.deno"
-export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin:$GOPATH"
+export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin:$GOPATH:$HOME/dev/lua-language-server/bin/macOS"
 
 alias mj='ssh -A -p 22 mleong@$MJ_PREPROD_IP'
 

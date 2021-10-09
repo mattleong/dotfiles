@@ -85,10 +85,22 @@ packer.startup(
 
     -- autocomplete/ide
     use {
-      'neoclide/coc.nvim',
-      event = "BufWinEnter",
-      branch = 'release',
+      'hrsh7th/nvim-cmp',
+      requires = {
+        'neovim/nvim-lspconfig',
+        'hrsh7th/cmp-nvim-lsp',
+        'hrsh7th/cmp-buffer',
+        'hrsh7th/cmp-path',
+        'hrsh7th/nvim-cmp',
+        'hrsh7th/cmp-vsnip',
+        'hrsh7th/vim-vsnip',
+      }
     }
+    -- use {
+    --   'neoclide/coc.nvim',
+    --   event = "BufWinEnter",
+    --   branch = 'release',
+    -- }
 
     -- colorized hex codes
     use {
@@ -103,7 +115,6 @@ packer.startup(
      use {
       'AckslD/nvim-whichkey-setup.lua',
       requires = {'liuchengxu/vim-which-key'},
-      event = "BufWinEnter",
     }
   end
 )
@@ -113,5 +124,6 @@ require 'nv-plugins.telescope'.init()
 require 'nv-plugins.treesitter'.init()
 require 'nv-plugins.galaxyline'
 require 'nv-plugins.floaterm'
+require 'nv-plugins.lsp'
 require 'nv-plugins.whichkey'
-cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'
+-- cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'
