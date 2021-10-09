@@ -34,6 +34,7 @@ packer.startup(
     use {
       'lewis6991/gitsigns.nvim',
       requires = { 'nvim-lua/plenary.nvim' },
+      event = "BufRead",
       config = function()
         require('gitsigns').setup()
       end
@@ -83,7 +84,11 @@ packer.startup(
     }
 
     -- autocomplete/ide
-    use { 'neoclide/coc.nvim', branch = 'release', }
+    use {
+      'neoclide/coc.nvim',
+      event = "BufWinEnter",
+      branch = 'release',
+    }
 
     -- colorized hex codes
     use {
@@ -96,8 +101,9 @@ packer.startup(
     }
 
      use {
-      'liuchengxu/vim-which-key',
-      cmd = { 'WhichKey', 'WhichKey!' }
+      'AckslD/nvim-whichkey-setup.lua',
+      requires = {'liuchengxu/vim-which-key'},
+      event = "BufWinEnter",
     }
   end
 )

@@ -11,7 +11,6 @@ local function set_telescope_mapping()
   map('n', '<leader>s', ':lua require("telescope.builtin").live_grep()<CR>', { noremap = true })
   map('n', '<leader>gc', ':lua require("telescope.builtin").git_commits()<CR>', { noremap = true })
   map('n', '<leader>gs', ':lua require("telescope.builtin").git_status()<CR>', { noremap = true })
-  map('n', '<leader>x', ':SearchSession<CR>', { noremap = true })
 end
 
 local normal_file_mappings = {
