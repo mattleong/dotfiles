@@ -94,7 +94,9 @@ packer.startup(
         'hrsh7th/nvim-cmp',
         'hrsh7th/cmp-vsnip',
         'hrsh7th/vim-vsnip',
-      }
+        'windwp/nvim-autopairs',
+      },
+      event = "BufWinEnter",
     }
     -- use {
     --   'neoclide/coc.nvim',
