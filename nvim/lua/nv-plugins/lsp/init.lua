@@ -1,11 +1,25 @@
-local nvim_lsp = require('lspconfig')
 local defaults = require('nv-plugins.lsp.defaults')
+local lua_defaults = require('nv-plugins.lsp.lua')
 
--- Setup lspconfig.
-local servers = { 'pyright', 'rust_analyzer', 'tsserver' }
-for _, lsp in ipairs(servers) do
-  nvim_lsp[lsp].setup(defaults)
+local function setup_servers()
+  require'lspinstall'.setup()
+  local servers = require'lspinstall'.installed_servers()
+  for _, server in pairs(servers) do
+    if server == 'lua' then
+      require'lspconfig'[server].setup(lua_defaults)
+    else
+      require'lspconfig'[server].setup(defaults)
+    end
+  end
 end
 
-require('nv-plugins.lsp.lua')
+setup_servers()
+
+-- Automatically reload after `:LspInstall <server>` so we don't have to restart neovim
+require'lspinstall'.post_install_hook = function ()
+  setup_servers() -- reload installed servers
+  vim.cmd("bufdo e") -- this triggers the FileType autocmd that starts the server
+end
+
+
 require('nv-plugins.lsp.autocomplete')

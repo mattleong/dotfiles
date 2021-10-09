@@ -1,5 +1,4 @@
 local defaults = require('nv-plugins.lsp.defaults')
-local nvim_lsp = require('lspconfig')
 
 -- set up lua lsp
 local sumneko_binary_path = vim.fn.exepath('lua-language-server')
@@ -9,7 +8,7 @@ local runtime_path = vim.split(package.path, ';')
 table.insert(runtime_path, "lua/?.lua")
 table.insert(runtime_path, "lua/?/init.lua")
 
-nvim_lsp['sumneko_lua'].setup {
+return {
   cmd = {sumneko_binary_path, "-E", sumneko_root_path .. "/main.lua"};
   settings = {
     Lua = {

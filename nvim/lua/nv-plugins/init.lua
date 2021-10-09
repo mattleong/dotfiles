@@ -83,11 +83,17 @@ packer.startup(
       end,
     }
 
+    use {
+      'kabouzeid/nvim-lspinstall',
+      requires = {
+        'neovim/nvim-lspconfig',
+      },
+    }
+
     -- autocomplete/ide
     use {
       'hrsh7th/nvim-cmp',
       requires = {
-        'neovim/nvim-lspconfig',
         'hrsh7th/cmp-nvim-lsp',
         'hrsh7th/cmp-buffer',
         'hrsh7th/cmp-path',
@@ -96,8 +102,8 @@ packer.startup(
         'hrsh7th/vim-vsnip',
         'windwp/nvim-autopairs',
       },
-      event = "BufWinEnter",
     }
+
     -- use {
     --   'neoclide/coc.nvim',
     --   event = "BufWinEnter",
