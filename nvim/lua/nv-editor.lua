@@ -63,11 +63,11 @@ opt.writebackup = false
 
 -- autocomplete
 opt.completeopt = { 'menuone', 'noselect' }
-opt.shortmess = opt.shortmess + { c = true}
+opt.shortmess = opt.shortmess + { c = true }
 
 -- perfomance
 opt.updatetime = 100
-opt.timeoutlen = 500
+opt.timeoutlen = 400
 opt.redrawtime = 1500
 opt.ttimeoutlen = 10
 

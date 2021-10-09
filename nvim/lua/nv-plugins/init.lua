@@ -94,6 +94,11 @@ packer.startup(
         require'colorizer'.setup()
       end
     }
+
+     use {
+      'liuchengxu/vim-which-key',
+      cmd = { 'WhichKey', 'WhichKey!' }
+    }
   end
 )
 
@@ -102,4 +107,5 @@ require 'nv-plugins.telescope'.init()
 require 'nv-plugins.treesitter'.init()
 require 'nv-plugins.galaxyline'
 require 'nv-plugins.floaterm'
+require 'nv-plugins.whichkey'
 cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'
