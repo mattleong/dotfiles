@@ -40,13 +40,28 @@ cmp.setup({
     border = 'single',
     winhighlight = 'NormalFloat:NormalFloat,FloatBorder:NormalFloat',
   },
+  experimental = {
+    ghost_text = true,
+  },
   sources = {
     { name = 'nvim_lsp' },
     { name = 'buffer' },
     { name = 'vsnip' },
+    { name = "nvim_lua" },
+    { name = "path" },
+    { name = "calc" },
   },
   formatting = {
-    format = lspkind.cmp_format({with_text = true, maxwidth = 50})
+    format = function(entry, vim_item)
+      vim_item.menu = ({
+        nvim_lsp = "[LSP]",
+        buffer = "[Buf]",
+        vsnip = "[Vsnip]",
+        nvim_lua = "[Lua]",
+      })[entry.source.name]
+      return lspkind.cmp_format({with_text = true, maxwidth = 50})(entry, vim_item)
+    end,
+--    format = lspkind.cmp_format({with_text = true, maxwidth = 50})
   }
 })
 
