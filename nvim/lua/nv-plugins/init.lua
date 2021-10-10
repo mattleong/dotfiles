@@ -17,17 +17,6 @@ packer.startup(
     use 'kyazdani42/nvim-web-devicons'
     use 'kyazdani42/nvim-tree.lua'
 
-    -- lang/syntax stuff
-    -- use 'ChristianChiarulli/vim-solidity'
-    use {
-      'nvim-treesitter/nvim-treesitter',
-      run = ':TSUpdate',
-      requires = {
-        'windwp/nvim-ts-autotag',
-        'JoosepAlviste/nvim-ts-context-commentstring',
-      },
-    }
-
     -- git
     use 'tpope/vim-fugitive'
     use 'tpope/vim-rhubarb'
@@ -83,14 +72,34 @@ packer.startup(
       end,
     }
 
+    -- lang/syntax stuff
+    -- use 'ChristianChiarulli/vim-solidity'
     use {
-      'kabouzeid/nvim-lspinstall',
+      'nvim-treesitter/nvim-treesitter',
+      run = ':TSUpdate',
       requires = {
-        'neovim/nvim-lspconfig',
+        'windwp/nvim-ts-autotag',
+        'JoosepAlviste/nvim-ts-context-commentstring',
+        'nvim-treesitter/nvim-treesitter-refactor',
       },
     }
 
     -- autocomplete/ide
+    use {
+      'neovim/nvim-lspconfig',
+    }
+    use {
+      'kabouzeid/nvim-lspinstall',
+    }
+
+    use {
+      'ray-x/navigator.lua',
+      requires = {
+        'ray-x/guihua.lua',
+        run = 'cd lua/fzy && make',
+      },
+    }
+
     use {
       'hrsh7th/nvim-cmp',
       requires = {

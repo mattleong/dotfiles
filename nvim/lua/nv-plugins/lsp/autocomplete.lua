@@ -61,7 +61,6 @@ cmp.setup({
       })[entry.source.name]
       return lspkind.cmp_format({with_text = true, maxwidth = 50})(entry, vim_item)
     end,
---    format = lspkind.cmp_format({with_text = true, maxwidth = 50})
   }
 })
 
@@ -78,4 +77,21 @@ require("nvim-autopairs.completion.cmp").setup({
     all = '(',
     tex = '{'
   }
+})
+
+require'navigator'.setup({
+  code_action = {enable = true, sign = true, sign_priority = 40, virtual_text = false},
+  code_lens_action = {enable = true, sign = true, sign_priority = 40, virtual_text = false},
+  border = "single",
+  lsp = {
+    diagnostic_scrollbar_sign = nil, -- experimental:  diagnostic status in scroll bar area; set to nil to disable the diagnostic sign,
+    format_on_save = false, -- set to false to disasble lsp code format on save (if you are using prettier/efm/formater etc)
+  },
+  treesitter_analysis = true, -- treesitter variable context
+  default_mapping = false,  -- set to false if you will remap every key
+
+  keymaps = {
+    {key = "gd", func = "definition()"}
+  }, -- a list of key maps
+  lspinstall = true, -- set to true if you would like use the lsp installed by lspinstall
 })

@@ -52,7 +52,6 @@ function M.init()
   -- set up args
   local args = {
     auto_close = true,
-    lsp_diagnostics = true,
     update_focused_file = {
       -- enables the feature
       enable      = true,
