@@ -249,7 +249,7 @@ gls.right = {
   {
     DiagnosticErrorLeftBracket = {
       provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_error),
-      highlight = 'DiagnosticErrorInv',
+      highlight = 'GalaxyDiagnosticErrorInv',
       condition = condition.buffer_not_empty,
     }
   },
@@ -257,15 +257,15 @@ gls.right = {
     DiagnosticError = {
       provider = function()
         local error_result = diag.get_diagnostic_error()
-        highlight('DiagnosticError', colors.error, colors.bg)
-        highlight('DiagnosticErrorInv', colors.bg, colors.error)
+        highlight('GalaxyDiagnosticError', colors.error, colors.bg)
+        highlight('GalaxyDiagnosticErrorInv', colors.bg, colors.error)
 
         if (error_result ~= '' and error_result ~= nil) then
           return error_result
         end
       end,
       icon = icons.error .. ' ',
-      highlight = 'DiagnosticError',
+      highlight = 'GalaxyDiagnosticError',
       condition = condition.buffer_not_empty,
     }
   },
@@ -275,14 +275,14 @@ gls.right = {
         BracketProvider(icons.rounded_right_filled, diag.get_diagnostic_error),
         BracketProvider(' ', diag.get_diagnostic_error),
       },
-      highlight = 'DiagnosticErrorInv',
+      highlight = 'GalaxyDiagnosticErrorInv',
       condition = condition.buffer_not_empty,
     }
   },
   {
     DiagnosticWarnLeftBracket = {
       provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_warn),
-      highlight = 'DiagnosticWarnInv',
+      highlight = 'GalaxyDiagnosticWarnInv',
       condition = condition.buffer_not_empty,
     }
   },
@@ -290,14 +290,14 @@ gls.right = {
     DiagnosticWarn = {
       provider = function()
         local warn_result = diag.get_diagnostic_warn()
-        highlight('DiagnosticWarn', colors.warn, colors.bg)
-        highlight('DiagnosticWarnInv', colors.bg, colors.warn)
+        highlight('GalaxyDiagnosticWarn', colors.warn, colors.bg)
+        highlight('GalaxyDiagnosticWarnInv', colors.bg, colors.warn)
 
         if (warn_result ~= '' and warn_result ~= nil) then
           return warn_result
         end
       end,
-      highlight = 'DiagnosticWarn',
+      highlight = 'GalaxyDiagnosticWarn',
       icon = icons.warn .. ' ',
       condition = condition.buffer_not_empty,
     }
@@ -308,29 +308,29 @@ gls.right = {
         BracketProvider(icons.rounded_right_filled, diag.get_diagnostic_warn),
         BracketProvider(' ', diag.get_diagnostic_warn),
       },
-      highlight = 'DiagnosticWarnInv',
+      highlight = 'GalaxyDiagnosticWarnInv',
       condition = condition.buffer_not_empty,
     }
   },
   {
     DiagnosticInfoLeftBracket = {
       provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_info),
-      highlight = 'DiagnosticInfoInv',
+      highlight = 'GalaxyDiagnosticInfoInv',
     }
   },
   {
     DiagnosticInfo = {
       provider = function()
         local info_result = diag.get_diagnostic_info()
-        highlight('DiagnosticInfo', colors.info, colors.bg)
-        highlight('DiagnosticInfoInv', colors.bg, colors.info)
+        highlight('GalaxyDiagnosticInfo', colors.info, colors.bg)
+        highlight('GalaxyDiagnosticInfoInv', colors.bg, colors.info)
 
         if (info_result ~= '' and info_result ~= nil) then
           return info_result
         end
       end,
       icon = icons.info .. ' ',
-      highlight = 'DiagnosticInfo',
+      highlight = 'GalaxyDiagnosticInfo',
       condition = check_width_and_git_and_buffer,
     }
   },
@@ -340,7 +340,7 @@ gls.right = {
         BracketProvider(icons.rounded_right_filled, diag.get_diagnostic_info),
         BracketProvider(' ', diag.get_diagnostic_info),
       },
-      highlight = 'DiagnosticInfoInv',
+      highlight = 'GalaxyDiagnosticInfoInv',
       condition = condition.buffer_not_empty,
     }
   },
