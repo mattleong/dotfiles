@@ -1,10 +1,14 @@
 local cmp = require('cmp')
+local WIDE_HEIGHT = 40
 
 vim.cmd [[
 autocmd FileType TelescopePrompt lua require('cmp').setup.buffer { enabled = false }
 ]]
 
 cmp.setup({
+  enabled = function()
+    return vim.api.nvim_buf_get_option(0, 'buftype') ~= 'prompt'
+  end,
   snippet = {
     expand = function(args)
       -- For `vsnip` user.
@@ -22,6 +26,12 @@ cmp.setup({
     }),
     ['<Tab>'] = cmp.mapping(cmp.mapping.select_next_item(), { 'i', 's' }),
     ['<S-Tab>'] = cmp.mapping(cmp.mapping.select_prev_item(), { 'i', 's' }),
+  },
+  documentation = {
+    border = 'single',
+    winhighlight = 'FloatBorder:FloatBorder,FloatBorder:FloatBorder',
+    maxwidth = math.floor((WIDE_HEIGHT * 2) * (vim.o.columns / (WIDE_HEIGHT * 2 * 16 / 9))),
+    maxheight = math.floor(WIDE_HEIGHT * (WIDE_HEIGHT / vim.o.lines)),
   },
   sources = {
     { name = 'nvim_lsp' },

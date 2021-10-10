@@ -1,5 +1,6 @@
 local defaults = require('nv-plugins.lsp.defaults')
 local lua_defaults = require('nv-plugins.lsp.lua')
+-- vim.cmd("autocmd CursorHold,CursorHoldI * lua vim.lsp.diagnostic.show_line_diagnostics({border="..vim.inspect(borders)..", focusable=false})")
 
 local function setup_servers()
   require'lspinstall'.setup()
@@ -20,6 +21,5 @@ require'lspinstall'.post_install_hook = function ()
   setup_servers() -- reload installed servers
   vim.cmd("bufdo e") -- this triggers the FileType autocmd that starts the server
 end
-
 
 require('nv-plugins.lsp.autocomplete')
