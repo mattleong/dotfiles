@@ -101,6 +101,7 @@ packer.startup(
         'hrsh7th/cmp-vsnip',
         'hrsh7th/vim-vsnip',
         'windwp/nvim-autopairs',
+        'onsails/lspkind-nvim',
       },
     }
 
