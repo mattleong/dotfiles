@@ -93,14 +93,6 @@ packer.startup(
     }
 
     use {
-      'ray-x/navigator.lua',
-      requires = {
-        'ray-x/guihua.lua',
-        run = 'cd lua/fzy && make',
-      },
-    }
-
-    use {
       'hrsh7th/nvim-cmp',
       requires = {
         'hrsh7th/cmp-nvim-lsp',
