@@ -67,7 +67,7 @@ packer.startup(
       'rmagatti/auto-session',
       config = function()
         require('auto-session').setup {
-          pre_save_cmds = { 'NvimTreeClose' },
+          pre_save_cmds = { 'NvimTreeClose', 'TroubleClose' },
         }
       end,
     }
@@ -84,7 +84,7 @@ packer.startup(
       },
     }
 
-    -- autocomplete/ide
+    -- lsp
     use {
       'neovim/nvim-lspconfig',
     }
@@ -92,6 +92,13 @@ packer.startup(
       'kabouzeid/nvim-lspinstall',
     }
 
+    -- diagnostics
+    use {
+      "folke/trouble.nvim",
+      requires = "kyazdani42/nvim-web-devicons",
+    }
+
+    -- autocompletion
     use {
       'hrsh7th/nvim-cmp',
       requires = {
@@ -104,6 +111,11 @@ packer.startup(
         'windwp/nvim-autopairs',
         'onsails/lspkind-nvim',
       },
+    }
+
+    -- signature help
+    use {
+      "ray-x/lsp_signature.nvim",
     }
 
     -- use {
