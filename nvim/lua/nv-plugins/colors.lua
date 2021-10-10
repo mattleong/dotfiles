@@ -14,6 +14,7 @@ local colors = {
   info = '#5d8fac',
   error = '#db4b4b',
   warn = '#ff9e64',
+  border = '#3d59a1',
 }
 
 return colors

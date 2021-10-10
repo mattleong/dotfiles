@@ -2,6 +2,9 @@ local cmd = vim.cmd
 local actions = require('telescope.actions')
 local map = require('nv-utils').map
 local colors = require('nv-plugins.colors')
+local utils = require('nv-utils')
+local highlight = utils.highlight;
+
 local M = {}
 
 local function set_telescope_mapping()
@@ -27,7 +30,7 @@ local normal_file_mappings = {
 
 function M.init()
   -- highlights
-  cmd(string.format('hi TelescopeBorder guibg=None guifg=%s', colors.darkBlue))
+  highlight('TelescopeBorder', 'None', colors.border)
 
   require('telescope').setup {
     defaults = {
