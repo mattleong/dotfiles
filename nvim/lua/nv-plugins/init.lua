@@ -105,6 +105,7 @@ packer.startup(
         'onsails/lspkind-nvim',
       },
     }
+    use { 'folke/trouble.nvim' }
 
     -- colorized hex codes
     use {

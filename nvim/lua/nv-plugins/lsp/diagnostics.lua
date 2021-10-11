@@ -20,10 +20,30 @@ vim.diagnostic.config({
   severity_sort = true,
 })
 
-local t = vim.fn.sign_getdefined('DiagnosticSignWarn')
-if vim.tbl_isempty(t) then
-  for type, icon in pairs(signs) do
-    local hl = 'DiagnosticSign' .. type
-    vim.fn.sign_define(hl, { text = icon, texthl = hl, numhl = '' })
+if vim.diagnostic ~= nil then
+  local t = vim.fn.sign_getdefined('DiagnosticSignWarn')
+  if vim.tbl_isempty(t) then
+    for type, icon in pairs(signs) do
+      local hl = 'DiagnosticSign' .. type
+      vim.fn.sign_define(hl, { text = icon, texthl = hl, numhl = '' })
+    end
+  end
+else
+  local t = vim.fn.sign_getdefined('LspDiagnosticsSignWarn')
+  if vim.tbl_isempty(t) then
+    for type, icon in pairs(signs) do
+      local hl = 'LspDiagnosticsSign' .. type
+      vim.fn.sign_define(hl, { text = icon, texthl = hl, numhl = '' })
+    end
   end
 end
+
+require("trouble").setup {
+  mode = "lsp_document_diagnostics", -- "lsp_workspace_diagnostics", "lsp_document_diagnostics", "quickfix", "lsp_references", "loclist"
+  signs = {
+    error = signs.error,
+    warn = signs.warn,
+    info = signs.info,
+    hint = signs.hint
+  }
+}
