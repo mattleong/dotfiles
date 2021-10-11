@@ -1,3 +1,5 @@
+local colors = require('nv-plugins.theme.colors')
+local highlight = require('nv-utils').highlight
 local map = require('nv-utils').map
 local M = {}
 
@@ -9,9 +11,8 @@ function M.on_attach(client, bufnr)
 
   -- Mappings.
   local opts = { noremap = true, silent = true }
-  local popup_opts = '{ border = "single", focusable = false, }'
+  local popup_opts = '{ border = "double", focusable = false, }'
   local win_opts = '{ popup_opts = ' .. popup_opts .. '}'
-
 
   -- See `:help vim.lsp.*` for documentation on any of the below functions
   map('n', 'gd', '<cmd>lua vim.lsp.buf.definition()<CR>', opts)
@@ -21,7 +22,7 @@ function M.on_attach(client, bufnr)
   map('n', 'gn', '<cmd>lua vim.lsp.buf.rename()<CR>', opts)
   map('n', 'gr', '<cmd>lua vim.lsp.buf.references()<CR>', opts)
   map('n', '<space>ga', '<cmd>lua vim.lsp.buf.code_action()<CR>', opts)
-  map('n', '<space>ge', '<cmd>lua vim.lsp.diagnostic.show_line_diagnostics('.. popup_opts ..')<CR>', opts)
+  map('n', '<space>ge', '<cmd>lua vim.lsp.diagnostic.show_line_diagnostics()<CR>', opts)
   map('n', '<C-k>', '<cmd>lua vim.lsp.buf.signature_help()<CR>', opts)
   map('n', 'K', '<cmd>lua vim.lsp.buf.hover()<CR>', opts)
   map('n', '[g', '<cmd>lua vim.lsp.diagnostic.goto_prev('.. win_opts ..')<CR>', opts)
@@ -35,7 +36,17 @@ function M.on_attach(client, bufnr)
     map('n', '<space>gf', '<cmd>lua vim.lsp.buf.formatting()<CR>', opts)
   end
 
-  require "lsp_signature".on_attach()  -- Note: add in lsp client on-attach
+  require('lsp_signature').on_attach({
+    bind = true, -- This is mandatory, otherwise border config won't get registered.
+    handler_opts = {
+      border = "single"
+    }
+  }, bufnr)
+  -- signature highlight color
+  highlight('LspSignatureActiveParameter', 'None', colors.purple)
+
+  -- needs to highlight after lsp start
+  highlight('NormalFloat', 'Normal', 'NormalFloat')
 end
 
 M.capabilities = require('cmp_nvim_lsp').update_capabilities(vim.lsp.protocol.make_client_capabilities())
