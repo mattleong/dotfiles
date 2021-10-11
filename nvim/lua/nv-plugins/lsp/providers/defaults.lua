@@ -20,7 +20,6 @@ function M.on_attach(client, bufnr)
   map('n', 'gt', '<cmd>lua vim.lsp.buf.type_definition()<CR>', opts)
   map('n', 'gn', '<cmd>lua vim.lsp.buf.rename()<CR>', opts)
   map('n', 'gr', '<cmd>lua vim.lsp.buf.references()<CR>', opts)
-  map('n', '<space>gf', '<cmd>lua vim.lsp.buf.formatting()<CR>', opts)
   map('n', '<space>ga', '<cmd>lua vim.lsp.buf.code_action()<CR>', opts)
   map('n', '<space>ge', '<cmd>lua vim.lsp.diagnostic.show_line_diagnostics('.. popup_opts ..')<CR>', opts)
   map('n', '<C-k>', '<cmd>lua vim.lsp.buf.signature_help()<CR>', opts)
@@ -31,6 +30,10 @@ function M.on_attach(client, bufnr)
   map('n', '<space>wr', '<cmd>lua vim.lsp.buf.remove_workspace_folder()<CR>', opts)
   map('n', '<space>wl', '<cmd>lua print(vim.inspect(vim.lsp.buf.list_workspace_folders()))<CR>', opts)
   map('n', '<space>q', '<cmd>lua vim.lsp.diagnostic.set_loclist()<CR>', opts)
+
+  if client.resolved_capabilities.document_formatting then
+    map('n', '<space>gf', '<cmd>lua vim.lsp.buf.formatting()<CR>', opts)
+  end
 
   require "lsp_signature".on_attach()  -- Note: add in lsp client on-attach
 end

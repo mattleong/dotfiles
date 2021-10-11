@@ -14,7 +14,9 @@ packer.startup(
   function()
     use 'wbthomason/packer.nvim'
 
+    -- icons
     use 'kyazdani42/nvim-web-devicons'
+    -- file explorer
     use 'kyazdani42/nvim-tree.lua'
 
     -- git
@@ -30,13 +32,13 @@ packer.startup(
     }
 
     -- theme stuff
-    use {
+    use { -- statusline
       'NTBBloodbath/galaxyline.nvim',
       branch = 'main',
       requires = { "kyazdani42/nvim-web-devicons", opt = true }
     }
 
-    use {
+    use { -- coloe scheme
       'folke/tokyonight.nvim',
       config = function()
         vim.g.tokyonight_style = 'night'
@@ -45,14 +47,13 @@ packer.startup(
       end,
     }
 
-    -- floating terminal
-    use {
+    use { -- floating terminal
       'voldikss/vim-floaterm',
       opt = true,
       cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend', },
     }
 
-    use {
+    use { -- file navigation
       'nvim-telescope/telescope.nvim',
       requires = {
         'nvim-lua/popup.nvim',
@@ -62,8 +63,7 @@ packer.startup(
     use {'nvim-telescope/telescope-fzf-native.nvim', run = 'make' }
 
 
-    -- session management
-    use {
+    use { -- session management
       'rmagatti/auto-session',
       config = function()
         require('auto-session').setup {
@@ -72,9 +72,7 @@ packer.startup(
       end,
     }
 
-    -- lang/syntax stuff
-    -- use 'ChristianChiarulli/vim-solidity'
-    use {
+    use { -- lang/syntax stuff
       'nvim-treesitter/nvim-treesitter',
       run = ':TSUpdate',
       requires = {
@@ -84,20 +82,15 @@ packer.startup(
       },
     }
 
-    -- lsp
-    use {
+    use { -- lsp
       'neovim/nvim-lspconfig',
     }
-    use {
+    use { -- lsp server install
       'kabouzeid/nvim-lspinstall',
     }
-
-    -- diagnostics
-    use {
-      "folke/trouble.nvim",
-      requires = "kyazdani42/nvim-web-devicons",
+    use { -- signature help
+      "ray-x/lsp_signature.nvim",
     }
-
     -- autocompletion
     use {
       'hrsh7th/nvim-cmp',
@@ -112,17 +105,6 @@ packer.startup(
         'onsails/lspkind-nvim',
       },
     }
-
-    -- signature help
-    use {
-      "ray-x/lsp_signature.nvim",
-    }
-
-    -- use {
-    --   'neoclide/coc.nvim',
-    --   event = "BufWinEnter",
-    --   branch = 'release',
-    -- }
 
     -- colorized hex codes
     use {

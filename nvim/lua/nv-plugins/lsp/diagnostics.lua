@@ -26,5 +26,3 @@ if vim.tbl_isempty(t) then
     vim.fn.sign_define(hl, { text = icon, texthl = hl, numhl = '' })
   end
 end
-
-require('trouble').setup {}
