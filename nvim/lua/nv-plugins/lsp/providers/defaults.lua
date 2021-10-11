@@ -9,6 +9,9 @@ function M.on_attach(client, bufnr)
 
   -- Mappings.
   local opts = { noremap = true, silent = true }
+  local popup_opts = '{ border = "single", focusable = false, }'
+  local win_opts = '{ popup_opts = ' .. popup_opts .. '}'
+
 
   -- See `:help vim.lsp.*` for documentation on any of the below functions
   map('n', 'gd', '<cmd>lua vim.lsp.buf.definition()<CR>', opts)
@@ -19,11 +22,11 @@ function M.on_attach(client, bufnr)
   map('n', 'gr', '<cmd>lua vim.lsp.buf.references()<CR>', opts)
   map('n', '<space>gf', '<cmd>lua vim.lsp.buf.formatting()<CR>', opts)
   map('n', '<space>ga', '<cmd>lua vim.lsp.buf.code_action()<CR>', opts)
-  map('n', '<space>ge', '<cmd>lua vim.lsp.diagnostic.show_line_diagnostics()<CR>', opts)
+  map('n', '<space>ge', '<cmd>lua vim.lsp.diagnostic.show_line_diagnostics('.. popup_opts ..')<CR>', opts)
   map('n', '<C-k>', '<cmd>lua vim.lsp.buf.signature_help()<CR>', opts)
   map('n', 'K', '<cmd>lua vim.lsp.buf.hover()<CR>', opts)
-  map('n', '[g', '<cmd>lua vim.lsp.diagnostic.goto_prev()<CR>', opts)
-  map('n', ']g', '<cmd>lua vim.lsp.diagnostic.goto_next()<CR>', opts)
+  map('n', '[g', '<cmd>lua vim.lsp.diagnostic.goto_prev('.. win_opts ..')<CR>', opts)
+  map('n', ']g', '<cmd>lua vim.lsp.diagnostic.goto_next('.. win_opts ..')<CR>', opts)
   map('n', '<space>wa', '<cmd>lua vim.lsp.buf.add_workspace_folder()<CR>', opts)
   map('n', '<space>wr', '<cmd>lua vim.lsp.buf.remove_workspace_folder()<CR>', opts)
   map('n', '<space>wl', '<cmd>lua print(vim.inspect(vim.lsp.buf.list_workspace_folders()))<CR>', opts)
