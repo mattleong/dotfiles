@@ -125,8 +125,7 @@ packer.startup(
 
 require 'nv-plugins.file-explorer'.init()
 require 'nv-plugins.file-navigation'.init()
+require 'nv-plugins.terminal'.init()
 require 'nv-plugins.statusline'
-require 'nv-plugins.terminal'
 require 'nv-plugins.lsp'
 require 'nv-plugins.whichkey'
--- cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'

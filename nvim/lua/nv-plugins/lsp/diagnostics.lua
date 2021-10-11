@@ -13,7 +13,8 @@ vim.diagnostic.config({
   virtual_text = {
     spacing = 4,
     source = 'always',
-    --      prefix = '👾',
+    severity = 'error'
+--    prefix = '👾',
   },
   signs = true,
   severity_sort = true,

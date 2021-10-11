@@ -18,9 +18,6 @@ vim.lsp.handlers["textDocument/hover"] =
     { border = "single" }
   )
 
--- todo put this somewhere else
--- highlight('NormalFloat', 'Normal', 'NormalFloat')
-
 -- diagnostic colors
 highlight('DiagnosticVirtualTextError', 'None', colors.error)
 highlight('DiagnosticVirtualTextWarn', 'None', colors.warn)

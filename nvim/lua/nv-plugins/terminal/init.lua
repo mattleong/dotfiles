@@ -1,17 +1,18 @@
 local g = vim.g
-local cmd = vim.cmd
-local map = require('nv-utils').map
 local colors = require('nv-plugins.theme.colors')
 local utils = require('nv-utils')
 local highlight = utils.highlight;
+local M = {}
 
-g.floaterm_width = 0.8
-g.floaterm_height = 0.8
-g.floaterm_title = '|👾 ($1/$2)|'
-g.floaterm_opener = 'vsplit'
+function M.init()
+  g.floaterm_width = 0.8
+  g.floaterm_height = 0.8
+  g.floaterm_title = '|👾 ($1/$2)|'
+  g.floaterm_opener = 'vsplit'
 
-highlight('FloatermBorder', 'None', colors.border)
+  highlight('FloatermBorder', 'None', colors.border)
 
-map('n', '<C-l>', ':FloatermToggle<CR>', { noremap = true })
-map('t', '<C-l>', [[<C-\><C-n>]], { noremap = true })
+  require('nv-plugins.terminal.mappings').init()
+end
 
+return M

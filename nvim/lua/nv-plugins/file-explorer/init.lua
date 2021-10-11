@@ -1,12 +1,10 @@
 local g = vim.g
-local map = require('nv-utils').map
 local icons = require('nv-plugins.theme.icons')
 local M = {}
 
 function M.init()
   -- mappings
-  map('n', '<C-n>', ':NvimTreeToggle<CR>', { noremap = true })
-  map('n', '<leader>r', ':NvimTreeRefresh<CR>', { noremap = true })
+  require('nv-plugins.file-explorer.mappings').init()
 
   -- settings
   g.nvim_tree_git_hl = 1
