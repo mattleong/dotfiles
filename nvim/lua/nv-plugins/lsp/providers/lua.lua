@@ -1,4 +1,4 @@
-local defaults = require('nv-plugins.lsp.providers.defaults')
+local defaults = require('nv-plugins.lsp.providers.lspconfig')
 
 -- set up lua lsp
 local sumneko_binary_path = vim.fn.exepath('lua-language-server')

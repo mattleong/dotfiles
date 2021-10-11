@@ -1,5 +1,6 @@
-local defaults = require('nv-plugins.lsp.providers.defaults')
-local lua_defaults = require('nv-plugins.lsp.providers.lua')
+local defaults = require('nv-plugins.lsp.providers.lspconfig')
+local lua_config = require('nv-plugins.lsp.providers.lua')
+local efm_config = require('nv-plugins.lsp.providers.efm')
 local lspinstall = require('lspinstall');
 local lspconfig = require('lspconfig');
 
@@ -8,7 +9,9 @@ local function setup_servers()
   local servers = lspinstall.installed_servers()
   for _, server in pairs(servers) do
     if server == 'lua' then
-      lspconfig[server].setup(lua_defaults)
+      lspconfig[server].setup(lua_config)
+    elseif server == 'efm' then
+      lspconfig[server].setup(efm_config)
     else
       lspconfig[server].setup(defaults)
     end
