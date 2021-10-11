@@ -6,22 +6,7 @@ local fileinfo = require('galaxyline.providers.fileinfo')
 local utils = require('nv-utils');
 local colors = require('nv-plugins.colors');
 local highlight = utils.highlight;
-
-local icons = {
-  rounded_left_filled = '',
-  rounded_right_filled = '',
-  arrow_left_filled = '', -- e0b2
-  arrow_right_filled = '', -- e0b0
-  arrow_left = '', -- e0b3
-  arrow_right = '', -- e0b1
-  ghost = '',
-  warn = '',
-  info = '',
-  error = '',
-  branch = '',
-  file = '',
-  dotdotdot = '…',
-}
+local icons = require('nv-plugins.icons')
 
 local get_mode = function()
   local mode_colors = {
@@ -70,7 +55,7 @@ end
 local LineColumnProvider = function()
   local line_column = fileinfo.line_column()
   line_column = line_column:gsub("%s+", "")
-  return ' ' .. line_column
+  return ' ' .. icons.line_number .. line_column
 end
 
 local PercentProvider = function()

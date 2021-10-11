@@ -1,5 +1,6 @@
 local g = vim.g
 local map = require('nv-utils').map
+local icons = require('nv-plugins.icons')
 local M = {}
 
 function M.init()
@@ -21,31 +22,15 @@ function M.init()
 
   g.nvim_tree_icons = {
     default = '',
-    symlink = '',
-    git = {
-      unstaged = "✗",
-      staged = "✓",
-      unmerged = "",
-      renamed = "➜",
-      untracked = "★",
-      deleted = "",
-      ignored = "◌"
-    },
-    folder = {
-      arrow_open = "",
-      arrow_closed = "",
-      default = "",
-      open = "",
-      empty = "",
-      empty_open = "",
-      symlink = "",
-      symlink_open = "",
-    },
+    symlink = icons.symlink,
+    git = icons.git,
+    folder = icons.folder,
+
     lsp = {
-      hint = "",
-      info = "",
-      warning = "",
-      error = "",
+      hint = icons.hint,
+      info = icons.info,
+      warning = icons.warn,
+      error = icons.error,
     }
   }
 
@@ -53,10 +38,7 @@ function M.init()
   local args = {
     auto_close = true,
     update_focused_file = {
-      -- enables the feature
       enable      = true,
-      -- list of buffer names / filetypes that will not update the cwd if the file isn't found under the current root directory
-      -- only relevant when `update_focused_file.update_cwd` is true and `update_focused_file.enable` is true
       ignore_list = {}
     },
   }
