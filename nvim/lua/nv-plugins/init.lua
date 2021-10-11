@@ -67,7 +67,7 @@ packer.startup(
       'rmagatti/auto-session',
       config = function()
         require('auto-session').setup {
-          pre_save_cmds = { 'NvimTreeClose', 'TroubleClose' },
+          pre_save_cmds = { 'NvimTreeClose', 'TroubleClose', 'cclose' },
         }
       end,
     }
@@ -141,11 +141,10 @@ packer.startup(
   end
 )
 
-require 'nv-plugins.nvimtree'.init()
-require 'nv-plugins.telescope'.init()
-require 'nv-plugins.treesitter'.init()
-require 'nv-plugins.galaxyline'
-require 'nv-plugins.floaterm'
+require 'nv-plugins.file-explorer'.init()
+require 'nv-plugins.file-navigation'.init()
+require 'nv-plugins.statusline'
+require 'nv-plugins.terminal'
 require 'nv-plugins.lsp'
 require 'nv-plugins.whichkey'
 -- cmd 'source ~/.config/nvim/lua/nv-plugins/coc.vim'

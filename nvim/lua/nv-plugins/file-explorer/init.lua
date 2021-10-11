@@ -1,6 +1,6 @@
 local g = vim.g
 local map = require('nv-utils').map
-local icons = require('nv-plugins.icons')
+local icons = require('nv-plugins.theme.icons')
 local M = {}
 
 function M.init()

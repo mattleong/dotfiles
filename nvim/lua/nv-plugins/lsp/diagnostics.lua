@@ -1,4 +1,4 @@
-local icons = require('nv-plugins.icons')
+local icons = require('nv-plugins.theme.icons')
 
 local signs = {
   Error = icons.error .. ' ',

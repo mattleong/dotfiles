@@ -1,7 +1,7 @@
 local cmd = vim.cmd
 local actions = require('telescope.actions')
 local map = require('nv-utils').map
-local colors = require('nv-plugins.colors')
+local colors = require('nv-plugins.theme.colors')
 local utils = require('nv-utils')
 local highlight = utils.highlight;
 

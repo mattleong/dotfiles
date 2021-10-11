@@ -1,5 +1,6 @@
 local cmp = require('cmp')
 local lspkind = require('lspkind')
+local icons = require('nv-plugins.theme.icons')
 
 vim.cmd [[
 autocmd FileType TelescopePrompt lua require('cmp').setup.buffer { enabled = false }
