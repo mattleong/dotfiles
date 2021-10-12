@@ -88,9 +88,14 @@ packer.startup(
     use { -- lsp server install
       'kabouzeid/nvim-lspinstall',
     }
-    use { -- signature help
-      "ray-x/lsp_signature.nvim",
+--    use { -- signature help
+--      "ray-x/lsp_signature.nvim",
+--    }
+
+    use {
+      'tami5/lspsaga.nvim'
     }
+
     -- autocompletion
     use {
       'hrsh7th/nvim-cmp',

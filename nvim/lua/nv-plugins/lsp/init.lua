@@ -5,6 +5,7 @@ require('nv-plugins.lsp.providers')
 require('nv-plugins.lsp.treesitter')
 require('nv-plugins.lsp.diagnostics')
 require('nv-plugins.lsp.autocomplete')
+require('nv-plugins.lsp.ide')
 
 -- lsp settings
 vim.lsp.handlers["textDocument/signatureHelp"] =
