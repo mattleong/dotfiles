@@ -36,9 +36,28 @@ local saga = require 'lspsaga'
 -- like server_filetype_map = {metals = {'sbt', 'scala'}}
 -- server_filetype_map = {}
 
---saga.init_lsp_saga {
---  your custom option here
---}
-
 --or --use default config
-saga.init_lsp_saga()
+saga.init_lsp_saga {
+  code_action_keys = {
+    quit = '<Esc>',
+    exec = '<CR>'
+  },
+  rename_action_keys = {
+    quit = '<Esc>',
+    exec = '<CR>'  -- quit can be a table
+  },
+  code_action_prompt = {
+    enable = true,
+    sign = true,
+    sign_priority = 20,
+    virtual_text = false,
+  },
+  finder_action_keys = {
+      open = 'o',
+      vsplit = 'v',
+      split = 'x',
+      quit = '<Esc>',
+      scroll_down = '<Tab>',
+      scroll_up = '<S-Tab>' -- quit can be a table
+  }
+}

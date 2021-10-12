@@ -1,7 +1,4 @@
-local condition = require 'galaxyline.condition'
 local M = {}
-
-local scopes = {o = vim.o, b = vim.bo, w = vim.wo}
 
 local function get_basename(file)
 	return file:match '^.+/(.+)$'
