@@ -35,6 +35,9 @@ function M.init()
   -- set up args
   local args = {
     auto_close = true,
+    diagnostics = {
+      enable = true,
+    },
     update_focused_file = {
       enable      = true,
       ignore_list = {}
