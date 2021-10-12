@@ -16,6 +16,15 @@ function M.on_attach(client, bufnr)
     client.resolved_capabilities.document_formatting = false
   end
 
+  require('lsp_signature').on_attach({
+    bind = true, -- This is mandatory, otherwise border config won't get registered.
+    handler_opts = {
+      border = "single"
+    }
+  }, bufnr)
+  -- signature highlight color
+  highlight('LspSignatureActiveParameter', 'None', colors.purple)
+
   -- needs to highlight after lsp start
   highlight('NormalFloat', 'Normal', 'NormalFloat')
   highlight('LspSagaDocTruncateLine', 'NormalFloat', colors.border)
