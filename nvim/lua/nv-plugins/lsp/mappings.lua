@@ -5,12 +5,12 @@ local opts = { noremap = true, silent = true }
 
 -- See `:help vim.lsp.*` for documentation on any of the below functions
 map('n', 'gd', '<cmd>lua vim.lsp.buf.definition()<CR>', opts)
-map('n', 'gD', '<cmd>lua require"lspsaga.provider".preview_definition()<CR>', opts)
 map('n', 'gc', '<cmd>lua vim.lsp.buf.declaration()<CR>', opts)
 map('n', 'gi', '<cmd>lua vim.lsp.buf.implementation()<CR>', opts)
 map('n', 'gt', '<cmd>lua vim.lsp.buf.type_definition()<CR>', opts)
 map('n', 'gn', '<cmd>lua require("lspsaga.rename").rename()<CR>', opts)
 map('n', 'gr', '<cmd>lua vim.lsp.buf.references()<CR>', opts)
+map('n', '<space>gd', '<cmd>lua require"lspsaga.provider".preview_definition()<CR>', opts)
 map('n', '<space>gh', '<cmd>lua require("lspsaga.provider").lsp_finder()<CR>', opts)
 map('n', '<space>ga', '<cmd>lua require("lspsaga.codeaction").code_action()<CR>', opts)
 map('v', '<space>ga', ':<C-U>lua require("lspsaga.codeaction").range_code_action()<CR>', opts)

@@ -94,6 +94,7 @@ packer.startup(
 
     use {
       'tami5/lspsaga.nvim'
+--      '~/dev/lspsaga.nvim',
     }
 
     -- autocompletion

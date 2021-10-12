@@ -59,5 +59,5 @@ saga.init_lsp_saga {
       quit = '<Esc>',
       scroll_down = '<Tab>',
       scroll_up = '<S-Tab>' -- quit can be a table
-  }
+  },
 }
