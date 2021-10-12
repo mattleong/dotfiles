@@ -92,10 +92,8 @@ packer.startup(
 --      "ray-x/lsp_signature.nvim",
 --    }
 
-    use {
-      'tami5/lspsaga.nvim'
---      '~/dev/lspsaga.nvim',
-    }
+    -- code actions, diagnostics
+    use { 'tami5/lspsaga.nvim' }
 
     -- autocompletion
     use {
