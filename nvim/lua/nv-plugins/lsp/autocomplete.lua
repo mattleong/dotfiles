@@ -49,7 +49,6 @@ cmp.setup({
     { name = 'vsnip' },
     { name = "nvim_lua" },
     { name = "path" },
-    { name = "calc" },
   },
   formatting = {
     format = function(entry, vim_item)

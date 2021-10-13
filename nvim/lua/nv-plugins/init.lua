@@ -59,8 +59,10 @@ packer.startup(
     }
 
     -- git
-    use 'tpope/vim-fugitive'
-    use 'tpope/vim-rhubarb'
+    use {
+      'tpope/vim-fugitive',
+      cmd = 'Git'
+    }
     use {
       'lewis6991/gitsigns.nvim',
       requires = { 'nvim-lua/plenary.nvim' },
@@ -69,7 +71,6 @@ packer.startup(
         require('gitsigns').setup()
       end
     }
-
 
     use { -- floating terminal
       'voldikss/vim-floaterm',
@@ -139,14 +140,12 @@ packer.startup(
     use { -- signature help
       "ray-x/lsp_signature.nvim",
       after = 'nvim-lspconfig'
-      -- event = "InsertEnter",
     }
 
     -- code actions, diagnostics
     use {
       'tami5/lspsaga.nvim',
       after = 'nvim-lspconfig',
-      -- event = "BufRead",
       config = function()
         require('nv-plugins.lsp.ide')
       end,
@@ -175,23 +174,7 @@ packer.startup(
     use {
       'folke/trouble.nvim',
       config = function()
-        local icons = require('nv-plugins.theme.icons')
-        local signs = {
-          Error = icons.error,
-          Warning = icons.warn,
-          Hint = icons.hint,
-          Information = icons.info,
-        }
-
-        require("trouble").setup {
-          mode = "lsp_document_diagnostics", -- "lsp_workspace_diagnostics", "lsp_document_diagnostics", "quickfix", "lsp_references", "loclist"
-          signs = {
-            error = signs.error,
-            warn = signs.warn,
-            info = signs.info,
-            hint = signs.hint
-          }
-        }
+        require('nv-plugins.lsp.diagnostics').trouble()
       end,
       cmd = {
         'Trouble',
@@ -222,7 +205,9 @@ packer.startup(
   end
 )
 
--- todo: move elsewhere...?
+-- todo: move mappings elsewhere...?
+require('nv-plugins.theme.highlights').init()
 require('nv-plugins.file-explorer.mappings').init()
 require('nv-plugins.file-navigation.mappings').init()
 require('nv-plugins.terminal.mappings').init()
+require('nv-plugins.disabled')
