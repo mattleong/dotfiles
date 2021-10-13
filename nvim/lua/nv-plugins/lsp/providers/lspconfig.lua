@@ -23,7 +23,7 @@ function M.on_attach(client, bufnr)
     }
   }, bufnr)
   -- signature highlight color
-  highlight('LspSignatureActiveParameter', 'None', colors.purple)
+  highlight('LspSignatureActiveParameter', 'None', colors.orange)
 
   -- needs to highlight after lsp start
   highlight('NormalFloat', 'Normal', 'NormalFloat')

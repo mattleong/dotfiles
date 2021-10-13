@@ -12,16 +12,42 @@ local use = packer.use
 
 packer.startup(
   function()
-    use 'wbthomason/packer.nvim'
+    use {
+      'wbthomason/packer.nvim',
+--      event = 'VimEnter'
+    }
 
-    -- icons
-    use 'kyazdani42/nvim-web-devicons'
+    use { -- color scheme
+      'folke/tokyonight.nvim',
+      config = function()
+        vim.g.tokyonight_style = 'night'
+        vim.g.tokyonight_sidebars = { "qf", "packer" }
+        vim.cmd 'color tokyonight'
+      end,
+    }
+
+    use { -- icons
+      'kyazdani42/nvim-web-devicons',
+      after = 'tokyonight.nvim'
+    }
+    --
+    -- theme stuff
+    use { -- statusline
+      'NTBBloodbath/galaxyline.nvim',
+      branch = 'main',
+      requires = { "kyazdani42/nvim-web-devicons", opt = true },
+      config = function()
+        require 'nv-plugins.statusline'
+      end,
+      after = 'nvim-web-devicons'
+    }
+
     -- file explorer
     use {
       'kyazdani42/nvim-tree.lua',
       config = function()
         require 'nv-plugins.file-explorer'.init()
-      end
+      end,
     }
 
     -- git
@@ -34,26 +60,6 @@ packer.startup(
       config = function()
         require('gitsigns').setup()
       end
-    }
-
-    use { -- coloe scheme
-      'folke/tokyonight.nvim',
-      config = function()
-        vim.g.tokyonight_style = 'night'
-        vim.g.tokyonight_sidebars = { "qf", "packer" }
-        vim.cmd 'color tokyonight'
-      end,
-    }
-
-    -- theme stuff
-    use { -- statusline
-      'NTBBloodbath/galaxyline.nvim',
-      branch = 'main',
-      requires = { "kyazdani42/nvim-web-devicons", opt = true },
-      config = function()
-        require 'nv-plugins.statusline'
-      end,
-      after = 'tokyonight.nvim'
     }
 
 
@@ -114,25 +120,39 @@ packer.startup(
 
     use { -- lsp
       'neovim/nvim-lspconfig',
+      requires = {
+        'kabouzeid/nvim-lspinstall',
+      },
+      config = function()
+        -- todo: doesn't belong in lsp
+        require 'nv-plugins.lsp'
+      end,
     }
-    use { -- lsp server install
-      'kabouzeid/nvim-lspinstall',
-    }
+
     use { -- signature help
       "ray-x/lsp_signature.nvim",
+      after = 'nvim-lspconfig'
       -- event = "InsertEnter",
     }
 
     -- code actions, diagnostics
     use {
       'tami5/lspsaga.nvim',
+      after = 'nvim-lspconfig',
       -- event = "BufRead",
+      config = function()
+        require('nv-plugins.lsp.ide')
+      end,
     }
 
     -- autocompletion
     use {
       'hrsh7th/nvim-cmp',
+      after = 'nvim-lspconfig',
       --    event = "InsertEnter",
+      config = function()
+        require('nv-plugins.lsp.autocomplete')
+      end,
       requires = {
         'hrsh7th/cmp-nvim-lsp',
         'hrsh7th/cmp-buffer',
@@ -193,4 +213,3 @@ packer.startup(
 
 -- todo: move elsewhere...
 require('nv-plugins.terminal.mappings').init()
-require 'nv-plugins.lsp'

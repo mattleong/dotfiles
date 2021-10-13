@@ -3,8 +3,8 @@ local highlight = require('nv-utils').highlight
 
 require('nv-plugins.lsp.providers')
 require('nv-plugins.lsp.diagnostics')
-require('nv-plugins.lsp.autocomplete')
-require('nv-plugins.lsp.ide')
+-- require('nv-plugins.lsp.autocomplete')
+-- require('nv-plugins.lsp.ide')
 
 -- diagnostic colors
 highlight('DiagnosticVirtualTextError', 'None', colors.error)
