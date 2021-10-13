@@ -10,7 +10,7 @@ end
 local packer = require 'packer'
 local use = packer.use
 
-packer.startup(
+packer.startup({
   function()
     use {
       'wbthomason/packer.nvim',
@@ -202,5 +202,15 @@ packer.startup(
         require 'nv-core.whichkey'
       end
     }
-  end
-)
+  end,
+  config = {
+    display = {
+      open_fn = function()
+        return require('packer.util').float({ border = 'single' })
+      end,
+      prompt_border = 'single'
+    },
+    auto_clean = true,
+    compile_on_sync = true,
+  }
+})

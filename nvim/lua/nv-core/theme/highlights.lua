@@ -13,8 +13,7 @@ function M.init()
   highlight('LspDiagnosticsSignInformation', 'None', colors.info)
   highlight('LspDiagnosticsSignHint', 'None', colors.teal)
   -- highlight('LspSagaBorder', 'None', colors.border)
-  highlight('FloatermBorder', 'None', colors.border)
-
+  highlight('FloatermBorder', 'None', colors.floatBorder)
 end
 
 function M.lsp()
@@ -22,9 +21,9 @@ function M.lsp()
   highlight('LspSignatureActiveParameter', 'None', colors.orange)
 
   -- needs to highlight after lsp start
-  highlight('NormalFloat', 'Normal', 'NormalFloat')
-  highlight('LspSagaDocTruncateLine', 'NormalFloat', colors.border)
-  highlight('LspSagaDiagnosticTruncateLine', 'NormalFloat', colors.border)
+--  highlight('NormalFloat', 'Normal', 'NormalFloat')
+  highlight('LspSagaDocTruncateLine', 'NormalFloat', colors.floatBorder)
+  highlight('LspSagaDiagnosticTruncateLine', 'NormalFloat', colors.floatBorder)
   highlight('LspSagaRenamePromptPrefix', 'NormalFloat', colors.teal)
   highlight('LspSagaDiagnosticHeader', 'NormalFloat', colors.blue)
   vim.cmd [[

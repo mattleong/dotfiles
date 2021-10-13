@@ -1,20 +1,21 @@
+local themeColors = require('tokyonight.colors').setup()
+
 local colors = {
-  white = '#9ea3c0',
-  bg = '#1f2335',
-  bg_highlight = '#292e42',
-  blue = '#7aa2f7',
-  darkBlue = '#3d59a1',
-  purple = '#9d7cd8',
-  orange = '#bb7a61',
-  teal = '#1abc9c',
-  red = '#db4b4b',
-  diffAdd = '#266d6a',
-  diffModified = '#bb7a61',
-  diffDeleted = '#914c54',
-  info = '#5d8fac',
-  error = '#db4b4b',
-  warn = '#ff9e64',
-  border = '#3d59a1',
+  white = themeColors.fg_dark,
+  bg = themeColors.bg,
+  bg_highlight = themeColors.bg_highlight,
+  blue = themeColors.blue,
+  purple = themeColors.magenta,
+  orange = themeColors.orange,
+  teal = themeColors.teal,
+  red = themeColors.red,
+  diffAdd = themeColors.git.add,
+  diffModified = themeColors.git.change,
+  diffDeleted = themeColors.git.delete,
+  info = themeColors.green2,
+  error = themeColors.magenta2,
+  warn = themeColors.orange,
+  floatBorder = themeColors.border_highlight,
 }
 
 return colors
