@@ -82,6 +82,11 @@ packer.startup(
       },
     }
 
+    -- comments and stuff
+    use {
+      'tpope/vim-commentary'
+    }
+
     use { -- lsp
       'neovim/nvim-lspconfig',
     }
@@ -109,6 +114,8 @@ packer.startup(
         'onsails/lspkind-nvim',
       },
     }
+
+    -- diagnostics
     use { 'folke/trouble.nvim' }
 
     -- colorized hex codes
