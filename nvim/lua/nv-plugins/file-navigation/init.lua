@@ -1,5 +1,5 @@
 local actions = require('telescope.actions')
-local mappings = require('nv-plugins.file-navigation.mappings')
+local mappings = require('nv-plugins.file-navigation.mappings').mappings()
 
 local M = {}
 
@@ -60,8 +60,6 @@ function M.init()
   }
 
   require('telescope').load_extension('fzf')
-
-  mappings.init()
 end
 
 return M

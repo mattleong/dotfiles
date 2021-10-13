@@ -3,9 +3,6 @@ local icons = require('nv-plugins.theme.icons')
 local M = {}
 
 function M.init()
-  -- mappings
-  require('nv-plugins.file-explorer.mappings').init()
-
   -- settings
   g.nvim_tree_git_hl = 1
   g.nvim_tree_refresh_wait = 300

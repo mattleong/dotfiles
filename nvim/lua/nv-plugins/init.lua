@@ -48,6 +48,14 @@ packer.startup(
       config = function()
         require 'nv-plugins.file-explorer'.init()
       end,
+      cmd = {
+        "NvimTreeClipboard",
+        "NvimTreeClose",
+        "NvimTreeFindFile",
+        "NvimTreeOpen",
+        "NvimTreeRefresh",
+        "NvimTreeToggle",
+      },
     }
 
     -- git
@@ -85,11 +93,12 @@ packer.startup(
       config = function()
         require 'nv-plugins.file-navigation'.init()
       end,
-      event = "BufRead",
+      cmd = "Telescope",
     }
 
     use { -- session management
       'rmagatti/auto-session',
+      event = 'VimEnter',
       config = function()
         require('auto-session').setup {
           pre_save_cmds = { 'NvimTreeClose', 'TroubleClose', 'cclose' },
@@ -106,7 +115,6 @@ packer.startup(
         'nvim-treesitter/nvim-treesitter-refactor',
       },
       config = function()
-        -- todo: doesn't belong in lsp
         require('nv-plugins.lsp.treesitter')
       end,
       -- event = 'BufEnter'
@@ -124,7 +132,6 @@ packer.startup(
         'kabouzeid/nvim-lspinstall',
       },
       config = function()
-        -- todo: doesn't belong in lsp
         require 'nv-plugins.lsp'
       end,
     }
@@ -149,7 +156,6 @@ packer.startup(
     use {
       'hrsh7th/nvim-cmp',
       after = 'nvim-lspconfig',
-      --    event = "InsertEnter",
       config = function()
         require('nv-plugins.lsp.autocomplete')
       end,
@@ -168,7 +174,6 @@ packer.startup(
     -- diagnostics
     use {
       'folke/trouble.nvim',
-      event = "BufRead",
       config = function()
         local icons = require('nv-plugins.theme.icons')
         local signs = {
@@ -187,7 +192,13 @@ packer.startup(
             hint = signs.hint
           }
         }
-      end
+      end,
+      cmd = {
+        'Trouble',
+        'TroubleClose',
+        'TroubleToggle',
+        'TroubleRefresh'
+      }
     }
 
     -- colorized hex codes
@@ -202,7 +213,7 @@ packer.startup(
 
     use {
       'AckslD/nvim-whichkey-setup.lua',
-      event = "BufRead",
+      event = "BufWinEnter",
       requires = {'liuchengxu/vim-which-key'},
       config = function()
         require 'nv-plugins.whichkey'
@@ -211,5 +222,7 @@ packer.startup(
   end
 )
 
--- todo: move elsewhere...
+-- todo: move elsewhere...?
+require('nv-plugins.file-explorer.mappings').init()
+require('nv-plugins.file-navigation.mappings').init()
 require('nv-plugins.terminal.mappings').init()
