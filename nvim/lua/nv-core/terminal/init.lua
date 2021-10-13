@@ -8,7 +8,7 @@ function M.init(set_map)
   g.floaterm_opener = 'vsplit'
 
   if set_map == true then
-    require('nv-plugins.terminal.mappings').init()
+    require('nv-core.terminal.mappings').init()
   end
 end
 

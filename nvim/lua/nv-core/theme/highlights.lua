@@ -1,4 +1,4 @@
-local colors = require('nv-plugins.theme.colors')
+local colors = require('nv-core.theme.colors')
 local highlight = require('nv-utils').highlight
 local M = {}
 

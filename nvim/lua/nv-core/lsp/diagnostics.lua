@@ -1,4 +1,4 @@
-local icons = require('nv-plugins.theme.icons')
+local icons = require('nv-core.theme.icons')
 local M = {}
 
 local signs = {

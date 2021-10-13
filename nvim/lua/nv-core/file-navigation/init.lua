@@ -1,5 +1,5 @@
 local actions = require('telescope.actions')
-local mappings = require('nv-plugins.file-navigation.mappings').mappings()
+local mappings = require('nv-core.file-navigation.mappings').mappings()
 
 local M = {}
 

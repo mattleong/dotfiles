@@ -37,7 +37,7 @@ packer.startup(
       branch = 'main',
       requires = { "kyazdani42/nvim-web-devicons", opt = true },
       config = function()
-        require 'nv-plugins.statusline'
+        require 'nv-core.statusline'
       end,
       after = 'nvim-web-devicons'
     }
@@ -46,7 +46,7 @@ packer.startup(
     use {
       'kyazdani42/nvim-tree.lua',
       config = function()
-        require 'nv-plugins.file-explorer'.init()
+        require 'nv-core.file-explorer'.init()
       end,
       cmd = {
         "NvimTreeClipboard",
@@ -77,7 +77,7 @@ packer.startup(
       opt = true,
       cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend', },
       config = function()
-        require('nv-plugins.terminal').init()
+        require('nv-core.terminal').init()
       end
     }
 
@@ -92,7 +92,7 @@ packer.startup(
         }
       },
       config = function()
-        require 'nv-plugins.file-navigation'.init()
+        require 'nv-core.file-navigation'.init()
       end,
       cmd = "Telescope",
     }
@@ -116,7 +116,7 @@ packer.startup(
         'nvim-treesitter/nvim-treesitter-refactor',
       },
       config = function()
-        require('nv-plugins.lsp.treesitter')
+        require('nv-core.lsp.treesitter')
       end,
       -- event = 'BufEnter'
     }
@@ -133,7 +133,7 @@ packer.startup(
         'kabouzeid/nvim-lspinstall',
       },
       config = function()
-        require 'nv-plugins.lsp'
+        require 'nv-core.lsp'
       end,
     }
 
@@ -147,7 +147,7 @@ packer.startup(
       'tami5/lspsaga.nvim',
       after = 'nvim-lspconfig',
       config = function()
-        require('nv-plugins.lsp.ide')
+        require('nv-core.lsp.ide')
       end,
     }
 
@@ -156,7 +156,7 @@ packer.startup(
       'hrsh7th/nvim-cmp',
       after = 'nvim-lspconfig',
       config = function()
-        require('nv-plugins.lsp.autocomplete')
+        require('nv-core.lsp.autocomplete')
       end,
       requires = {
         'hrsh7th/cmp-nvim-lsp',
@@ -174,7 +174,7 @@ packer.startup(
     use {
       'folke/trouble.nvim',
       config = function()
-        require('nv-plugins.lsp.diagnostics').trouble()
+        require('nv-core.lsp.diagnostics').trouble()
       end,
       cmd = {
         'Trouble',
@@ -199,15 +199,8 @@ packer.startup(
       event = "BufWinEnter",
       requires = {'liuchengxu/vim-which-key'},
       config = function()
-        require 'nv-plugins.whichkey'
+        require 'nv-core.whichkey'
       end
     }
   end
 )
-
--- todo: move mappings elsewhere...?
-require('nv-plugins.theme.highlights').init()
-require('nv-plugins.file-explorer.mappings').init()
-require('nv-plugins.file-navigation.mappings').init()
-require('nv-plugins.terminal.mappings').init()
-require('nv-plugins.disabled')

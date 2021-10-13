@@ -6,9 +6,6 @@ function M.on_attach(client, bufnr)
   -- Enable completion triggered by <c-x><c-o>
   buf_set_option('omnifunc', 'v:lua.vim.lsp.omnifunc')
 
-  -- Mappings.
-  require('nv-plugins.lsp.mappings')
-
   -- So that the only client with format capabilities is efm
   if client.name ~= 'efm' then
     client.resolved_capabilities.document_formatting = false
@@ -22,7 +19,8 @@ function M.on_attach(client, bufnr)
   }, bufnr)
 
 
-  require('nv-plugins.theme.highlights').lsp()
+  -- for some reason, lsp saga highlights have to happen here
+  require('nv-core.theme.highlights').lsp()
 end
 
 M.capabilities = require('cmp_nvim_lsp').update_capabilities(vim.lsp.protocol.make_client_capabilities())

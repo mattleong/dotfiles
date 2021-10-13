@@ -4,9 +4,9 @@ local diag = require('galaxyline.providers.diagnostic')
 local condition = require 'galaxyline.condition'
 local fileinfo = require('galaxyline.providers.fileinfo')
 local utils = require('nv-utils');
-local colors = require('nv-plugins.theme.colors');
+local colors = require('nv-core.theme.colors');
 local highlight = utils.highlight;
-local icons = require('nv-plugins.theme.icons')
+local icons = require('nv-core.theme.icons')
 
 local get_mode = function()
   local mode_colors = {

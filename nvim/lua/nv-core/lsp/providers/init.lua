@@ -1,6 +1,6 @@
-local defaults = require('nv-plugins.lsp.providers.lspconfig')
-local lua_config = require('nv-plugins.lsp.providers.lua')
-local efm_config = require('nv-plugins.lsp.providers.efm')
+local defaults = require('nv-core.lsp.providers.lspconfig')
+local lua_config = require('nv-core.lsp.providers.lua')
+local efm_config = require('nv-core.lsp.providers.efm')
 local lspinstall = require('lspinstall');
 local lspconfig = require('lspconfig');
 
