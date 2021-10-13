@@ -17,7 +17,12 @@ packer.startup(
     -- icons
     use 'kyazdani42/nvim-web-devicons'
     -- file explorer
-    use 'kyazdani42/nvim-tree.lua'
+    use {
+      'kyazdani42/nvim-tree.lua',
+      config = function()
+        require 'nv-plugins.file-explorer'.init()
+      end
+    }
 
     -- git
     use 'tpope/vim-fugitive'
@@ -31,13 +36,6 @@ packer.startup(
       end
     }
 
-    -- theme stuff
-    use { -- statusline
-      'NTBBloodbath/galaxyline.nvim',
-      branch = 'main',
-      requires = { "kyazdani42/nvim-web-devicons", opt = true }
-    }
-
     use { -- coloe scheme
       'folke/tokyonight.nvim',
       config = function()
@@ -47,10 +45,25 @@ packer.startup(
       end,
     }
 
+    -- theme stuff
+    use { -- statusline
+      'NTBBloodbath/galaxyline.nvim',
+      branch = 'main',
+      requires = { "kyazdani42/nvim-web-devicons", opt = true },
+      config = function()
+        require 'nv-plugins.statusline'
+      end,
+      after = 'tokyonight.nvim'
+    }
+
+
     use { -- floating terminal
       'voldikss/vim-floaterm',
       opt = true,
       cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend', },
+      config = function()
+        require('nv-plugins.terminal').init()
+      end
     }
 
     use { -- file navigation
@@ -58,10 +71,16 @@ packer.startup(
       requires = {
         'nvim-lua/popup.nvim',
         'nvim-lua/plenary.nvim',
+        {
+          'nvim-telescope/telescope-fzf-native.nvim',
+          run = 'make'
+        }
       },
+      config = function()
+        require 'nv-plugins.file-navigation'.init()
+      end,
+      event = "BufRead",
     }
-    use {'nvim-telescope/telescope-fzf-native.nvim', run = 'make' }
-
 
     use { -- session management
       'rmagatti/auto-session',
@@ -80,11 +99,17 @@ packer.startup(
         'JoosepAlviste/nvim-ts-context-commentstring',
         'nvim-treesitter/nvim-treesitter-refactor',
       },
+      config = function()
+        -- todo: doesn't belong in lsp
+        require('nv-plugins.lsp.treesitter')
+      end,
+      -- event = 'BufEnter'
     }
 
     -- comments and stuff
     use {
-      'tpope/vim-commentary'
+      'tpope/vim-commentary',
+      event = "InsertEnter",
     }
 
     use { -- lsp
@@ -95,14 +120,19 @@ packer.startup(
     }
     use { -- signature help
       "ray-x/lsp_signature.nvim",
+      -- event = "InsertEnter",
     }
 
     -- code actions, diagnostics
-    use { 'tami5/lspsaga.nvim' }
+    use {
+      'tami5/lspsaga.nvim',
+      -- event = "BufRead",
+    }
 
     -- autocompletion
     use {
       'hrsh7th/nvim-cmp',
+      --    event = "InsertEnter",
       requires = {
         'hrsh7th/cmp-nvim-lsp',
         'hrsh7th/cmp-buffer',
@@ -116,7 +146,29 @@ packer.startup(
     }
 
     -- diagnostics
-    use { 'folke/trouble.nvim' }
+    use {
+      'folke/trouble.nvim',
+      event = "BufRead",
+      config = function()
+        local icons = require('nv-plugins.theme.icons')
+        local signs = {
+          Error = icons.error,
+          Warning = icons.warn,
+          Hint = icons.hint,
+          Information = icons.info,
+        }
+
+        require("trouble").setup {
+          mode = "lsp_document_diagnostics", -- "lsp_workspace_diagnostics", "lsp_document_diagnostics", "quickfix", "lsp_references", "loclist"
+          signs = {
+            error = signs.error,
+            warn = signs.warn,
+            info = signs.info,
+            hint = signs.hint
+          }
+        }
+      end
+    }
 
     -- colorized hex codes
     use {
@@ -128,16 +180,17 @@ packer.startup(
       end
     }
 
-     use {
+    use {
       'AckslD/nvim-whichkey-setup.lua',
+      event = "BufRead",
       requires = {'liuchengxu/vim-which-key'},
+      config = function()
+        require 'nv-plugins.whichkey'
+      end
     }
   end
 )
 
-require 'nv-plugins.file-explorer'.init()
-require 'nv-plugins.file-navigation'.init()
-require 'nv-plugins.terminal'.init()
-require 'nv-plugins.statusline'
+-- todo: move elsewhere...
+require('nv-plugins.terminal.mappings').init()
 require 'nv-plugins.lsp'
-require 'nv-plugins.whichkey'

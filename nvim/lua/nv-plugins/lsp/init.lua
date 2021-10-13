@@ -2,7 +2,6 @@ local colors = require('nv-plugins.theme.colors')
 local highlight = require('nv-utils').highlight
 
 require('nv-plugins.lsp.providers')
-require('nv-plugins.lsp.treesitter')
 require('nv-plugins.lsp.diagnostics')
 require('nv-plugins.lsp.autocomplete')
 require('nv-plugins.lsp.ide')
