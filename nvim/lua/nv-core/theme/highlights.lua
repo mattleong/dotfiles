@@ -3,30 +3,40 @@ local highlight = require('nv-utils').highlight
 local M = {}
 
 function M.init()
-  -- diagnostic colors
-  highlight('DiagnosticVirtualTextError', 'None', colors.error)
-  highlight('DiagnosticVirtualTextWarn', 'None', colors.warn)
-  highlight('DiagnosticVirtualTextInfo', 'None', colors.info)
-  highlight('DiagnosticVirtualTextHint', 'None', colors.teal)
-  highlight('LspDiagnosticsSignError', 'None', colors.error)
-  highlight('LspDiagnosticsSignWarning', 'None', colors.warn)
-  highlight('LspDiagnosticsSignInformation', 'None', colors.info)
-  highlight('LspDiagnosticsSignHint', 'None', colors.teal)
   -- highlight('LspSagaBorder', 'None', colors.border)
   highlight('FloatermBorder', 'None', colors.floatBorder)
 end
 
 function M.lsp()
+  -- diagnostic colors
+  -- sign colors
+  highlight('LspDiagnosticsSignError', 'None', colors.error)
+  highlight('LspDiagnosticsSignWarning', 'None', colors.warn)
+  highlight('LspDiagnosticsSignInformation', 'None', colors.info)
+  highlight('LspDiagnosticsSignHint', 'None', colors.teal)
+
+
+  -- error colors
+  highlight('LspDiagnosticsError', 'None', colors.error)
+  highlight('LspDiagnosticsWarn', 'None', colors.warn)
+  highlight('LspDiagnosticsInfo', 'None', colors.info)
+  highlight('LspDiagnosticsHint', 'None', colors.teal)
+  highlight('DiagnosticError', 'None', colors.error)
+  highlight('DiagnosticWarn', 'None', colors.warn)
+  highlight('DiagnosticInfo', 'None', colors.info)
+  highlight('DiagnosticHint', 'None', colors.teal)
+
   -- signature highlight color
   highlight('LspSignatureActiveParameter', 'None', colors.orange)
 
   -- needs to highlight after lsp start
---  highlight('NormalFloat', 'Normal', 'NormalFloat')
   highlight('LspSagaDocTruncateLine', 'NormalFloat', colors.floatBorder)
   highlight('LspSagaDiagnosticTruncateLine', 'NormalFloat', colors.floatBorder)
+  highlight('LspSagaCodeActionTruncateLine', 'NormalFloat', colors.floatBorder)
   highlight('LspSagaRenamePromptPrefix', 'NormalFloat', colors.teal)
   highlight('LspSagaDiagnosticHeader', 'NormalFloat', colors.blue)
   vim.cmd [[
+    highlight clear NormalFloat
     highlight clear LspSagaHoverBorder
     highlight clear LspFloatWinBorder
     highlight clear LspSagaRenameBorder
@@ -48,6 +58,7 @@ function M.lsp()
     highlight link LspSagaAutoPreview FloatBorder
     highlight link LspSagaDefPreviewBorder FloatBorder
     highlight link LspSagaDiagnosticBorder FloatBorder
+    highlight link NormalFloat Normal
   ]]
 end
 
