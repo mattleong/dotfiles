@@ -2,7 +2,7 @@ local map = require('nv-utils').map
 
 -- Mappings.
 local opts = { noremap = true, silent = true }
-local popup_opts = '{ border = "single", focusable = false, }'
+-- local popup_opts = '{ border = "single", focusable = false, }'
 -- local win_opts = '{ popup_opts = ' .. popup_opts .. '}'
 
 -- See `:help vim.lsp.*` for documentation on any of the below functions
