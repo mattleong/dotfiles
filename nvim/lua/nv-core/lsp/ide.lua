@@ -73,4 +73,3 @@ vim.lsp.handlers["textDocument/hover"] =
     vim.lsp.handlers.hover,
     { border = "single" }
   )
-

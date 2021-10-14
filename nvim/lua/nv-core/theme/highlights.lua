@@ -15,11 +15,10 @@ function M.lsp()
   highlight('LspDiagnosticsSignInformation', 'None', colors.info)
   highlight('LspDiagnosticsSignHint', 'None', colors.hint)
 
-  highlight('DiagnosticUnderlineError', 'None', colors.error)
-  highlight('DiagnosticUnderlineWarning', 'None', colors.warn)
-  highlight('DiagnosticUnderlineInformation', 'None', colors.info)
-  highlight('DiagnosticUnderlineHint', 'None', colors.hint)
-
+  -- highlight('DiagnosticUnderlineError', 'None', colors.error)
+  --highlight('DiagnosticUnderlineWarning', 'None', colors.warn)
+  --highlight('DiagnosticUnderlineInformation', 'None', colors.info)
+  --highlight('DiagnosticUnderlineHint', 'None', colors.hint)
 
   -- error colors
   highlight('LspDiagnosticsError', 'None', colors.error)

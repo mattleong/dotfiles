@@ -19,7 +19,7 @@ function M.init()
   --    prefix = '👾',
     },
     signs = true,
-    severity_sort = true,
+--    severity_sort = true,
   })
 
   if vim.diagnostic ~= nil then
