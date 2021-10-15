@@ -1,3 +1,4 @@
+local util = require('lspconfig').util
 local M = {}
 
 function M.on_attach(client, bufnr)
@@ -45,5 +46,15 @@ function M.on_attach(client, bufnr)
   -- required to fix code action ranges and filter diagnostics
   ts_utils.setup_client(client)
 end
+
+M.config = {
+  root_dir = function(fname)
+    return util.root_pattern("tsconfig.base.json")(fname) or
+    util.root_pattern(".git")(fname) or
+    util.root_pattern("package.json")(fname) or
+    util.root_pattern(".eslintrc.js")(fname) or
+    util.root_pattern("tsconfig.json")(fname);
+  end,
+}
 
 return M

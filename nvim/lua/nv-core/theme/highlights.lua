@@ -3,7 +3,6 @@ local highlight = require('nv-utils').highlight
 local M = {}
 
 function M.init()
-  -- highlight('LspSagaBorder', 'None', colors.border)
   highlight('FloatermBorder', 'None', colors.floatBorder)
 end
 

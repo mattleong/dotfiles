@@ -42,14 +42,15 @@ function M.init()
           },
         },
         sort_mru = true,
+        preview_title = false,
       },
       lsp_references = {
-        mappings = mappings.normal,
+--        mappings = mappings.normal,
         initial_mode = 'normal',
         sorting_strategy = 'ascending',
         layout_strategy = 'cursor',
---        preview_title = false,
-        dynamic_preview_title = true,
+        preview_title = '',
+--       dynamic_preview_title = true,
         results_title = false;
         prompt_title = 'References',
         layout_config = {
@@ -58,7 +59,6 @@ function M.init()
         }
       },
       lsp_code_actions = {
-        mappings = mappings.normal,
         initial_mode = 'normal',
         sorting_strategy = 'ascending',
         layout_strategy = 'cursor',
@@ -71,7 +71,6 @@ function M.init()
         }
       },
       lsp_range_code_actions = {
-        mappings = mappings.normal,
         initial_mode = 'normal',
         sorting_strategy = 'ascending',
         layout_strategy = 'cursor',

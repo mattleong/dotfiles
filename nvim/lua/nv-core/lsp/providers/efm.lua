@@ -1,5 +1,4 @@
 local util = require('lspconfig').util
-local lspconfig = require('lspconfig')
 
 local eslint = {
   lintCommand = 'eslint_d -f unix --stdin --stdin-filename ${INPUT}',
@@ -27,8 +26,10 @@ return {
   init_options = { documentFormatting = true, codeAction = true },
   root_dir = function(fname)
     return util.root_pattern("tsconfig.base.json")(fname) or
-    util.root_pattern("tsconfig.json")(fname) or
-    util.root_pattern(".eslintrc.js", ".git")(fname);
+    util.root_pattern(".git")(fname) or
+    util.root_pattern("package.json")(fname) or
+    util.root_pattern(".eslintrc.js")(fname) or
+    util.root_pattern("tsconfig.json")(fname);
   end,
   filetypes = vim.tbl_keys(filetypes),
   settings = {

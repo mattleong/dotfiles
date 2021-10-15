@@ -12,10 +12,7 @@ local use = packer.use
 
 packer.startup({
   function()
-    use {
-      'wbthomason/packer.nvim',
---      event = 'VimEnter'
-    }
+    use { 'wbthomason/packer.nvim' }
 
     use { -- color scheme
       'folke/tokyonight.nvim',
@@ -30,7 +27,7 @@ packer.startup({
       'kyazdani42/nvim-web-devicons',
       after = 'tokyonight.nvim'
     }
-    --
+
     -- theme stuff
     use { -- statusline
       'NTBBloodbath/galaxyline.nvim',
@@ -56,75 +53,6 @@ packer.startup({
         "NvimTreeRefresh",
         "NvimTreeToggle",
       },
-    }
-
-    -- git
-    use {
-      'tpope/vim-fugitive',
-      cmd = 'Git'
-    }
-    use {
-      'lewis6991/gitsigns.nvim',
-      requires = { 'nvim-lua/plenary.nvim' },
-      event = "BufRead",
-      config = function()
-        require('gitsigns').setup()
-      end
-    }
-
-    use { -- floating terminal
-      'voldikss/vim-floaterm',
-      opt = true,
-      cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend', },
-      config = function()
-        require('nv-core.terminal').init()
-      end
-    }
-
-    use { -- file navigation
-      'nvim-telescope/telescope.nvim',
-      requires = {
-        'nvim-lua/popup.nvim',
-        'nvim-lua/plenary.nvim',
-        {
-          'nvim-telescope/telescope-fzf-native.nvim',
-          run = 'make'
-        }
-      },
-      config = function()
-        require 'nv-core.file-navigation'.init()
-      end,
-      event = 'BufRead'
-    }
-
-    use { -- session management
-      'rmagatti/auto-session',
-      event = 'VimEnter',
-      config = function()
-        require('auto-session').setup {
-          pre_save_cmds = { 'NvimTreeClose', 'TroubleClose', 'cclose' },
-        }
-      end,
-    }
-
-    use { -- lang/syntax stuff
-      'nvim-treesitter/nvim-treesitter',
-      run = ':TSUpdate',
-      requires = {
-        'windwp/nvim-ts-autotag',
-        'JoosepAlviste/nvim-ts-context-commentstring',
-        'nvim-treesitter/nvim-treesitter-refactor',
-      },
-      config = function()
-        require('nv-core.lsp.treesitter')
-      end,
-      -- event = 'BufEnter'
-    }
-
-    -- comments and stuff
-    use {
-      'tpope/vim-commentary',
-      event = "BufRead",
     }
 
     use { -- lsp
@@ -174,6 +102,75 @@ packer.startup({
         'TroubleToggle',
         'TroubleRefresh'
       }
+    }
+
+    -- git
+    use {
+      'tpope/vim-fugitive',
+      cmd = 'Git'
+    }
+    use {
+      'lewis6991/gitsigns.nvim',
+      requires = { 'nvim-lua/plenary.nvim' },
+      event = "BufRead",
+      config = function()
+        require('gitsigns').setup()
+      end
+    }
+
+    use { -- floating terminal
+      'voldikss/vim-floaterm',
+      opt = true,
+      cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend', },
+      config = function()
+        require('nv-core.terminal').init()
+      end
+    }
+
+    use { -- file navigation
+      'nvim-telescope/telescope.nvim',
+      requires = {
+        'nvim-lua/popup.nvim',
+        'nvim-lua/plenary.nvim',
+        {
+          'nvim-telescope/telescope-fzf-native.nvim',
+          run = 'make'
+        }
+      },
+      config = function()
+        require 'nv-core.file-navigation'.init()
+      end,
+--      event = 'BufEnter'
+    }
+
+    use { -- session management
+      'rmagatti/auto-session',
+      event = 'VimEnter',
+      config = function()
+        require('auto-session').setup {
+          pre_save_cmds = { 'NvimTreeClose', 'TroubleClose', 'cclose' },
+        }
+      end,
+    }
+
+    use { -- lang/syntax stuff
+      'nvim-treesitter/nvim-treesitter',
+      run = ':TSUpdate',
+      requires = {
+        'windwp/nvim-ts-autotag',
+        'JoosepAlviste/nvim-ts-context-commentstring',
+        'nvim-treesitter/nvim-treesitter-refactor',
+      },
+      config = function()
+        require('nv-core.lsp.treesitter')
+      end,
+      -- event = 'BufEnter'
+    }
+
+    -- comments and stuff
+    use {
+      'tpope/vim-commentary',
+      event = "BufRead",
     }
 
     -- colorized hex codes

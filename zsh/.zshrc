@@ -83,7 +83,7 @@ export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/
 
 alias mj='ssh -A -p 22 mleong@$MJ_PREPROD_IP'
 
-nvm use default
+nvm use default > /dev/null
 
 # work stuff
 mg() {

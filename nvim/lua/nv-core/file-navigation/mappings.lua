@@ -24,7 +24,7 @@ function M.mappings()
 	  }
 	};
 
-	return normal 
+	return normal
 end
 
 return M
