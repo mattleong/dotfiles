@@ -6,9 +6,16 @@ function M.on_attach(client, bufnr)
   -- Enable completion triggered by <c-x><c-o>
   buf_set_option('omnifunc', 'v:lua.vim.lsp.omnifunc')
 
+  require('nv-core.lsp.mappings')
+
   -- So that the only client with format capabilities is efm
   if client.name ~= 'efm' then
     client.resolved_capabilities.document_formatting = false
+    client.resolved_capabilities.document_range_formatting = false
+  end
+
+  if client.name == 'typescript' then
+    require('nv-core.lsp.providers.tsserver').on_attach(client, bufnr)
   end
 
   require('lsp_signature').on_attach({

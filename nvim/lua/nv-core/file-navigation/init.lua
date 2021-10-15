@@ -48,8 +48,8 @@ function M.init()
         initial_mode = 'normal',
         sorting_strategy = 'ascending',
         layout_strategy = 'cursor',
-        preview_title = false,
---        dynamic_preview_title = true,
+--        preview_title = false,
+        dynamic_preview_title = true,
         results_title = false;
         prompt_title = 'References',
         layout_config = {

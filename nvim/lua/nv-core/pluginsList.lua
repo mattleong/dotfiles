@@ -131,6 +131,7 @@ packer.startup({
       'neovim/nvim-lspconfig',
       requires = {
         'kabouzeid/nvim-lspinstall',
+        'jose-elias-alvarez/nvim-lsp-ts-utils',
       },
       config = function()
         require 'nv-core.lsp'
@@ -140,15 +141,6 @@ packer.startup({
     use { -- signature help
       "ray-x/lsp_signature.nvim",
       after = 'nvim-lspconfig'
-    }
-
-    -- code actions, diagnostics
-    use {
-      'tami5/lspsaga.nvim',
-      after = 'nvim-lspconfig',
-      config = function()
-        require('nv-core.lsp.ide')
-      end,
     }
 
     -- autocompletion

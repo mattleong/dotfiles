@@ -1,4 +1,4 @@
-local defaults = require('nv-core.lsp.providers.lspconfig')
+local default_config = require('nv-core.lsp.providers.lspconfig')
 local lua_config = require('nv-core.lsp.providers.lua')
 local efm_config = require('nv-core.lsp.providers.efm')
 local lspinstall = require('lspinstall');
@@ -9,11 +9,13 @@ local function setup_servers()
   local servers = lspinstall.installed_servers()
   for _, server in pairs(servers) do
     if server == 'lua' then
-      lspconfig[server].setup(lua_config)
+      local config = vim.tbl_deep_extend('force', default_config, lua_config)
+      lspconfig[server].setup(config)
     elseif server == 'efm' then
-      lspconfig[server].setup(efm_config)
+      local config = vim.tbl_deep_extend('force', default_config, lua_config)
+      lspconfig[server].setup(config)
     else
-      lspconfig[server].setup(defaults)
+      lspconfig[server].setup(default_config)
     end
   end
 

@@ -9,19 +9,6 @@ local signs = {
 }
 
 function M.init()
-  vim.diagnostic.config({
-    underline = false,
-    update_in_insert = false,
-    virtual_text = {
-      spacing = 4,
-      source = 'always',
-      severity = 'error'
-  --    prefix = '👾',
-    },
-    signs = true,
---    severity_sort = true,
-  })
-
   if vim.diagnostic ~= nil then
     local t = vim.fn.sign_getdefined('DiagnosticSignWarn')
     if vim.tbl_isempty(t) then
