@@ -18,7 +18,6 @@ function M.on_attach(client, bufnr)
     }
   }, bufnr)
 
-
   -- for some reason, lsp saga highlights have to happen here
   require('nv-core.theme.highlights').lsp()
 end

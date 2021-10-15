@@ -1,5 +1,6 @@
 local actions = require('telescope.actions')
 local mappings = require('nv-core.file-navigation.mappings').mappings()
+local icons = require('nv-core.theme.icons')
 
 local M = {}
 
@@ -7,7 +8,7 @@ function M.init()
   require('telescope').setup {
     defaults = {
       prompt_prefix = '🔍 ',
-      selection_caret = ' ',
+      selection_caret = icons.folder.arrow_closed,
       file_ignore_patterns = {
         ".git/"
       },
@@ -41,6 +42,69 @@ function M.init()
           },
         },
         sort_mru = true,
+      },
+      lsp_references = {
+        mappings = mappings.normal,
+        initial_mode = 'normal',
+        sorting_strategy = 'ascending',
+        layout_strategy = 'cursor',
+        preview_title = false,
+--        dynamic_preview_title = true,
+        results_title = false;
+        prompt_title = 'References',
+        layout_config = {
+          width = 0.4,
+          height = 0.4,
+        }
+      },
+      lsp_code_actions = {
+        mappings = mappings.normal,
+        initial_mode = 'normal',
+        sorting_strategy = 'ascending',
+        layout_strategy = 'cursor',
+        preview = false,
+        prompt_title = 'Code Actions',
+        results_title = '';
+        layout_config = {
+          width = 0.3,
+          height = 0.3,
+        }
+      },
+      lsp_range_code_actions = {
+        mappings = mappings.normal,
+        initial_mode = 'normal',
+        sorting_strategy = 'ascending',
+        layout_strategy = 'cursor',
+        preview = false,
+        prompt_title = 'Code Actions',
+        results_title = '';
+        layout_config = {
+          width = 0.3,
+          height = 0.3,
+        }
+      },
+      lsp_document_diagnostics = {
+        initial_mode = 'normal',
+        sorting_strategy = 'ascending',
+        layout_strategy = 'cursor',
+        prompt_title = 'Diagnostics',
+        results_title = '';
+        layout_config = {
+          width = 0.5,
+          height = 0.5,
+        },
+        mappings = mappings.normal,
+      },
+      lsp_definitions = {
+        layout_strategy = 'cursor',
+        prompt_title = 'Definitions',
+        preview_title = false,
+        results_title = false;
+        layout_config = {
+          width = 0.5,
+          height = 0.5,
+        },
+        mappings = mappings.normal,
       },
       find_files = {
         prompt_title = '✨ Search Project ✨',

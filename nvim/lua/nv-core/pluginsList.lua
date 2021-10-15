@@ -94,7 +94,7 @@ packer.startup({
       config = function()
         require 'nv-core.file-navigation'.init()
       end,
-      cmd = "Telescope",
+      event = 'BufRead'
     }
 
     use { -- session management
@@ -124,7 +124,7 @@ packer.startup({
     -- comments and stuff
     use {
       'tpope/vim-commentary',
-      event = "InsertEnter",
+      event = "BufRead",
     }
 
     use { -- lsp
