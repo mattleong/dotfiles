@@ -1,34 +1,37 @@
 local default_config = require('nv-core.lsp.providers.lspconfig')
-local lua_config = require('nv-core.lsp.providers.lua')
-local efm_config = require('nv-core.lsp.providers.efm')
-local ts_config = require('nv-core.lsp.providers.tsserver').config
-local lspinstall = require('lspinstall');
-local lspconfig = require('lspconfig');
+local lsp_installer = require("nvim-lsp-installer")
 
-local function setup_servers()
-  lspinstall.setup()
-  local servers = lspinstall.installed_servers()
-  for _, server in pairs(servers) do
-    if server == 'lua' then
-      local config = vim.tbl_deep_extend('force', default_config, lua_config)
-      lspconfig[server].setup(config)
-    elseif server == 'efm' then
-      local config = vim.tbl_deep_extend('force', default_config, efm_config)
-      lspconfig[server].setup(config)
-    elseif server == 'typescript' then
-      local config = vim.tbl_deep_extend('force', default_config, ts_config)
-      lspconfig[server].setup(config)
-    else
-      lspconfig[server].setup(default_config)
-    end
+lsp_installer.settings {
+  ui = {
+    keymaps = {
+      -- Keymap to expand a server in the UI
+      toggle_server_expand = "i",
+      -- Keymap to install a server
+      install_server = "<CR>",
+      -- Keymap to reinstall/update a server
+      update_server = "u",
+      -- Keymap to uninstall a server
+      uninstall_server = "x",
+    },
+  }
+}
+
+lsp_installer.on_server_ready(function(server)
+  local opts = default_config
+
+  if server.name == 'sumneko_lua' then
+    local lua_config = require('nv-core.lsp.providers.lua')
+    opts = vim.tbl_deep_extend('force', default_config, lua_config)
+  elseif server.name == 'tsserver' then
+    local ts_config = require('nv-core.lsp.providers.tsserver')
+    opts = vim.tbl_deep_extend('force', default_config, ts_config)
+  elseif server.name == 'eslint' then
+    local eslint_config = require('nv-core.lsp.providers.eslint')
+    opts = vim.tbl_deep_extend('force', default_config, eslint_config)
   end
 
-  -- Automatically reload after `:LspInstall <server>` so we don't have to restart neovim
-  lspinstall.post_install_hook = function ()
-    setup_servers() -- reload installed servers
-    vim.cmd("bufdo e") -- this triggers the FileType autocmd that starts the server
-  end
-end
-
-setup_servers()
+  -- This setup() function is exactly the same as lspconfig's setup function (:help lspconfig-quickstart)
+  server:setup(opts)
+  vim.cmd [[ do User LspAttachBuffers ]]
+end)
 

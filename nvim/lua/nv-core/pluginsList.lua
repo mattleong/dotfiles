@@ -56,9 +56,9 @@ packer.startup({
     }
 
     use { -- lsp
-      'neovim/nvim-lspconfig',
+      'williamboman/nvim-lsp-installer',
       requires = {
-        'kabouzeid/nvim-lspinstall',
+        'neovim/nvim-lspconfig',
         'jose-elias-alvarez/nvim-lsp-ts-utils',
       },
       config = function()

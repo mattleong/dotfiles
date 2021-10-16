@@ -4,6 +4,7 @@ local M = {}
 local signs = {
   Error = icons.error .. ' ',
   Warning = icons.warn .. ' ',
+  Warn = icons.warn .. ' ',
   Hint = icons.hint .. ' ',
   Information = icons.info .. ' ',
 }

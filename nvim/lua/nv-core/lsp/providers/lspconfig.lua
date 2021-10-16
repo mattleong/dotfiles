@@ -1,3 +1,4 @@
+local util = require('lspconfig').util
 local M = {}
 
 function M.on_attach(client, bufnr)
@@ -34,5 +35,13 @@ M.capabilities = require('cmp_nvim_lsp').update_capabilities(vim.lsp.protocol.ma
 M.flags = {
   debounce_text_changes = 150,
 }
+
+M.root_dir = function(fname)
+  return util.root_pattern(".git")(fname) or
+  util.root_pattern("tsconfig.base.json")(fname) or
+  util.root_pattern("package.json")(fname) or
+  util.root_pattern(".eslintrc.js")(fname) or
+  util.root_pattern("tsconfig.json")(fname);
+end
 
 return M
