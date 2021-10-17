@@ -41,7 +41,8 @@ function M.init()
             ['d'] = actions.delete_buffer
           },
         },
-        sort_mru = true,
+--        sort_mru = true,
+        sort_lastused = true,
         preview_title = false,
       },
       lsp_references = {

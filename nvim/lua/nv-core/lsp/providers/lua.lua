@@ -1,6 +1,3 @@
-local defaults = require('nv-core.lsp.providers.lspconfig')
-
--- set up lua lsp
 local sumneko_binary_path = vim.fn.exepath('lua-language-server')
 local sumneko_root_path = vim.fn.fnamemodify(sumneko_binary_path, ':h:h:h')
 
@@ -32,7 +29,4 @@ return {
       },
     },
   },
-  on_attach = defaults.on_attach,
-  capabilities = defaults.capabilities,
-  flags = defaults.flags,
 }

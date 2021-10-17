@@ -59,7 +59,7 @@ packer.startup({
       'williamboman/nvim-lsp-installer',
       requires = {
         'neovim/nvim-lspconfig',
-        'jose-elias-alvarez/nvim-lsp-ts-utils',
+--        'jose-elias-alvarez/nvim-lsp-ts-utils',
       },
       config = function()
         require 'nv-core.lsp'
@@ -68,13 +68,13 @@ packer.startup({
 
     use { -- signature help
       "ray-x/lsp_signature.nvim",
-      after = 'nvim-lspconfig'
+      -- after = 'nvim-lspconfig'
     }
 
     -- autocompletion
     use {
       'hrsh7th/nvim-cmp',
-      after = 'nvim-lspconfig',
+--      after = 'nvim-lspconfig',
       config = function()
         require('nv-core.lsp.autocomplete')
       end,
@@ -140,7 +140,6 @@ packer.startup({
       config = function()
         require 'nv-core.file-navigation'.init()
       end,
---      event = 'BufEnter'
     }
 
     use { -- session management

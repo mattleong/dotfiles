@@ -25,6 +25,9 @@ lsp_installer.on_server_ready(function(server)
   elseif server.name == 'tsserver' then
     local ts_config = require('nv-core.lsp.providers.tsserver')
     opts = vim.tbl_deep_extend('force', default_config, ts_config)
+  elseif server.name == 'efm' then
+    local ts_config = require('nv-core.lsp.providers.efm')
+    opts = vim.tbl_deep_extend('force', default_config, ts_config)
   elseif server.name == 'eslint' then
     local eslint_config = require('nv-core.lsp.providers.eslint')
     opts = vim.tbl_deep_extend('force', default_config, eslint_config)
