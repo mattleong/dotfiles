@@ -1,4 +1,4 @@
-local lspconfig = require('lspconfig')
+local util = require('lspconfig').util
 
 local stylua = {
   formatCommand = 'stylua -s --quote-style AutoPreferSingle --indent-type Spaces --indent-width 2 -',
@@ -27,7 +27,13 @@ local filetypes = {
 
 return {
   init_options = { documentFormatting = true, codeAction = true },
-  root_dir = lspconfig.util.root_pattern({ '.git/', '.' }),
+  root_dir = function(fname)
+    return util.root_pattern('.git')(fname)
+      or util.root_pattern('tsconfig.base.json')(fname)
+      or util.root_pattern('package.json')(fname)
+      or util.root_pattern('.eslintrc.js')(fname)
+      or util.root_pattern('tsconfig.json')(fname)
+  end,
   filetypes = vim.tbl_keys(filetypes),
   settings = { languages = filetypes },
 }
