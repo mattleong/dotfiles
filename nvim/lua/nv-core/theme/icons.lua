@@ -23,7 +23,7 @@ local icons = {
     renamed = '➜',
     untracked = '★',
     deleted = '',
-    ignored = '◌'
+    ignored = '◌',
   },
   folder = {
     arrow_open = '',

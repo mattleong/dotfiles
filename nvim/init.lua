@@ -1,3 +1,3 @@
-require "nv-core"
-require "nv-mappings"
-require "nv-editor"
+require('nv-core')
+require('nv-mappings')
+require('nv-editor')

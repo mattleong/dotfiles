@@ -5,12 +5,12 @@ local icons = require('nv-core.theme.icons')
 local M = {}
 
 function M.init()
-  require('telescope').setup {
+  require('telescope').setup({
     defaults = {
       prompt_prefix = '🔍 ',
       selection_caret = icons.folder.arrow_closed,
       file_ignore_patterns = {
-        ".git/"
+        '.git/',
       },
       vimgrep_arguments = {
         'rg',
@@ -21,43 +21,43 @@ function M.init()
         '--with-filename',
         '--line-number',
         '--column',
-        '--smart-case'
+        '--smart-case',
       },
     },
     extensions = {
       fzf = {
-        fuzzy = true,                    -- false will only do exact matching
-        override_generic_sorter = true,  -- override the generic sorter
-        override_file_sorter = true,     -- override the file sorter
-        case_mode = "smart_case",        -- or "ignore_case" or "respect_case"
+        fuzzy = true, -- false will only do exact matching
+        override_generic_sorter = true, -- override the generic sorter
+        override_file_sorter = true, -- override the file sorter
+        case_mode = 'smart_case', -- or "ignore_case" or "respect_case"
         -- the default case_mode is "smart_case"
-      }
+      },
     },
-    pickers ={
+    pickers = {
       buffers = {
         prompt_title = '✨ Search Buffers ✨',
         mappings = {
           n = {
-            ['d'] = actions.delete_buffer
+            ['d'] = actions.delete_buffer,
           },
         },
         sort_mru = true,
---        sort_lastused = true,
+        --        sort_lastused = true,
         preview_title = false,
       },
       lsp_references = {
---        mappings = mappings.normal,
+        --        mappings = mappings.normal,
         initial_mode = 'normal',
         sorting_strategy = 'ascending',
         layout_strategy = 'cursor',
         preview_title = '',
---       dynamic_preview_title = true,
-        results_title = false;
+        --       dynamic_preview_title = true,
+        results_title = false,
         prompt_title = 'References',
         layout_config = {
           width = 0.4,
           height = 0.4,
-        }
+        },
       },
       lsp_code_actions = {
         initial_mode = 'normal',
@@ -65,11 +65,11 @@ function M.init()
         layout_strategy = 'cursor',
         preview = false,
         prompt_title = 'Code Actions',
-        results_title = '';
+        results_title = '',
         layout_config = {
           width = 0.3,
           height = 0.3,
-        }
+        },
       },
       lsp_range_code_actions = {
         initial_mode = 'normal',
@@ -77,18 +77,18 @@ function M.init()
         layout_strategy = 'cursor',
         preview = false,
         prompt_title = 'Code Actions',
-        results_title = '';
+        results_title = '',
         layout_config = {
           width = 0.3,
           height = 0.3,
-        }
+        },
       },
       lsp_document_diagnostics = {
         initial_mode = 'normal',
         sorting_strategy = 'ascending',
         layout_strategy = 'cursor',
         prompt_title = 'Diagnostics',
-        results_title = '';
+        results_title = '',
         layout_config = {
           width = 0.5,
           height = 0.5,
@@ -99,7 +99,7 @@ function M.init()
         layout_strategy = 'cursor',
         prompt_title = 'Definitions',
         preview_title = false,
-        results_title = false;
+        results_title = false,
         layout_config = {
           width = 0.5,
           height = 0.5,
@@ -121,7 +121,7 @@ function M.init()
         mappings = mappings.normal,
       },
     },
-  }
+  })
 
   require('telescope').load_extension('fzf')
 end

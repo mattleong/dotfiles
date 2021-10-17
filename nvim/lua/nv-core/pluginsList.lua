@@ -7,74 +7,74 @@ if fn.empty(fn.glob(install_path)) > 0 then
   cmd('!git clone https://github.com/wbthomason/packer.nvim ' .. install_path)
 end
 
-local packer = require 'packer'
+local packer = require('packer')
 local use = packer.use
 
 packer.startup({
   function()
-    use { 'wbthomason/packer.nvim' }
+    use({ 'wbthomason/packer.nvim' })
 
-    use { -- color scheme
+    use({ -- color scheme
       'folke/tokyonight.nvim',
       config = function()
         vim.g.tokyonight_style = 'night'
-        vim.g.tokyonight_sidebars = { "qf", "packer" }
-        vim.cmd 'color tokyonight'
+        vim.g.tokyonight_sidebars = { 'qf', 'packer' }
+        vim.cmd('color tokyonight')
       end,
-    }
+    })
 
-    use { -- icons
+    use({ -- icons
       'kyazdani42/nvim-web-devicons',
-      after = 'tokyonight.nvim'
-    }
+      after = 'tokyonight.nvim',
+    })
 
     -- theme stuff
-    use { -- statusline
+    use({ -- statusline
       'NTBBloodbath/galaxyline.nvim',
       branch = 'main',
-      requires = { "kyazdani42/nvim-web-devicons", opt = true },
+      requires = { 'kyazdani42/nvim-web-devicons', opt = true },
       config = function()
-        require 'nv-core.statusline'
+        require('nv-core.statusline')
       end,
-      after = 'nvim-web-devicons'
-    }
+      after = 'nvim-web-devicons',
+    })
 
     -- file explorer
-    use {
+    use({
       'kyazdani42/nvim-tree.lua',
       config = function()
-        require 'nv-core.file-explorer'.init()
+        require('nv-core.file-explorer').init()
       end,
       cmd = {
-        "NvimTreeClipboard",
-        "NvimTreeClose",
-        "NvimTreeFindFile",
-        "NvimTreeOpen",
-        "NvimTreeRefresh",
-        "NvimTreeToggle",
+        'NvimTreeClipboard',
+        'NvimTreeClose',
+        'NvimTreeFindFile',
+        'NvimTreeOpen',
+        'NvimTreeRefresh',
+        'NvimTreeToggle',
       },
-    }
+    })
 
-    use { -- lsp
+    use({ -- lsp
       'williamboman/nvim-lsp-installer',
       requires = {
         'neovim/nvim-lspconfig',
---        'jose-elias-alvarez/nvim-lsp-ts-utils',
+        --        'jose-elias-alvarez/nvim-lsp-ts-utils',
       },
       config = function()
-        require 'nv-core.lsp'
+        require('nv-core.lsp')
       end,
-    }
+    })
 
-    use { -- signature help
-      "ray-x/lsp_signature.nvim",
+    use({ -- signature help
+      'ray-x/lsp_signature.nvim',
       -- after = 'nvim-lspconfig'
-    }
+    })
 
     -- autocompletion
-    use {
+    use({
       'hrsh7th/nvim-cmp',
---      after = 'nvim-lspconfig',
+      --      after = 'nvim-lspconfig',
       config = function()
         require('nv-core.lsp.autocomplete')
       end,
@@ -88,10 +88,10 @@ packer.startup({
         'windwp/nvim-autopairs',
         'onsails/lspkind-nvim',
       },
-    }
+    })
 
     -- diagnostics
-    use {
+    use({
       'folke/trouble.nvim',
       config = function()
         require('nv-core.lsp.diagnostics').trouble()
@@ -100,59 +100,59 @@ packer.startup({
         'Trouble',
         'TroubleClose',
         'TroubleToggle',
-        'TroubleRefresh'
-      }
-    }
+        'TroubleRefresh',
+      },
+    })
 
     -- git
-    use {
+    use({
       'tpope/vim-fugitive',
-      cmd = 'Git'
-    }
-    use {
+      cmd = 'Git',
+    })
+    use({
       'lewis6991/gitsigns.nvim',
       requires = { 'nvim-lua/plenary.nvim' },
-      event = "BufRead",
+      event = 'BufRead',
       config = function()
         require('gitsigns').setup()
-      end
-    }
+      end,
+    })
 
-    use { -- floating terminal
+    use({ -- floating terminal
       'voldikss/vim-floaterm',
       opt = true,
-      cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend', },
+      cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend' },
       config = function()
         require('nv-core.terminal').init()
-      end
-    }
+      end,
+    })
 
-    use { -- file navigation
+    use({ -- file navigation
       'nvim-telescope/telescope.nvim',
       requires = {
         'nvim-lua/popup.nvim',
         'nvim-lua/plenary.nvim',
         {
           'nvim-telescope/telescope-fzf-native.nvim',
-          run = 'make'
-        }
+          run = 'make',
+        },
       },
       config = function()
-        require 'nv-core.file-navigation'.init()
+        require('nv-core.file-navigation').init()
       end,
-    }
+    })
 
-    use { -- session management
+    use({ -- session management
       'rmagatti/auto-session',
       event = 'VimEnter',
       config = function()
-        require('auto-session').setup {
+        require('auto-session').setup({
           pre_save_cmds = { 'NvimTreeClose', 'TroubleClose', 'cclose' },
-        }
+        })
       end,
-    }
+    })
 
-    use { -- lang/syntax stuff
+    use({ -- lang/syntax stuff
       'nvim-treesitter/nvim-treesitter',
       run = ':TSUpdate',
       requires = {
@@ -164,41 +164,41 @@ packer.startup({
         require('nv-core.lsp.treesitter')
       end,
       -- event = 'BufEnter'
-    }
+    })
 
     -- comments and stuff
-    use {
+    use({
       'tpope/vim-commentary',
-      event = "BufRead",
-    }
+      event = 'BufRead',
+    })
 
     -- colorized hex codes
-    use {
+    use({
       'norcalli/nvim-colorizer.lua',
       opt = true,
-      cmd = { 'ColorizerToggle', },
+      cmd = { 'ColorizerToggle' },
       config = function()
-        require'colorizer'.setup()
-      end
-    }
+        require('colorizer').setup()
+      end,
+    })
 
-    use {
+    use({
       'AckslD/nvim-whichkey-setup.lua',
-      event = "BufWinEnter",
-      requires = {'liuchengxu/vim-which-key'},
+      event = 'BufWinEnter',
+      requires = { 'liuchengxu/vim-which-key' },
       config = function()
-        require 'nv-core.whichkey'
-      end
-    }
+        require('nv-core.whichkey')
+      end,
+    })
   end,
   config = {
     display = {
       open_fn = function()
         return require('packer.util').float({ border = 'single' })
       end,
-      prompt_border = 'single'
+      prompt_border = 'single',
     },
     auto_clean = true,
     compile_on_sync = true,
-  }
+  },
 })

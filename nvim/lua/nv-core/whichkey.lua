@@ -3,17 +3,17 @@ local wk = require('whichkey_setup')
 
 map('n', '<leader>', ':WhichKey "<Space>"<CR>', { silent = true })
 
-require("whichkey_setup").config{
+require('whichkey_setup').config({
   hide_statusline = false,
   default_keymap_settings = {
-    silent=true,
-    noremap=true,
+    silent = true,
+    noremap = true,
   },
   default_mode = 'n',
-}
+})
 
 local keymap = {
-  w = {':w!<CR>', 'save file'}, -- set a single command and text
+  w = { ':w!<CR>', 'save file' }, -- set a single command and text
   f = 'find git files',
   p = 'find project files',
   k = 'find buffers',
@@ -34,8 +34,8 @@ local keymap = {
     a = 'code action',
   },
   h = {
-    name = '+gitsigns'
-  }
+    name = '+gitsigns',
+  },
 }
 
 wk.register_keymap('leader', keymap)

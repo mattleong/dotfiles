@@ -2,7 +2,9 @@ local util = require('lspconfig').util
 local M = {}
 
 function M.on_attach(client, bufnr)
-  local function buf_set_option(...) vim.api.nvim_buf_set_option(bufnr, ...) end
+  local function buf_set_option(...)
+    vim.api.nvim_buf_set_option(bufnr, ...)
+  end
 
   -- Enable completion triggered by <c-x><c-o>
   buf_set_option('omnifunc', 'v:lua.vim.lsp.omnifunc')
@@ -22,8 +24,8 @@ function M.on_attach(client, bufnr)
   require('lsp_signature').on_attach({
     bind = true, -- This is mandatory, otherwise border config won't get registered.
     handler_opts = {
-      border = "single"
-    }
+      border = 'single',
+    },
   }, bufnr)
 
   -- for some reason, lsp saga highlights have to happen here
@@ -37,11 +39,11 @@ M.flags = {
 }
 
 M.root_dir = function(fname)
-  return util.root_pattern(".git")(fname) or
-  util.root_pattern("tsconfig.base.json")(fname) or
-  util.root_pattern("package.json")(fname) or
-  util.root_pattern(".eslintrc.js")(fname) or
-  util.root_pattern("tsconfig.json")(fname);
+  return util.root_pattern('.git')(fname)
+    or util.root_pattern('tsconfig.base.json')(fname)
+    or util.root_pattern('package.json')(fname)
+    or util.root_pattern('.eslintrc.js')(fname)
+    or util.root_pattern('tsconfig.json')(fname)
 end
 
 return M

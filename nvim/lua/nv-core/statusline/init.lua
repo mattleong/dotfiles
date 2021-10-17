@@ -1,11 +1,11 @@
-local galaxy = require('galaxyline');
+local galaxy = require('galaxyline')
 local gls = galaxy.section
 local diag = require('galaxyline.providers.diagnostic')
-local condition = require 'galaxyline.condition'
+local condition = require('galaxyline.condition')
 local fileinfo = require('galaxyline.providers.fileinfo')
-local utils = require('nv-utils');
-local colors = require('nv-core.theme.colors');
-local highlight = utils.highlight;
+local utils = require('nv-utils')
+local colors = require('nv-core.theme.colors')
+local highlight = utils.highlight
 local icons = require('nv-core.theme.icons')
 
 local get_mode = function()
@@ -14,12 +14,12 @@ local get_mode = function()
     [105] = { 'INSERT', colors.teal, colors.bg_highlight },
     [99] = { 'COMMAND', colors.orange, colors.bg_highlight },
     [116] = { 'TERMINAL', colors.blue, colors.bg_highlight },
-    [118] = { 'VISUAL', colors.purple, colors.bg_highlight, },
-    [22] = { 'V-BLOCK', colors.purple, colors.bg_highlight, },
-    [86] = { 'V-LINE', colors.purple, colors.bg_highlight, },
-    [82] = { 'REPLACE', colors.red, colors.bg_highlight, },
-    [115] = { 'SELECT', colors.red, colors.bg_highlight, },
-    [83] = { 'S-LINE', colors.red, colors.bg_highlight, },
+    [118] = { 'VISUAL', colors.purple, colors.bg_highlight },
+    [22] = { 'V-BLOCK', colors.purple, colors.bg_highlight },
+    [86] = { 'V-LINE', colors.purple, colors.bg_highlight },
+    [82] = { 'REPLACE', colors.red, colors.bg_highlight },
+    [115] = { 'SELECT', colors.red, colors.bg_highlight },
+    [83] = { 'S-LINE', colors.red, colors.bg_highlight },
   }
 
   local mode_data = mode_colors[vim.fn.mode():byte()]
@@ -41,7 +41,7 @@ local check_buffer_and_width = function()
 end
 
 local FilePathShortProvider = function()
-  local fp = vim.fn.fnamemodify(vim.fn.expand '%', ':~:.:h')
+  local fp = vim.fn.fnamemodify(vim.fn.expand('%'), ':~:.:h')
   local tbl = utils.split(fp, '/')
   local len = #tbl
 
@@ -54,27 +54,27 @@ end
 
 local LineColumnProvider = function()
   local line_column = fileinfo.line_column()
-  line_column = line_column:gsub("%s+", "")
+  line_column = line_column:gsub('%s+', '')
   return ' ' .. icons.line_number .. line_column
 end
 
 local PercentProvider = function()
   local line_column = fileinfo.current_line_percent()
-  line_column = line_column:gsub("%s+", "")
-  return  line_column .. ' ☰'
+  line_column = line_column:gsub('%s+', '')
+  return line_column .. ' ☰'
 end
 
 local BracketProvider = function(icon, cond)
   return function()
     local result
 
-    if (cond == true or cond == false) then
+    if cond == true or cond == false then
       result = cond
     else
       result = cond()
     end
 
-    if (result ~= nil and result ~= '') then
+    if result ~= nil and result ~= '' then
       return icon
     end
   end
@@ -92,8 +92,8 @@ gls.left = {
   {
     GhostLeftBracket = {
       provider = BracketProvider(icons.rounded_left_filled, true),
-      highlight = 'GalaxyViModeNestedInv'
-    }
+      highlight = 'GalaxyViModeNestedInv',
+    },
   },
   {
     Ghost = {
@@ -147,18 +147,18 @@ gls.left = {
       provider = BracketProvider('  ' .. icons.branch .. ' ', true),
       condition = check_width_and_git_and_buffer,
       highlight = 'GalaxyViModeInv',
-    }
+    },
   },
   {
     GitBranch = {
       provider = function()
         local vcs = require('galaxyline.providers.vcs')
         local branch_name = vcs.get_git_branch()
-        if (not branch_name) then
+        if not branch_name then
           return ' no git '
         end
-        if (string.len(branch_name) > 28) then
-          return string.sub(branch_name, 1, 25)..icons.dotdotdot
+        if string.len(branch_name) > 28 then
+          return string.sub(branch_name, 1, 25) .. icons.dotdotdot
         end
         return branch_name .. ' '
       end,
@@ -166,7 +166,7 @@ gls.left = {
       highlight = 'GalaxyViModeInv',
       separator = icons.arrow_right,
       separator_highlight = 'GalaxyViModeInv',
-    }
+    },
   },
   {
     FileIcon = {
@@ -226,8 +226,8 @@ gls.left = {
     WSpace = {
       provider = 'WhiteSpace',
       highlight = { colors.bg, colors.bg },
-    }
-  }
+    },
+  },
 }
 
 gls.right = {
@@ -236,7 +236,7 @@ gls.right = {
       provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_error),
       highlight = 'GalaxyDiagnosticErrorInv',
       condition = condition.buffer_not_empty,
-    }
+    },
   },
   {
     DiagnosticError = {
@@ -245,14 +245,14 @@ gls.right = {
         highlight('GalaxyDiagnosticError', colors.error, colors.bg)
         highlight('GalaxyDiagnosticErrorInv', colors.bg, colors.error)
 
-        if (error_result ~= '' and error_result ~= nil) then
+        if error_result ~= '' and error_result ~= nil then
           return error_result
         end
       end,
       icon = icons.error .. ' ',
       highlight = 'GalaxyDiagnosticError',
       condition = condition.buffer_not_empty,
-    }
+    },
   },
   {
     DiagnosticErrorRightBracket = {
@@ -262,14 +262,14 @@ gls.right = {
       },
       highlight = 'GalaxyDiagnosticErrorInv',
       condition = condition.buffer_not_empty,
-    }
+    },
   },
   {
     DiagnosticWarnLeftBracket = {
       provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_warn),
       highlight = 'GalaxyDiagnosticWarnInv',
       condition = condition.buffer_not_empty,
-    }
+    },
   },
   {
     DiagnosticWarn = {
@@ -278,14 +278,14 @@ gls.right = {
         highlight('GalaxyDiagnosticWarn', colors.warn, colors.bg)
         highlight('GalaxyDiagnosticWarnInv', colors.bg, colors.warn)
 
-        if (warn_result ~= '' and warn_result ~= nil) then
+        if warn_result ~= '' and warn_result ~= nil then
           return warn_result
         end
       end,
       highlight = 'GalaxyDiagnosticWarn',
       icon = icons.warn .. ' ',
       condition = condition.buffer_not_empty,
-    }
+    },
   },
   {
     DiagnosticWarnRightBracket = {
@@ -295,13 +295,13 @@ gls.right = {
       },
       highlight = 'GalaxyDiagnosticWarnInv',
       condition = condition.buffer_not_empty,
-    }
+    },
   },
   {
     DiagnosticInfoLeftBracket = {
       provider = BracketProvider(icons.rounded_left_filled, diag.get_diagnostic_info),
       highlight = 'GalaxyDiagnosticInfoInv',
-    }
+    },
   },
   {
     DiagnosticInfo = {
@@ -310,14 +310,14 @@ gls.right = {
         highlight('GalaxyDiagnosticInfo', colors.info, colors.bg)
         highlight('GalaxyDiagnosticInfoInv', colors.bg, colors.info)
 
-        if (info_result ~= '' and info_result ~= nil) then
+        if info_result ~= '' and info_result ~= nil then
           return info_result
         end
       end,
       icon = icons.info .. ' ',
       highlight = 'GalaxyDiagnosticInfo',
       condition = check_width_and_git_and_buffer,
-    }
+    },
   },
   {
     DiagnosticInfoRightBracket = {
@@ -327,20 +327,20 @@ gls.right = {
       },
       highlight = 'GalaxyDiagnosticInfoInv',
       condition = condition.buffer_not_empty,
-    }
+    },
   },
   {
     GitBranchRightBracket = {
       provider = BracketProvider(icons.arrow_left_filled, true),
       condition = check_git_and_width,
       highlight = 'GalaxyViModeNestedInv',
-    }
+    },
   },
   {
     GitRoot = {
       provider = utils.get_git_root,
       condition = check_git_and_width,
-      icon = '  '.. icons.file .. ' ',
+      icon = '  ' .. icons.file .. ' ',
       highlight = 'GalaxyViModeInv',
     },
   },
@@ -348,12 +348,14 @@ gls.right = {
     LineColumn = {
       provider = {
         LineColumnProvider,
-        function() return ' ' end,
+        function()
+          return ' '
+        end,
       },
       highlight = 'GalaxyViMode',
       separator = icons.arrow_left_filled,
       separator_highlight = 'GalaxyGitLCBracket',
-    }
+    },
   },
   {
     PerCent = {
@@ -377,8 +379,8 @@ gls.short_line_left = {
   {
     GhostLeftBracketShort = {
       provider = BracketProvider(icons.rounded_left_filled, true),
-      highlight = { colors.white, colors.bg }
-    }
+      highlight = { colors.white, colors.bg },
+    },
   },
   {
     GhostShort = {
@@ -389,13 +391,15 @@ gls.short_line_left = {
   {
     GhostRightBracketShort = {
       provider = BracketProvider(icons.rounded_right_filled, true),
-      highlight = { colors.white, colors.bg }
-    }
+      highlight = { colors.white, colors.bg },
+    },
   },
   {
     FileIconShort = {
       provider = {
-        function() return '  ' end,
+        function()
+          return '  '
+        end,
         'FileIcon',
       },
       condition = condition.buffer_not_empty,
@@ -427,13 +431,13 @@ gls.short_line_right = {
       provider = BracketProvider(icons.arrow_left_filled, true),
       condition = condition.buffer_not_empty,
       highlight = { colors.white, colors.bg },
-    }
+    },
   },
   {
     GitRootShort = {
       provider = utils.get_git_root,
       condition = condition.buffer_not_empty,
-      icon = '  '.. icons.file .. ' ',
+      icon = '  ' .. icons.file .. ' ',
       highlight = { colors.bg, colors.white },
     },
   },
@@ -442,6 +446,6 @@ gls.short_line_right = {
       provider = BracketProvider(icons.rounded_right_filled, true),
       condition = condition.buffer_not_empty,
       highlight = { colors.white, colors.bg },
-    }
+    },
   },
 }

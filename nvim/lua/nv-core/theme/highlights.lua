@@ -33,10 +33,10 @@ function M.lsp()
   highlight('LspSignatureActiveParameter', 'None', colors.orange)
 
   -- needs to highlight after lsp start
-  vim.cmd [[
+  vim.cmd([[
     highlight clear NormalFloat
     highlight link NormalFloat Normal
-  ]]
+  ]])
 end
 
 return M

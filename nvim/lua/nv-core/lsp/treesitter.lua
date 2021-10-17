@@ -1,17 +1,17 @@
-require"nvim-treesitter.configs".setup {
+require('nvim-treesitter.configs').setup({
   ensure_installed = {
-    "typescript",
-    "javascript",
-    "tsx",
-    "html",
-    "css",
-    "bash",
-    "lua",
-    "json",
-    "python",
-    "php",
-    "scss",
-    "go",
+    'typescript',
+    'javascript',
+    'tsx',
+    'html',
+    'css',
+    'bash',
+    'lua',
+    'json',
+    'python',
+    'php',
+    'scss',
+    'go',
   },
   highlight = {
     enable = true,
@@ -30,4 +30,4 @@ require"nvim-treesitter.configs".setup {
     highlight_definitions = { enable = true },
     highlight_current_scope = { enable = false },
   },
-};
+})

@@ -11,20 +11,20 @@ function M.init()
 end
 
 function M.mappings()
-	local actions = require('telescope.actions')
-	local normal = {
-	  n = {
-	    ['Q'] =  actions.smart_add_to_qflist + actions.open_qflist,
-	    ['q'] =  actions.smart_send_to_qflist + actions.open_qflist,
-	    ['<tab>'] = actions.toggle_selection + actions.move_selection_next,
-	    ['<s-tab>'] = actions.toggle_selection +  actions.move_selection_previous,
-	    ['v'] =  actions.file_vsplit,
-	    ['s'] =  actions.file_split,
-	    ['<cr>'] = actions.file_edit,
-	  }
-	};
+  local actions = require('telescope.actions')
+  local normal = {
+    n = {
+      ['Q'] = actions.smart_add_to_qflist + actions.open_qflist,
+      ['q'] = actions.smart_send_to_qflist + actions.open_qflist,
+      ['<tab>'] = actions.toggle_selection + actions.move_selection_next,
+      ['<s-tab>'] = actions.toggle_selection + actions.move_selection_previous,
+      ['v'] = actions.file_vsplit,
+      ['s'] = actions.file_split,
+      ['<cr>'] = actions.file_edit,
+    },
+  }
 
-	return normal
+  return normal
 end
 
 return M

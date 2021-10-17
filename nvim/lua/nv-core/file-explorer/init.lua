@@ -26,7 +26,7 @@ function M.init()
       info = icons.info,
       warning = icons.warn,
       error = icons.error,
-    }
+    },
   }
 
   -- set up args
@@ -36,8 +36,8 @@ function M.init()
       enable = true,
     },
     update_focused_file = {
-      enable      = true,
-      ignore_list = {}
+      enable = true,
+      ignore_list = {},
     },
   }
 

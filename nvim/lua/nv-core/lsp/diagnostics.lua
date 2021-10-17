@@ -30,15 +30,15 @@ function M.init()
 end
 
 function M.trouble()
-  require("trouble").setup {
-    mode = "lsp_document_diagnostics", -- "lsp_workspace_diagnostics", "lsp_document_diagnostics", "quickfix", "lsp_references", "loclist"
+  require('trouble').setup({
+    mode = 'lsp_document_diagnostics', -- "lsp_workspace_diagnostics", "lsp_document_diagnostics", "quickfix", "lsp_references", "loclist"
     signs = {
       error = signs.error,
       warn = signs.warn,
       info = signs.info,
-      hint = signs.hint
-    }
-  }
+      hint = signs.hint,
+    },
+  })
 end
 
 return M
