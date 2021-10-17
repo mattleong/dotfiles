@@ -20,17 +20,20 @@ lsp_installer.on_server_ready(function(server)
   local opts = default_config
 
   if server.name == 'sumneko_lua' then
-    local lua_config = require('nv-core.lsp.providers.lua')
-    opts = vim.tbl_deep_extend('force', default_config, lua_config)
+    local config = require('nv-core.lsp.providers.lua')
+    opts = vim.tbl_deep_extend('force', opts, config)
   elseif server.name == 'tsserver' then
-    local ts_config = require('nv-core.lsp.providers.tsserver')
-    opts = vim.tbl_deep_extend('force', default_config, ts_config)
+    local config = require('nv-core.lsp.providers.tsserver')
+    opts = vim.tbl_deep_extend('force', opts, config)
   elseif server.name == 'efm' then
-    local ts_config = require('nv-core.lsp.providers.efm')
-    opts = vim.tbl_deep_extend('force', default_config, ts_config)
+    local config = require('nv-core.lsp.providers.efm')
+    opts = vim.tbl_deep_extend('force', opts, config)
+  elseif server.name == 'jsonls' then
+    local config = require('nv-core.lsp.providers.jsonls')
+    opts = vim.tbl_deep_extend('force', opts, config)
   elseif server.name == 'eslint' then
-    local eslint_config = require('nv-core.lsp.providers.eslint')
-    opts = vim.tbl_deep_extend('force', default_config, eslint_config)
+    local config = require('nv-core.lsp.providers.eslint')
+    opts = vim.tbl_deep_extend('force', opts, config)
   end
 
   -- This setup() function is exactly the same as lspconfig's setup function (:help lspconfig-quickstart)
