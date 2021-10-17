@@ -19,11 +19,12 @@ function M.lsp()
   --highlight('DiagnosticUnderlineInformation', 'None', colors.info)
   --highlight('DiagnosticUnderlineHint', 'None', colors.hint)
 
-  -- error colors
+  -- legacy lsp colors
   highlight('LspDiagnosticsError', 'None', colors.error)
   highlight('LspDiagnosticsWarn', 'None', colors.warn)
   highlight('LspDiagnosticsInfo', 'None', colors.info)
   highlight('LspDiagnosticsHint', 'None', colors.hint)
+
   highlight('DiagnosticError', 'None', colors.error)
   highlight('DiagnosticWarn', 'None', colors.warn)
   highlight('DiagnosticInfo', 'None', colors.info)
