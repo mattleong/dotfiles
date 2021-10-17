@@ -13,7 +13,6 @@ require('whichkey_setup').config({
 })
 
 local keymap = {
-  w = { ':w!<CR>', 'save file' }, -- set a single command and text
   f = 'find git files',
   p = 'find project files',
   k = 'find buffers',

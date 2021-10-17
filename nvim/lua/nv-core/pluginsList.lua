@@ -45,6 +45,7 @@ packer.startup({
       config = function()
         require('nv-core.file-explorer').init()
       end,
+      opt = true,
       cmd = {
         'NvimTreeClipboard',
         'NvimTreeClose',
@@ -59,16 +60,12 @@ packer.startup({
       'williamboman/nvim-lsp-installer',
       requires = {
         'neovim/nvim-lspconfig',
-        --        'jose-elias-alvarez/nvim-lsp-ts-utils',
+        'ray-x/lsp_signature.nvim',
       },
       config = function()
         require('nv-core.lsp')
       end,
-    })
-
-    use({ -- signature help
-      'ray-x/lsp_signature.nvim',
-      -- after = 'nvim-lspconfig'
+--      event = 'BufRead',
     })
 
     -- autocompletion
@@ -88,11 +85,13 @@ packer.startup({
         'windwp/nvim-autopairs',
         'onsails/lspkind-nvim',
       },
+      -- event = 'BufRead',
     })
 
     -- diagnostics
     use({
       'folke/trouble.nvim',
+      opt = true,
       config = function()
         require('nv-core.lsp.diagnostics').trouble()
       end,
@@ -107,12 +106,13 @@ packer.startup({
     -- git
     use({
       'tpope/vim-fugitive',
+      opt = true,
       cmd = 'Git',
     })
     use({
       'lewis6991/gitsigns.nvim',
       requires = { 'nvim-lua/plenary.nvim' },
-      event = 'BufRead',
+      event = 'BufWinEnter',
       config = function()
         require('gitsigns').setup()
       end,
@@ -140,6 +140,7 @@ packer.startup({
       config = function()
         require('nv-core.file-navigation').init()
       end,
+      event = 'BufWinEnter',
     })
 
     use({ -- session management
@@ -161,7 +162,7 @@ packer.startup({
         'nvim-treesitter/nvim-treesitter-refactor',
       },
       config = function()
-        require('nv-core.lsp.treesitter')
+        require('nv-core.treesitter')
       end,
       -- event = 'BufEnter'
     })
@@ -169,7 +170,7 @@ packer.startup({
     -- comments and stuff
     use({
       'tpope/vim-commentary',
-      event = 'BufRead',
+      event = 'BufWinEnter',
     })
 
     -- colorized hex codes
@@ -187,7 +188,7 @@ packer.startup({
       event = 'BufWinEnter',
       requires = { 'liuchengxu/vim-which-key' },
       config = function()
-        require('nv-core.whichkey')
+        require('nv-core.theme.whichkey')
       end,
     })
   end,
