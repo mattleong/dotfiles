@@ -61,6 +61,7 @@ packer.startup({
       requires = {
         'neovim/nvim-lspconfig',
         'ray-x/lsp_signature.nvim',
+        'jose-elias-alvarez/nvim-lsp-ts-utils'
       },
       config = function()
         require('nv-core.lsp')

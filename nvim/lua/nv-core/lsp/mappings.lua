@@ -28,3 +28,8 @@ map('n', '<C-k>', '<cmd>lua require("lsp_signature").signature()<CR>', opts)
 map('n', '<space>wa', '<cmd>lua vim.lsp.buf.add_workspace_folder()<CR>', opts)
 map('n', '<space>wr', '<cmd>lua vim.lsp.buf.remove_workspace_folder()<CR>', opts)
 map('n', '<space>wl', '<cmd>lua print(vim.inspect(vim.lsp.buf.list_workspace_folders()))<CR>', opts)
+
+-- no default maps, so you may want to define some here
+map('n', '<space>gr', ':TSLspRenameFile<CR>', opts)
+map('n', '<space>go', ':TSLspOrganize<CR>', opts)
+map('n', '<space>gi', ':TSLspImportAll<CR>', opts)
