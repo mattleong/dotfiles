@@ -66,7 +66,6 @@ packer.startup({
       config = function()
         require('nv-core.lsp')
       end,
---      event = 'BufRead',
     })
 
     -- autocompletion
@@ -86,7 +85,6 @@ packer.startup({
         'windwp/nvim-autopairs',
         'onsails/lspkind-nvim',
       },
-      -- event = 'BufRead',
     })
 
     -- diagnostics
@@ -113,7 +111,7 @@ packer.startup({
     use({
       'lewis6991/gitsigns.nvim',
       requires = { 'nvim-lua/plenary.nvim' },
-      event = 'BufWinEnter',
+      event = "BufRead",
       config = function()
         require('gitsigns').setup()
       end,
@@ -141,7 +139,7 @@ packer.startup({
       config = function()
         require('nv-core.file-navigation').init()
       end,
-      event = 'BufWinEnter',
+      event = "BufRead",
     })
 
     use({ -- session management
@@ -156,7 +154,6 @@ packer.startup({
 
     use({ -- lang/syntax stuff
       'nvim-treesitter/nvim-treesitter',
-      run = ':TSUpdate',
       requires = {
         'windwp/nvim-ts-autotag',
         'JoosepAlviste/nvim-ts-context-commentstring',
@@ -165,13 +162,12 @@ packer.startup({
       config = function()
         require('nv-core.treesitter')
       end,
-      -- event = 'BufEnter'
     })
 
     -- comments and stuff
     use({
       'tpope/vim-commentary',
-      event = 'BufWinEnter',
+      event = "BufRead",
     })
 
     -- colorized hex codes
@@ -186,7 +182,7 @@ packer.startup({
 
     use({
       'AckslD/nvim-whichkey-setup.lua',
-      event = 'BufWinEnter',
+      event = "BufRead",
       requires = { 'liuchengxu/vim-which-key' },
       config = function()
         require('nv-core.theme.whichkey')

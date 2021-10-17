@@ -16,10 +16,6 @@ function M.on_attach(client, bufnr)
     client.resolved_capabilities.document_range_formatting = false
   end
 
-  -- if client.name == 'tsserver' then
-  --   require('nv-core.lsp.providers.tsserver').on_attach(client, bufnr)
-  -- end
-
   require('lsp_signature').on_attach({
     bind = true, -- This is mandatory, otherwise border config won't get registered.
     handler_opts = {
