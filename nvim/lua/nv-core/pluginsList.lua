@@ -71,7 +71,6 @@ packer.startup({
     -- autocompletion
     use({
       'hrsh7th/nvim-cmp',
-      --      after = 'nvim-lspconfig',
       config = function()
         require('nv-core.lsp.autocomplete')
       end,
@@ -80,8 +79,8 @@ packer.startup({
         'hrsh7th/cmp-buffer',
         'hrsh7th/cmp-path',
         'hrsh7th/nvim-cmp',
-        'hrsh7th/cmp-vsnip',
-        'hrsh7th/vim-vsnip',
+        'L3MON4D3/LuaSnip',
+        'saadparwaiz1/cmp_luasnip',
         'windwp/nvim-autopairs',
         'onsails/lspkind-nvim',
       },

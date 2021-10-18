@@ -1,5 +1,4 @@
 local cmp = require('cmp')
-local lspkind = require('lspkind')
 
 vim.cmd([[
 autocmd FileType TelescopePrompt lua require('cmp').setup.buffer { enabled = false }
@@ -8,15 +7,14 @@ autocmd FileType TelescopePrompt lua require('cmp').setup.buffer { enabled = fal
 cmp.setup({
   snippet = {
     expand = function(args)
-      -- For `vsnip` user.
-      vim.fn['vsnip#anonymous'](args.body)
+      require'luasnip'.lsp_expand(args.body)
     end,
   },
   mapping = {
     ['<C-d>'] = cmp.mapping.scroll_docs(-4),
     ['<C-u>'] = cmp.mapping.scroll_docs(4),
     ['<C-Space>'] = cmp.mapping.complete(),
-    ['<C-e>'] = cmp.mapping.close(),
+    ['<Esc>'] = cmp.mapping.close(),
     ['<CR>'] = cmp.mapping.confirm({
       behavior = cmp.ConfirmBehavior.Replace,
       select = true,
@@ -46,7 +44,7 @@ cmp.setup({
   sources = {
     { name = 'nvim_lsp' },
     { name = 'buffer' },
-    { name = 'vsnip' },
+    { name = 'luasnip' },
     { name = 'nvim_lua' },
     { name = 'path' },
   },
@@ -56,7 +54,7 @@ cmp.setup({
       menu = {
         nvim_lsp = '[LSP]',
         buffer = '[Buf]',
-        vsnip = '[Vsnip]',
+        luasnip = '[LSnip]',
         nvim_lua = '[Lua]',
       },
     }),
