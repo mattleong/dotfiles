@@ -23,8 +23,8 @@ function M.on_attach(client, bufnr)
     },
   }, bufnr)
 
-  -- for some reason, lsp saga highlights have to happen here
-  require('nv-core.theme.highlights').lsp()
+  -- for some reason, highlights have to happen here
+  require('nv-core.theme.highlights').init()
 end
 
 M.capabilities = require('cmp_nvim_lsp').update_capabilities(vim.lsp.protocol.make_client_capabilities())

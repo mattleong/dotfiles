@@ -2,3 +2,4 @@ pack/**
 sessions/**
 .netrwhist
 plugin/
+lua/compiled

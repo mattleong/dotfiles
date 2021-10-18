@@ -14,6 +14,8 @@ packer.startup({
   function()
     use({ 'wbthomason/packer.nvim' })
 
+    use('lewis6991/impatient.nvim')
+
     use({ -- color scheme
       'folke/tokyonight.nvim',
       config = function()
@@ -61,7 +63,7 @@ packer.startup({
       requires = {
         'neovim/nvim-lspconfig',
         'ray-x/lsp_signature.nvim',
-        'jose-elias-alvarez/nvim-lsp-ts-utils'
+        'jose-elias-alvarez/nvim-lsp-ts-utils',
       },
       config = function()
         require('nv-core.lsp')
@@ -110,7 +112,7 @@ packer.startup({
     use({
       'lewis6991/gitsigns.nvim',
       requires = { 'nvim-lua/plenary.nvim' },
-      event = "BufRead",
+      event = 'BufRead',
       config = function()
         require('gitsigns').setup()
       end,
@@ -138,7 +140,7 @@ packer.startup({
       config = function()
         require('nv-core.file-navigation').init()
       end,
-      event = "BufRead",
+      event = 'BufRead',
     })
 
     use({ -- session management
@@ -166,7 +168,7 @@ packer.startup({
     -- comments and stuff
     use({
       'tpope/vim-commentary',
-      event = "BufRead",
+      event = 'BufRead',
     })
 
     -- colorized hex codes
@@ -181,7 +183,7 @@ packer.startup({
 
     use({
       'AckslD/nvim-whichkey-setup.lua',
-      event = "BufRead",
+      event = 'BufRead',
       requires = { 'liuchengxu/vim-which-key' },
       config = function()
         require('nv-core.theme.whichkey')
@@ -197,5 +199,6 @@ packer.startup({
     },
     auto_clean = true,
     compile_on_sync = true,
+    compile_path = vim.fn.stdpath('config')..'/lua/compiled/packer.lua'
   },
 })

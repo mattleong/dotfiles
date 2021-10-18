@@ -9,6 +9,6 @@ map('n', '<leader>cc', ':cclose <CR>', { noremap = true })
 map('n', '<leader>co', ':copen <CR>', { noremap = true })
 map('n', '<leader>cf', ':cfdo %s/', { noremap = true })
 
-require('nv-core.file-explorer.mappings').init()
 require('nv-core.file-navigation.mappings').init()
-require('nv-core.terminal.mappings').init()
+require('nv-core.file-explorer.mappings')
+require('nv-core.terminal.mappings')

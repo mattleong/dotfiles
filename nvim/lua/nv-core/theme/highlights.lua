@@ -3,10 +3,6 @@ local highlight = require('nv-utils').highlight
 local M = {}
 
 function M.init()
-  highlight('FloatermBorder', 'None', colors.floatBorder)
-end
-
-function M.lsp()
   -- diagnostic colors
   -- sign colors
   highlight('LspDiagnosticsSignError', 'None', colors.error)
@@ -33,11 +29,12 @@ function M.lsp()
   -- signature highlight color
   highlight('LspSignatureActiveParameter', 'None', colors.orange)
 
-  -- needs to highlight after lsp start
+  -- needs to highlight after lsp start, why? idk
   vim.cmd([[
     highlight clear NormalFloat
     highlight link NormalFloat Normal
   ]])
+  highlight('FloatermBorder', 'None', colors.floatBorder)
 end
 
 return M
