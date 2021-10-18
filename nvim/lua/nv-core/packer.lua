@@ -36,7 +36,6 @@ packer.init({
     end,
     prompt_border = 'single',
   },
-  compile_path = vim.fn.stdpath('config') .. '/lua/compiled/packer.lua',
   git = {
     clone_timeout = 800, -- Timeout, in seconds, for git clones
   },

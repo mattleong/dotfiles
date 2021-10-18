@@ -10,7 +10,6 @@ return packer.startup(function()
   use({
     'wbthomason/packer.nvim',
     run = function()
-      require('compiled/packer')
     end,
   })
 
@@ -123,7 +122,7 @@ return packer.startup(function()
     opt = true,
     cmd = { 'FloatermToggle', 'FloatermNew', 'FloatermSend' },
     config = function()
-      require('nv-core.terminal').init()
+      require('nv-core.terminal')
     end,
   })
 
@@ -138,7 +137,7 @@ return packer.startup(function()
       },
     },
     config = function()
-      require('nv-core.file-navigation').init()
+      require('nv-core.file-navigation')
     end,
     event = 'BufRead',
   })

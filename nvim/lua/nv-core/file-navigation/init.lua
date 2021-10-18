@@ -1,7 +1,6 @@
 local actions = require('telescope.actions')
 local mappings = require('nv-core.file-navigation.mappings').mappings()
 local icons = require('nv-core.theme.icons')
-
 local M = {}
 
 function M.init()
