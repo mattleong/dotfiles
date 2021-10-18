@@ -8,5 +8,6 @@
 - [x] Enable treesitter
 - [x] Choose theme (tokyonight)
 - [x] Native LSP
-- [ ] Add screenshots to readme
+- [x] Telescope for lsp references, code actions, etc
 - [NVCore?] Pick official name
+- [ ] Flesh out readme

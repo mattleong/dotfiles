@@ -1,3 +1,3 @@
 require('impatient')
 require('nv-core.disabled')
-require('nv-core.pluginsList')
+require('nv-core.plugins')
