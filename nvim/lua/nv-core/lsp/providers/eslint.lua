@@ -3,7 +3,7 @@ local util = require('lspconfig').util
 return {
   settings = {
     packageManager = 'yarn',
-    format = false,
+    format = true,
   },
   root_dir = function(fname)
     return util.root_pattern('.git')(fname)

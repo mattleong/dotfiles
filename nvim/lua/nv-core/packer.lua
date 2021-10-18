@@ -39,8 +39,8 @@ packer.init({
   git = {
     clone_timeout = 800, -- Timeout, in seconds, for git clones
   },
+  compile_path = vim.fn.stdpath('config')..'/lua/nv-core/compiled.lua',
   auto_clean = true,
-  auto_reload_compiled = true,
   compile_on_sync = true,
 })
 

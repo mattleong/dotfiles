@@ -7,13 +7,14 @@ end
 local use = packer.use
 
 return packer.startup(function()
-  use({
-    'wbthomason/packer.nvim',
-    run = function()
-    end,
-  })
+  use('wbthomason/packer.nvim')
 
-  use('lewis6991/impatient.nvim')
+  use({
+    'lewis6991/impatient.nvim',
+    config = function()
+      require('impatient')
+    end
+  })
 
   use({ -- color scheme
     'folke/tokyonight.nvim',
@@ -159,6 +160,7 @@ return packer.startup(function()
       'JoosepAlviste/nvim-ts-context-commentstring',
       'nvim-treesitter/nvim-treesitter-refactor',
     },
+    run = ':TSUpdate',
     config = function()
       require('nv-core.treesitter')
     end,

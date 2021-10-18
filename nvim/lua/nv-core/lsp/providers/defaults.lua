@@ -16,6 +16,12 @@ function M.on_attach(client, bufnr)
     client.resolved_capabilities.document_range_formatting = false
   end
 
+  -- need to set eslint formatting manually
+  if client.name == 'eslint' then
+    client.resolved_capabilities.document_formatting = true
+    client.resolved_capabilities.document_range_formatting = true
+  end
+
   require('lsp_signature').on_attach({
     bind = true, -- This is mandatory, otherwise border config won't get registered.
     handler_opts = {
@@ -27,11 +33,11 @@ function M.on_attach(client, bufnr)
   require('nv-core.theme.highlights').init()
 end
 
-M.capabilities = require('cmp_nvim_lsp').update_capabilities(vim.lsp.protocol.make_client_capabilities())
-
 M.flags = {
   debounce_text_changes = 150,
 }
+
+M.capabilities = require('cmp_nvim_lsp').update_capabilities(vim.lsp.protocol.make_client_capabilities())
 
 M.root_dir = function(fname)
   local util = require('lspconfig').util

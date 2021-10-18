@@ -1,4 +1,4 @@
-local default_config = require('nv-core.lsp.providers.lspconfig')
+local default_config = require('nv-core.lsp.providers.defaults')
 local lsp_installer = require('nvim-lsp-installer')
 
 lsp_installer.settings({
