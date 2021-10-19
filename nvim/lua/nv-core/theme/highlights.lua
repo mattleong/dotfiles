@@ -29,6 +29,9 @@ function M.init()
   -- signature highlight color
   highlight('LspSignatureActiveParameter', 'None', colors.orange)
 
+  -- currently not working
+  highlight('TelescopeSelectionCaret', 'None', colors.selection_caret)
+
   -- needs to highlight after lsp start, why? idk
   vim.cmd([[
     highlight clear NormalFloat

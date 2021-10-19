@@ -1,16 +1,15 @@
--- thank you, nuxshed
+local colors = require('nv-core.theme.colors')
 local icons = require('nv-core.theme.icons')
+local highlight = require('nv-utils').highlight
 local M = {}
 
 local api = vim.api
 local lsp = vim.lsp
 local buf, win
+local prompt_str = ' ' .. icons.folder.arrow_closed .. ' '
 
 function M.rename()
-  buf, win = api.nvim_create_buf(false, true)
-
-  api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
-
+  local map_opts = { noremap = true, silent = true }
   local opts = {
     style = 'minimal',
     border = 'single',
@@ -20,16 +19,20 @@ function M.rename()
     row = 1,
     col = 1,
   }
+  buf, win = api.nvim_create_buf(false, true)
+  api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
 
   api.nvim_open_win(buf, true, opts)
   api.nvim_win_set_option(win, 'scrolloff', 0)
   api.nvim_win_set_option(win, 'sidescrolloff', 0)
   api.nvim_buf_set_option(buf, 'modifiable', true)
   api.nvim_buf_set_option(buf, 'buftype', 'prompt')
-  -- todo: set hightlight for icon
-  vim.fn.prompt_setprompt(buf, ' ' .. icons.folder.arrow_closed .. ' ')
+  api.nvim_buf_add_highlight(buf, -1, "LspRenamePrompt", 0, 0, #prompt_str)
+  highlight('LspRenamePrompt', 'None', colors.selection_caret)
+
+  vim.fn.prompt_setprompt(buf, prompt_str)
+
   vim.api.nvim_command('startinsert!')
-  local map_opts = { noremap = true }
   api.nvim_buf_set_keymap(buf, 'i', '<esc>', '<CMD>stopinsert <BAR> q!<CR>', map_opts)
   api.nvim_buf_set_keymap(
     buf,

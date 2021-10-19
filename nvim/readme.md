@@ -9,5 +9,9 @@
 - [x] Choose theme (tokyonight)
 - [x] Native LSP
 - [x] Telescope for lsp references, code actions, etc
-- [NVCore?] Pick official name
+- [x] Replace lsp saga with native windows
+- [CosmicNVIM??] Pick official name
 - [ ] Flesh out readme
+  - [ ] How-to
+  - [ ] File Structure
+  - [ ] Screenshots

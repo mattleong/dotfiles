@@ -16,6 +16,7 @@ local colors = {
   error = themeColors.magenta2,
   warn = themeColors.orange,
   floatBorder = themeColors.border_highlight,
+  selection_caret = themeColors.purple,
 }
 
 return colors
