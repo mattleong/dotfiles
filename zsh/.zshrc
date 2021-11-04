@@ -81,20 +81,6 @@ export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || pr
 export DENO_INSTALL="/home/mrchu001/.deno"
 export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin:$GOPATH"
 
-alias mj='ssh -A -p 22 mleong@$MJ_PREPROD_IP'
+alias mj='ssh -A -p 22 mleong@$SECRET_IP'
 
 nvm use default > /dev/null
-
-# work stuff
-mg() {
-	if [[ $2 == "start" ]]; then
-		wd cp_login
-		nvm use 12.8
-		yarn start
-	fi
-
-	if [[ $2 == "login" ]]; then
-		workon cockpit
-		cp_login $MG_CP_LOGIN
-	fi
-}
