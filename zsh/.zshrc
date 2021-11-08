@@ -68,6 +68,8 @@ if command -v exa &>/dev/null; then
 	alias ls='exa'
 fi
 
+export COSMICNVIM_INSTALL_DIR=~/dev/cosmic/CosmicNvim
+
 export WORKON_HOME=$HOME/.virtualenvs
 export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python
 export VIRTUALENVWRAPPER_VIRTUALENV=/usr/local/bin/virtualenv
