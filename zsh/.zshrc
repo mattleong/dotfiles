@@ -68,8 +68,11 @@ if command -v exa &>/dev/null; then
 	alias ls='exa'
 fi
 
+# COSMICNIVM
 export COSMICNVIM_INSTALL_DIR=~/dev/cosmic/CosmicNvim
+export COSMICNVIM_CONFIG_DIR=~/dev/cosmic/cosmic-config
 
+# DEV
 export WORKON_HOME=$HOME/.virtualenvs
 export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python
 export VIRTUALENVWRAPPER_VIRTUALENV=/usr/local/bin/virtualenv
@@ -77,12 +80,31 @@ if [[ -f "/usr/local/bin/virtualenvwrapper.sh" ]]; then
 	source '/usr/local/bin/virtualenvwrapper.sh'
 fi
 
+# Set nvm dir
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
 
+# place this after nvm initialization!
+autoload -U add-zsh-hook
+load-nvmrc() {
+  local node_version="$(nvm version)"
+  local nvmrc_path="$(nvm_find_nvmrc)"
+
+  if [ -n "$nvmrc_path" ]; then
+    local nvmrc_node_version=$(nvm version "$(cat "${nvmrc_path}")")
+
+    if [ "$nvmrc_node_version" = "N/A" ]; then
+      nvm install
+    elif [ "$nvmrc_node_version" != "$node_version" ]; then
+      nvm use
+    fi
+  elif [ "$node_version" != "$(nvm version default)" ]; then
+    echo "Reverting to nvm default version"
+    nvm use default
+  fi
+}
+add-zsh-hook chpwd load-nvmrc
+load-nvmrc
+
 export DENO_INSTALL="/home/mrchu001/.deno"
 export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin:$GOPATH"
-
-alias mj='ssh -A -p 22 mleong@$SECRET_IP'
-
-nvm use default > /dev/null
