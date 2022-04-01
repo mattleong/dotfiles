@@ -23,6 +23,7 @@ SAVEHIST=10000
 source $ZSH/oh-my-zsh.sh
 
 # neovim
+alias rebuild-nvim='brew unlink neovim && brew install --build-from-source --HEAD --force --fetch-HEAD neovim'
 alias v='nvim'
 
 # Git shit
@@ -72,14 +73,6 @@ fi
 export COSMICNVIM_INSTALL_DIR=~/dev/cosmic/CosmicNvim
 export COSMICNVIM_CONFIG_DIR=~/dev/cosmic/cosmic-config
 
-# DEV
-export WORKON_HOME=$HOME/.virtualenvs
-export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python
-export VIRTUALENVWRAPPER_VIRTUALENV=/usr/local/bin/virtualenv
-if [[ -f "/usr/local/bin/virtualenvwrapper.sh" ]]; then
-	source '/usr/local/bin/virtualenvwrapper.sh'
-fi
-
 # Set nvm dir
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
@@ -104,7 +97,10 @@ load-nvmrc() {
   fi
 }
 add-zsh-hook chpwd load-nvmrc
-load-nvmrc
 
 export DENO_INSTALL="/home/mrchu001/.deno"
 export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:/snap/bin/:$HOME/.cargo/bin:/home/mrchu001/.local/bin:$DENO_INSTALL/bin:$HOME/local/nvim/bin:$GOPATH"
+
+eval "$(pyenv init -)"
+eval "$(pyenv init --path)"
+eval "$(pyenv virtualenv-init -)"
