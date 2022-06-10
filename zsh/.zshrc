@@ -23,7 +23,12 @@ SAVEHIST=10000
 source $ZSH/oh-my-zsh.sh
 
 # neovim
-alias rebuild-nvim='brew unlink neovim && brew install --build-from-source --HEAD --force --fetch-HEAD neovim'
+rebuild-nvim() {
+  npm install --location=global eslint_d @fsouza/prettierd markdownlint-cli typescript typescript-language-server
+  brew unlink neovim
+  brew install --build-from-source --HEAD --force --fetch-HEAD neovim
+}
+
 alias v='nvim'
 
 # Git shit
@@ -42,6 +47,27 @@ alias gds='git diff --stat'
 alias gca='git commit --amend'
 alias gcan='git commit --amend --no-edit'
 alias glg='git log --graph --abbrev-commit --decorate --format=format:"%C(bold blue)%h%C(reset) - %C(bold green)(%ar)%C(reset) %C(white)%s%C(reset) %C(dim white)- %an%C(reset)%C(bold yellow)%d%C(reset)" --all'
+
+pwgit() {
+  RETURN=$(pwd)
+  DEST="$(wd path pwapps)/$2"
+
+  wd portal
+  cd .git
+
+  case $1 in
+    add)
+      git worktree add -B "$2" "$DEST"
+      cd "$DEST"
+      yarn
+      ;;
+
+    *)
+      git worktree "$@"
+      cd $RETURN
+      ;;
+  esac
+}
 
 gc() {
 	git commit -m "$1"
