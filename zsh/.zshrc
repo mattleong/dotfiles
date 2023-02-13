@@ -24,7 +24,6 @@ source $ZSH/oh-my-zsh.sh
 
 # neovim
 rebuild-nvim() {
-  npm install --location=global eslint_d @fsouza/prettierd markdownlint-cli typescript typescript-language-server
   brew unlink neovim
   brew install --build-from-source --HEAD --force --fetch-HEAD neovim
 }
