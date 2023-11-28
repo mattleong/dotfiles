@@ -11,7 +11,7 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(wd sudo zsh-syntax-highlighting vi-mode)
+plugins=(wd zsh-syntax-highlighting vi-mode)
 
 #disable update prompt
 DISABLE_UPDATE_PROMPT=true
@@ -64,7 +64,6 @@ load-nvmrc() {
 }
 
 add-zsh-hook chpwd load-nvmrc
-load-nvmrc
 
 export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/local/nvim/bin:$GOPATH"
 
