@@ -4,6 +4,16 @@ rebuild-nvim() {
   brew install --build-from-source --HEAD --force --fetch-HEAD neovim
 }
 
+rebuild-nvim-head() {
+  brew unlink neovim
+  brew install --HEAD neovim
+}
+
+rebuild-nvim-main() {
+  brew unlink neovim
+  brew install neovim
+}
+
 alias v='nvim'
 
 # Git shit
