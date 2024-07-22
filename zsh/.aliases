@@ -50,6 +50,6 @@ alias .5='cd ../../../../../'               # Go back 5 directory levels
 alias .6='cd ../../../../../../'            # Go back 6 directory levels
 alias c='clear'                             # c:            Clear
 
-if command -v exa &>/dev/null; then
-	alias ls='exa'
+if command -v eza &>/dev/null; then
+	alias ls='eza'
 fi
