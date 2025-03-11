@@ -5,13 +5,13 @@ export ZSH_CUSTOM=~/.zsh
 
 # Set name of the theme to load.
 # Look in ~/.oh-my-zsh/themes/
-ZSH_THEME="powerlevel10k/powerlevel10k"
+# ZSH_THEME="spaceship"
 
 # Which plugins would you like to load? (plugins can be found in ~/.oh-my-zsh/plugins/*)
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(wd zsh-syntax-highlighting vi-mode)
+plugins=(wd zsh-syntax-highlighting vi-mode zsh-autosuggestions)
 
 #disable update prompt
 DISABLE_UPDATE_PROMPT=true
@@ -70,3 +70,5 @@ export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/
 eval "$(pyenv init -)"
 eval "$(pyenv init --path)"
 eval "$(pyenv virtualenv-init -)"
+
+eval "$(starship init zsh)"
