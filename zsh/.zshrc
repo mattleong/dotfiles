@@ -3,10 +3,6 @@ export ZSH=~/.oh-my-zsh
 
 export ZSH_CUSTOM=~/.zsh
 
-# Set name of the theme to load.
-# Look in ~/.oh-my-zsh/themes/
-# ZSH_THEME="spaceship"
-
 # Which plugins would you like to load? (plugins can be found in ~/.oh-my-zsh/plugins/*)
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
@@ -24,18 +20,17 @@ source $ZSH/oh-my-zsh.sh
 export EDITOR=nvim
 
 # source secrets
-if [[ -f "$HOME/.config/dotfiles/zsh/.env" ]]; then
-	source ~/.config/dotfiles/zsh/.env
+if [[ -f "$HOME/dev/dotfiles/zsh/.env" ]]; then
+	source ~/dev/dotfiles/zsh/.env
 fi
 
 # source aliases
-if [[ -f "$HOME/.config/dotfiles/zsh/.aliases" ]]; then
-	source ~/.config/dotfiles/zsh/.aliases
+if [[ -f "$HOME/dev/dotfiles/zsh/.aliases" ]]; then
+	source ~/dev/dotfiles/zsh/.aliases
 fi
 
 # COSMICNIVM
-export COSMICNVIM_INSTALL_DIR=~/dev/cosmic/CosmicNvim
-export COSMICNVIM_CONFIG_DIR=~/dev/cosmic/cosmic-config
+export COSMICNVIM_INSTALL_DIR=~/dev/CosmicNvim
 
 # Set nvm dir
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
@@ -65,10 +60,10 @@ load-nvmrc() {
 
 add-zsh-hook chpwd load-nvmrc
 
-export PATH="/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/local/nvim/bin:$GOPATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/local/nvim/bin:$GOPATH:$HOME/.local/bin"
 
-eval "$(pyenv init -)"
-eval "$(pyenv init --path)"
-eval "$(pyenv virtualenv-init -)"
+export PYENV_ROOT="$HOME/.pyenv"
+[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init - zsh)"
 
 eval "$(starship init zsh)"
