@@ -34,7 +34,7 @@ export COSMICNVIM_INSTALL_DIR=~/dev/CosmicNvim
 
 # Set nvm dir
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use # This loads nvm
 
 # place this after nvm initialization!
 autoload -U add-zsh-hook
@@ -63,7 +63,20 @@ add-zsh-hook chpwd load-nvmrc
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/local/nvim/bin:$GOPATH:$HOME/.local/bin"
 
 export PYENV_ROOT="$HOME/.pyenv"
-[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init - zsh)"
+if [[ -d "$PYENV_ROOT/bin" ]]; then
+	export PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
+fi
+
+if command -v pyenv >/dev/null 2>&1; then
+	_pyenv_lazy_init() {
+		unset -f pyenv _pyenv_lazy_init
+		eval "$(command pyenv init - zsh)"
+	}
+
+	pyenv() {
+		_pyenv_lazy_init
+		command pyenv "$@"
+	}
+fi
 
 eval "$(starship init zsh)"
