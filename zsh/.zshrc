@@ -60,7 +60,7 @@ load-nvmrc() {
 
 add-zsh-hook chpwd load-nvmrc
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/local/nvim/bin:$GOPATH:$HOME/.local/bin"
+export PATH="$(go env GOPATH)/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/local/nvim/bin:$HOME/.local/bin"
 
 export PYENV_ROOT="$HOME/.pyenv"
 if [[ -d "$PYENV_ROOT/bin" ]]; then
@@ -80,3 +80,5 @@ if command -v pyenv >/dev/null 2>&1; then
 fi
 
 eval "$(starship init zsh)"
+eval "$(codex completion zsh)"
+
