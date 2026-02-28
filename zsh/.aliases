@@ -58,3 +58,4 @@ alias edit-codex='v ~/.codex/config.toml'
 alias edit-opencode='v ~/.config/opencode/opencode.jsonc'
 
 alias c="codex --full-auto"
+alias cc="claude --allow-dangerously-skip-permissions "
