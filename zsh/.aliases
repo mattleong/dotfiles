@@ -194,10 +194,6 @@ alias .4='cd ../../../../'                  # Go back 4 directory levels
 alias .5='cd ../../../../../'               # Go back 5 directory levels
 alias .6='cd ../../../../../../'            # Go back 6 directory levels
 
-if command -v eza &>/dev/null; then
-	alias ls='eza'
-fi
-
 alias edit-claude='v ~/.claude/settings.json'
 alias edit-codex='v ~/.codex/config.toml'
 alias edit-opencode='v ~/.config/opencode/opencode.jsonc'
