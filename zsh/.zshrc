@@ -7,7 +7,7 @@ export ZSH_CUSTOM=~/.zsh
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(wd zsh-syntax-highlighting vi-mode zsh-autosuggestions nvm)
+plugins=(zsh-syntax-highlighting zsh-autosuggestions wd vi-mode nvm gh sudo uv)
 
 zstyle ':omz:plugins:nvm' autoload yes
 # zstyle ':omz:plugins:nvm' lazy yes
