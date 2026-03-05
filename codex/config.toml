@@ -10,6 +10,7 @@ network_access = true
 
 [features]
 multi_agent = true
+fast_mode = true
 
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
@@ -17,3 +18,4 @@ env_http_headers = { "CONTEXT7_API_KEY" = "CONTEXT7_API_KEY" }
 
 [tui]
 status_line = ["model-with-reasoning", "current-dir", "project-root", "git-branch", "context-remaining", "five-hour-limit", "weekly-limit", "used-tokens", "total-input-tokens", "total-output-tokens"]
+
