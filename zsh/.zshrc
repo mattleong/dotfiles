@@ -58,4 +58,8 @@ fi
 eval "$(starship init zsh)"
 eval "$(codex completion zsh)"
 
+
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+
+# OpenClaw Completion
+source "/Users/scout-22-mbp4pro/.openclaw/completions/openclaw.zsh"

@@ -12,6 +12,7 @@ network_access = true
 [features]
 multi_agent = true
 fast_mode = true
+js_repl = true
 
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
