@@ -42,26 +42,6 @@
           }
         ]
       }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/Users/scout-22-mbp4pro/.claude/hooks/gsd-check-update.js\""
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/Users/scout-22-mbp4pro/.claude/hooks/gsd-context-monitor.js\""
-          }
-        ]
-      }
     ]
   },
   "statusLine": {
