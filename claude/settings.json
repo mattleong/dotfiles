@@ -26,11 +26,11 @@
       "Bash(* --version)",
       "Bash(* --help *)"
     ],
-    "deny": [
+    "ask": [
       "Bash(rm -rf *)"
     ]
   },
-  "model": "opus",
+  "model": "opus[1m]",
   "hooks": {
     "Notification": [
       {
