@@ -36,6 +36,11 @@ if [[ -f "$HOME/.aliases" ]]; then
 	source ~/.aliases
 fi
 
+# aliases specific to local machine
+if [[ -f "$HOME/.aliases.local" ]]; then
+	source ~/.aliases.local
+fi
+
 export PATH="$(go env GOPATH)/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/local/nvim/bin:$HOME/.local/bin"
 
 export PYENV_ROOT="$HOME/.pyenv"

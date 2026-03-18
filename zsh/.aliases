@@ -14,7 +14,7 @@ rebuild-nvim-main() {
   brew install neovim
 }
 
-alias v='nvim'
+alias v='echo "Set nvim alias in .aliases.local"'
 
 # Git shit
 gl() {
