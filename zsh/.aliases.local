@@ -1,1 +1,0 @@
-alias v='XDG_CONFIG_HOME=/Users/matleo/dev NVIM_APPNAME=CosmicNvim nvim'

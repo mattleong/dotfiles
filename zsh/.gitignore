@@ -2,4 +2,4 @@
 themes/
 plugins/
 .env
-.alias.local
+.aliases.local
