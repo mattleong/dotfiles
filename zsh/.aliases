@@ -123,7 +123,7 @@ EOF
 			tick=0
 
 			codex exec \
-				-m gpt-5.1-codex-mini \
+				-m gpt-5.4-mini \
 				-c 'model_reasoning_effort="medium"' \
 				-c 'mcp_servers.context7.enabled=false' \
 				--sandbox read-only \
