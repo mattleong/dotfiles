@@ -41,10 +41,8 @@ gcm() {
 	emulate -L zsh
 	setopt localoptions nomonitor
 
-	local msg_file diff_file payload_file
+	local msg_file
 	msg_file="$(mktemp -t codex-commit-msg.XXXXXX)" || return 1
-	diff_file="$(mktemp -t codex-commit-diff.XXXXXX)" || { rm -f -- "$msg_file"; return 1; }
-	payload_file="$(mktemp -t codex-commit-payload.XXXXXX)" || { rm -f -- "$msg_file" "$diff_file"; return 1; }
 
 	{
 		if git diff --cached --no-ext-diff --no-textconv --quiet; then
@@ -52,44 +50,10 @@ gcm() {
 			return 1
 		fi
 
-		if ! git diff --cached --no-ext-diff --no-textconv --no-color > "$diff_file"; then
+		if ! git diff --cached --no-ext-diff --no-textconv --no-color >/dev/null; then
 			echo "Failed to read staged diff."
 			return 1
 		fi
-
-		local diff_bytes max_diff_bytes max_patch_lines
-		diff_bytes="$(wc -c < "$diff_file" | tr -d '[:space:]')"
-		max_diff_bytes=204800
-		max_patch_lines=1200
-
-		{
-			cat <<'EOF'
-Write a git commit message from the staged diff content below.
-Use only the provided content as input.
-Do not run tools or shell commands.
-Use Conventional Commits format.
-Output only the final commit message text (no markdown, no code fences, no explanation).
-Keep the subject line <= 72 characters.
-Include a short body only when needed.
-If the patch is truncated, infer intent from file paths, name-status, and diff stat.
-
-EOF
-
-			if [ "$diff_bytes" -le "$max_diff_bytes" ]; then
-				echo "Full staged diff:"
-				cat "$diff_file"
-			else
-				printf "Staged diff is large (%s bytes). Using compact context plus patch excerpt.\n\n" "$diff_bytes"
-				echo "Name-status:"
-				git diff --cached --name-status --no-ext-diff --no-textconv --no-color
-				echo
-				echo "Diff stat:"
-				git diff --cached --stat --no-ext-diff --no-textconv --no-color
-				echo
-				printf "Patch excerpt (first %s lines):\n" "$max_patch_lines"
-				sed -n "1,${max_patch_lines}p" "$diff_file"
-			fi
-		} > "$payload_file"
 
 		local codex_pid codex_rc i tick locale_tag spinner_label color_prefix color_reset
 		local timeout_seconds max_retries max_attempts attempt timed_out start_seconds elapsed use_spinner
@@ -122,7 +86,20 @@ EOF
 			i=1
 			tick=0
 
-			codex exec \
+			{
+				cat <<'EOF'
+Write a git commit message from the staged diff content below.
+Use only the provided content as input.
+Do not run tools or shell commands.
+Use Conventional Commits format.
+Output only the final commit message text (no markdown, no code fences, no explanation).
+Keep the subject line <= 72 characters.
+Include a short body only when needed.
+
+Full staged diff:
+EOF
+				git diff --cached --no-ext-diff --no-textconv --no-color
+			} | codex exec \
 				-m gpt-5.4-mini \
 				-c 'model_reasoning_effort="medium"' \
 				-c 'mcp_servers.context7.enabled=false' \
@@ -131,7 +108,7 @@ EOF
 				--skip-git-repo-check \
 				--color never \
 				--output-last-message "$msg_file" \
-				- < "$payload_file" >/dev/null 2>&1 &
+				- >/dev/null 2>&1 &
 			codex_pid=$!
 
 			while kill -0 "$codex_pid" 2>/dev/null; do
@@ -178,7 +155,7 @@ EOF
 
 		git commit -F "$msg_file"
 	} always {
-		rm -f -- "$msg_file" "$diff_file" "$payload_file"
+		rm -f -- "$msg_file"
 	}
 }
 
