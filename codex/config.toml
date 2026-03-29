@@ -4,7 +4,6 @@ plan_mode_reasoning_effort = "xhigh"
 web_search = "live"
 unified_exec = true
 sandbox_mode = "danger-full-access"
-service_tier = "fast"
 
 [sandbox_workspace_write]
 network_access = true
