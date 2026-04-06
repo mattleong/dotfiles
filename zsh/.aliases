@@ -175,5 +175,5 @@ alias edit-claude='v ~/.claude/settings.json'
 alias edit-codex='v ~/.codex/config.toml'
 alias edit-opencode='v ~/.config/opencode/opencode.jsonc'
 
-alias c="codex --full-auto"
+alias c="codex --yolo"
 alias cl="claude --allow-dangerously-skip-permissions"
