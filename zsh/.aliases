@@ -100,8 +100,8 @@ Full staged diff:
 EOF
 				git diff --cached --no-ext-diff --no-textconv --no-color
 			} | codex exec \
-				-m gpt-5.3-codex-spark \
-				-c 'model_reasoning_effort="medium"' \
+				-m gpt-5.4-mini \
+				-c 'model_reasoning_effort="low"' \
 				-c 'mcp_servers.context7.enabled=false' \
 				--sandbox read-only \
 				--ephemeral \
