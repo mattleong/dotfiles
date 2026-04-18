@@ -65,3 +65,6 @@ eval "$(codex completion zsh)"
 
 
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+
+# sentry
+fpath=("/Users/scout-22-mbp4pro/.local/share/zsh/site-functions" $fpath)
