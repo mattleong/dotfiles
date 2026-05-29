@@ -28,9 +28,9 @@
     ],
     "ask": [
       "Bash(rm -rf *)"
-    ]
+    ],
+    "defaultMode": "auto"
   },
-  "model": "opus[1m]",
   "hooks": {
     "Notification": [
       {
@@ -48,12 +48,8 @@
     "type": "command",
     "command": "~/.claude/statusline-command.sh"
   },
-  "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true,
-    "gopls-lsp@claude-plugins-official": true,
-    "lua-lsp@claude-plugins-official": true,
-    "pyright-lsp@claude-plugins-official": true
-  },
-  "effortLevel": "high",
-  "skipDangerousModePermissionPrompt": true
+  "effortLevel": "xhigh",
+  "skipDangerousModePermissionPrompt": true,
+  "skipAutoPermissionPrompt": true,
+  "voiceEnabled": true
 }

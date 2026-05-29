@@ -94,6 +94,7 @@ Do not run tools or shell commands.
 Use Conventional Commits format.
 Output only the final commit message text (no markdown, no code fences, no explanation).
 Keep the subject line <= 72 characters.
+Body's lines must not be longer than 100 characters.
 Include a short body only when needed.
 
 Full staged diff:
@@ -158,6 +159,8 @@ EOF
 		rm -f -- "$msg_file"
 	}
 }
+
+alias yeet=git add -A && gcm && git push
 
 # mcd: Makes new directory and jumps into it
 mcd () { mkdir -p "$1" && cd "$1"; }
