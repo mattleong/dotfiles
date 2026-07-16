@@ -102,6 +102,8 @@ EOF
 				git diff --cached --no-ext-diff --no-textconv --no-color
 			} | codex exec \
 				-m gpt-5.6-luna \
+				--enable fast_mode \
+				-c 'service_tier="fast"' \
 				-c 'model_reasoning_effort="medium"' \
 				--sandbox read-only \
 				--ephemeral \
