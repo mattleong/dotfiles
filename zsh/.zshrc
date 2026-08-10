@@ -7,10 +7,7 @@ export ZSH_CUSTOM=~/.zsh
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(wd vi-mode nvm gh sudo uv eza zsh-autosuggestions zsh-syntax-highlighting)
-
-# zstyle ':omz:plugins:nvm' autoload yes
-zstyle ':omz:plugins:nvm' lazy yes
+plugins=(wd vi-mode gh sudo uv eza zsh-autosuggestions zsh-syntax-highlighting)
 
 zstyle ':omz:plugins:eza' 'dirs-first' yes
 zstyle ':omz:plugins:eza' 'git-status' yes
@@ -67,6 +64,7 @@ if command -v pyenv >/dev/null 2>&1; then
 	}
 fi
 
+eval "$(fnm env --use-on-cd --shell zsh)"
 eval "$(starship init zsh)"
 
 
