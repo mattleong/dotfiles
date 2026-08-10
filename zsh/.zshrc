@@ -7,10 +7,7 @@ export ZSH_CUSTOM=~/.zsh
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(zsh-syntax-highlighting zsh-autosuggestions wd vi-mode nvm gh sudo uv eza)
-
-zstyle ':omz:plugins:nvm' autoload yes
-# zstyle ':omz:plugins:nvm' lazy yes
+plugins=(wd vi-mode gh sudo uv eza zsh-autosuggestions zsh-syntax-highlighting)
 
 zstyle ':omz:plugins:eza' 'dirs-first' yes
 zstyle ':omz:plugins:eza' 'git-status' yes
@@ -19,6 +16,13 @@ zstyle ':omz:plugins:eza' 'icons' yes
 #disable update prompt
 DISABLE_UPDATE_PROMPT=true
 SAVEHIST=10000
+
+# cached CLI completions (regenerate with e.g. `codex completion zsh > ~/.zsh/completions/_codex`)
+if [[ ! -f ~/.zsh/completions/_codex ]] && command -v codex >/dev/null 2>&1; then
+	mkdir -p ~/.zsh/completions
+	codex completion zsh > ~/.zsh/completions/_codex
+fi
+fpath=(~/.zsh/completions $fpath)
 
 # end zsh settings
 source $ZSH/oh-my-zsh.sh
@@ -60,8 +64,8 @@ if command -v pyenv >/dev/null 2>&1; then
 	}
 fi
 
+eval "$(fnm env --use-on-cd --shell zsh)"
 eval "$(starship init zsh)"
-eval "$(codex completion zsh)"
 
 
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi

@@ -13,6 +13,7 @@ brew install stow \
   tmux \
   gh \
   codex \
+  fnm \
   anomalyco/tap/opencode \
   --cask obsidian \
   --cask ghostty \
@@ -22,9 +23,6 @@ brew install stow \
   --cask yaak \
   --cask raycast \
   --cask gimp
-
-# install nvm
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
 
 # install oh-my-zsh
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
