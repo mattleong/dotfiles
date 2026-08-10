@@ -37,55 +37,44 @@ gc() {
 	git commit -m "$1"
 }
 
+# Generate a commit message from the staged diff with codex, then commit.
+# Extra args go to git commit (e.g. `gcm -e` to edit the message first).
 gcm() {
 	emulate -L zsh
-	setopt localoptions nomonitor
+	setopt localoptions no_monitor no_notify
 
-	local msg_file
+	if git diff --cached --no-ext-diff --no-textconv --quiet; then
+		echo "No staged changes. Use 'ga' (or git add) first."
+		return 1
+	fi
+
+	local msg_file spinner_pid attempt
 	msg_file="$(mktemp -t codex-commit-msg.XXXXXX)" || return 1
 
+	# Hard 25s timeout when coreutils is installed; otherwise Ctrl-C works.
+	local -a timeout_cmd
+	if (( $+commands[gtimeout] )); then
+		timeout_cmd=(gtimeout -k 2 25)
+	elif (( $+commands[timeout] )); then
+		timeout_cmd=(timeout -k 2 25)
+	fi
+
 	{
-		if git diff --cached --no-ext-diff --no-textconv --quiet; then
-			echo "No staged changes. Use 'ga' (or git add) first."
-			return 1
-		fi
-
-		if ! git diff --cached --no-ext-diff --no-textconv --no-color >/dev/null; then
-			echo "Failed to read staged diff."
-			return 1
-		fi
-
-		local codex_pid codex_rc i tick locale_tag spinner_label color_prefix color_reset
-		local timeout_seconds max_retries max_attempts attempt timed_out start_seconds elapsed use_spinner
-		local -a spinner_frames
-		codex_rc=1
-		timeout_seconds=25
-		max_retries=1
-		max_attempts=$(( max_retries + 1 ))
-		use_spinner=0
-
 		if [[ -t 2 && "${TERM:-dumb}" != "dumb" ]]; then
-			use_spinner=1
-			locale_tag="${LC_ALL:-${LC_CTYPE:-$LANG}}"
-			if [[ "${locale_tag:l}" == *"utf-8"* || "${locale_tag:l}" == *"utf8"* ]]; then
-				spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-			else
-				spinner_frames=('-' '\' '|' '/')
-			fi
-
-			spinner_label="Generating commit message"
-			color_prefix=$'\033[2;36m'
-			color_reset=$'\033[0m'
+			(
+				local -a frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+				local i=1
+				while :; do
+					printf '\r\033[2;36m%s Generating commit message\033[0m' "${frames[i]}" >&2
+					i=$(( i % $#frames + 1 ))
+					sleep 0.1
+				done
+			) &
+			spinner_pid=$!
 		fi
 
-		attempt=1
-		while [ "$attempt" -le "$max_attempts" ]; do
+		for attempt in 1 2; do
 			: >| "$msg_file"
-			timed_out=0
-			start_seconds=$SECONDS
-			i=1
-			tick=0
-
 			{
 				cat <<'EOF'
 Write a git commit message from the staged diff content below.
@@ -100,7 +89,7 @@ Include a short body only when needed.
 Full staged diff:
 EOF
 				git diff --cached --no-ext-diff --no-textconv --no-color
-			} | codex exec \
+			} | "${timeout_cmd[@]}" codex exec \
 				-m gpt-5.6-luna \
 				--enable fast_mode \
 				-c 'service_tier="fast"' \
@@ -110,53 +99,24 @@ EOF
 				--skip-git-repo-check \
 				--color never \
 				--output-last-message "$msg_file" \
-				- >/dev/null 2>&1 &
-			codex_pid=$!
-
-			while kill -0 "$codex_pid" 2>/dev/null; do
-				elapsed=$(( SECONDS - start_seconds ))
-				if [ "$elapsed" -ge "$timeout_seconds" ]; then
-					timed_out=1
-					kill "$codex_pid" 2>/dev/null || true
-					sleep 0.2
-					if kill -0 "$codex_pid" 2>/dev/null; then
-						kill -9 "$codex_pid" 2>/dev/null || true
-					fi
-					break
-				fi
-
-				tick=$(( tick + 1 ))
-				if [ "$use_spinner" -eq 1 ] && [ "$tick" -gt 1 ]; then
-					printf "\r%s%s %s%s" "$color_prefix" "${spinner_frames[i]}" "$spinner_label" "$color_reset" >&2
-					i=$(( (i % ${#spinner_frames[@]}) + 1 ))
-				fi
-				sleep 0.1
-			done
-
-			if [ "$use_spinner" -eq 1 ] && [ "$tick" -gt 1 ]; then
-				printf "\r\033[2K" >&2
-			fi
-
-			wait "$codex_pid" 2>/dev/null
-			codex_rc=$?
-			if [ "$timed_out" -eq 1 ]; then
-				codex_rc=124
-			fi
-
-			if [ "$codex_rc" -eq 0 ] && [ -s "$msg_file" ]; then
-				break
-			fi
-
-			attempt=$(( attempt + 1 ))
+				- >/dev/null 2>&1
+			[[ -s "$msg_file" ]] && break
 		done
 
-		if [ "$codex_rc" -ne 0 ] || [ ! -s "$msg_file" ]; then
-			echo "Failed after ${max_attempts} attempts (${timeout_seconds}s timeout each). Try again or run gc \"message\"."
+		if [[ -n "$spinner_pid" ]]; then
+			kill "$spinner_pid" 2>/dev/null
+			printf '\r\033[2K' >&2
+			spinner_pid=""
+		fi
+
+		if [[ ! -s "$msg_file" ]]; then
+			echo "Failed to generate a commit message. Try again or run gc \"message\"."
 			return 1
 		fi
 
-		git commit -F "$msg_file"
+		git commit -F "$msg_file" "$@"
 	} always {
+		[[ -n "$spinner_pid" ]] && kill "$spinner_pid" 2>/dev/null && printf '\r\033[2K' >&2
 		rm -f -- "$msg_file"
 	}
 }
