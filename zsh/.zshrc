@@ -66,5 +66,11 @@ eval "$(codex completion zsh)"
 
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
 
-# sentry
-fpath=("/Users/scout-22-mbp4pro/.local/share/zsh/site-functions" $fpath)
+# Vite+ bin (https://viteplus.dev)
+. "$HOME/.vite-plus/env"
+
+# >>> grok installer >>>
+export PATH="$HOME/.grok/bin:$PATH"
+fpath=(~/.grok/completions/zsh $fpath)
+autoload -Uz compinit && compinit -C
+# <<< grok installer <<<

@@ -27,11 +27,10 @@
       "Bash(* --version)",
       "Bash(* --help *)"
     ],
-    "ask": [
-      "Bash(rm -rf *)"
-    ],
+    "ask": [],
     "defaultMode": "auto"
   },
+  "model": "opus[1m]",
   "hooks": {
     "Notification": [
       {
@@ -43,23 +42,34 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/scout-22-mbp4pro/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline-command.sh"
   },
-<<<<<<< HEAD
-  "effortLevel": "xhigh",
+  "enabledPlugins": {},
+  "effortLevel": "high",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
+  "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "voiceEnabled": true
-=======
-  "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true
-  },
-  "effortLevel": "high",
-  "skipDangerousModePermissionPrompt": true,
-  "skipAutoPermissionPrompt": true
->>>>>>> 5b535cf51a8755cefe0779b59e3bd7c8435e6283
 }
