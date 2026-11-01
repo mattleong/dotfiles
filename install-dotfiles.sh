@@ -101,6 +101,6 @@ run_stow_group() {
   stow "${args[@]}"
 }
 
-run_stow_group "$HOME" zsh aerospace
+run_stow_group "$HOME" zsh aerospace rex
 
 echo "Done."
