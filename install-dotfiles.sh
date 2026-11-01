@@ -14,8 +14,8 @@ Usage: ./install-dotfiles.sh [options]
 
 Options:
   -n, --dry-run   Show what would change without creating links
-  -D, --delete    Remove links managed by stow
-  -a, --adopt     Import existing target files into the stow package
+  -D, --delete    Remove managed links
+  -a, --adopt     Import existing target files into stow packages (not Rex)
   -v, --verbose   Print extra stow output
   -h, --help      Show this help
 
@@ -101,6 +101,36 @@ run_stow_group() {
   stow "${args[@]}"
 }
 
-run_stow_group "$HOME" zsh aerospace rex
+run_rex_link() {
+  local source="$DOTFILES_DIR/rex"
+  local target="$HOME/.config/rex"
+  local managed=false
+
+  [[ -d "$source" ]] || return
+  if [[ -L "$target" ]] && [[ "$(cd "$target" 2>/dev/null && pwd -P)" == "$(cd "$source" && pwd -P)" ]]; then
+    managed=true
+  fi
+
+  if [[ "$MODE" == "delete" ]]; then
+    if [[ "$managed" == "true" ]]; then
+      echo "[delete] $target"
+      [[ "$DRY_RUN" == "true" ]] || rm "$target"
+    fi
+  elif [[ "$managed" == "true" ]]; then
+    echo "[stow] $target already links to $source"
+  elif [[ -e "$target" || -L "$target" ]]; then
+    echo "Error: $target already exists; move it aside before linking Rex." >&2
+    return 1
+  else
+    echo "[stow] $target -> $source"
+    if [[ "$DRY_RUN" != "true" ]]; then
+      mkdir -p "$(dirname "$target")"
+      ln -s "$source" "$target"
+    fi
+  fi
+}
+
+run_stow_group "$HOME" zsh aerospace
+run_rex_link
 
 echo "Done."
