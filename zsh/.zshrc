@@ -78,3 +78,11 @@ export PATH="$HOME/.grok/bin:$PATH"
 fpath=(~/.grok/completions/zsh $fpath)
 autoload -Uz compinit && compinit -C
 # <<< grok installer <<<
+
+# opencode
+export PATH=/Users/scout-22-mbp4pro/.opencode/bin:$PATH
+
+# Keep the Rex CLI matched to the current terminal's server.
+if [ -n "$REX_BIN_DIR" ]; then
+    export PATH="$REX_BIN_DIR:$PATH"
+fi
