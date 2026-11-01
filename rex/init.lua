@@ -27,14 +27,14 @@ end
 rex.bind("ctrl+b>ctrl+b", "pane.send_key", { key = "ctrl+b" })
 
 -- Moving a pane to a new tab also leaves pane mode.
-rex.action{
+rex.action({
 	name = "move_pane_to_new_tab_and_exit",
 	title = "Move Pane to New Tab and Exit Mode",
 	run = function()
 		rex.client.queue("pane.move_to_new_tab")
 		rex.client.queue("client.mode.exit_all")
 	end,
-}
+})
 
 -- Pane mode: Ctrl+B, p. Stays active for repeated actions.
 rex.mode("pane", { exclusive = true })
