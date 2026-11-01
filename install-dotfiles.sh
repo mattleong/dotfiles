@@ -20,8 +20,6 @@ Options:
   -h, --help      Show this help
 
 Environment overrides:
-  CLAUDE_DIR      (default: $HOME/.claude)
-  CODEX_DIR       (default: $HOME/.codex)
   OPENCODE_DIR    (default: $HOME/.config/opencode)
 EOF
 }
@@ -59,8 +57,6 @@ if ! command -v stow >/dev/null 2>&1; then
   exit 1
 fi
 
-CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
-CODEX_DIR="${CODEX_DIR:-$HOME/.codex}"
 OPENCODE_DIR="${OPENCODE_DIR:-$HOME/.config/opencode}"
 
 run_stow_group() {
@@ -110,8 +106,6 @@ run_stow_group() {
 }
 
 run_stow_group "$HOME" zsh tmux aerospace
-run_stow_group "$CLAUDE_DIR" claude
-run_stow_group "$CODEX_DIR" codex
 run_stow_group "$OPENCODE_DIR" opencode
 
 echo "Done."
