@@ -130,7 +130,7 @@ run_rex_link() {
   fi
 }
 
-run_stow_group "$HOME" zsh aerospace
+run_stow_group "$HOME" zsh
 run_rex_link
 
 echo "Done."
