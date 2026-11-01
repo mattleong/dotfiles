@@ -10,11 +10,9 @@ brew install stow \
   font-fira-code \
   go \
   eza \
-  tmux \
   gh \
   codex \
   fnm \
-  anomalyco/tap/opencode \
   --cask obsidian \
   --cask ghostty \
   --cask claude-code \

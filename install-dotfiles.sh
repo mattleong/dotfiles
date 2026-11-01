@@ -10,7 +10,7 @@ ADOPT=false
 
 usage() {
   cat <<'EOF'
-Usage: ./install.sh [options]
+Usage: ./install-dotfiles.sh [options]
 
 Options:
   -n, --dry-run   Show what would change without creating links
@@ -19,8 +19,6 @@ Options:
   -v, --verbose   Print extra stow output
   -h, --help      Show this help
 
-Environment overrides:
-  OPENCODE_DIR    (default: $HOME/.config/opencode)
 EOF
 }
 
@@ -56,8 +54,6 @@ if ! command -v stow >/dev/null 2>&1; then
   echo "Install with Homebrew: brew install stow" >&2
   exit 1
 fi
-
-OPENCODE_DIR="${OPENCODE_DIR:-$HOME/.config/opencode}"
 
 run_stow_group() {
   local target="$1"
@@ -105,7 +101,6 @@ run_stow_group() {
   stow "${args[@]}"
 }
 
-run_stow_group "$HOME" zsh tmux aerospace
-run_stow_group "$OPENCODE_DIR" opencode
+run_stow_group "$HOME" zsh aerospace
 
 echo "Done."
