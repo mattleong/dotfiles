@@ -17,6 +17,16 @@ import time
 
 TERMINAL = "com.superlogical.terminal"
 COLORS = {}
+SELECTED_PAIRS = {}  # Color pair number -> the same colors on the selected-row background.
+# Nerd Font icons (Font Awesome range, stable across Nerd Font versions).
+ICONS = {
+    "main": "\uf015", "tab": "\uf120", "dirty": "\uf040", "ahead": "\uf062", "behind": "\uf063",
+    "deleted": "\uf127", "missing": "\uf114", "locked": "\uf023", "remote": "\uf0c2",
+    "local": "\ue725", "ok": "\uf00c", "error": "\uf00d", "info": "\uf05a", "folder": "\uf07b",
+}
+# Where tools keep the worktrees they create, to tag each worktree with its source.
+WORKTREE_SOURCES = [(".herdr/worktrees", "herdr"), (".t3/worktrees", "t3"),
+                    (".local/share/rex/worktrees", "rex")]
 PENDING = "pending"
 # Set once a tab has been focused, so exiting doesn't pull focus back to the original pane.
 STATE = {"navigated": False}
@@ -287,7 +297,7 @@ def fuzzy(token, text):
 
 
 def match_entry(entry, query):
-    """Fuzzy-match every token against the name, or else the path. Returns (score, name hits, path hits)."""
+    """Fuzzy-match every token against the name, or else the path. Returns (score, name hits, folder hits)."""
     total, name_hits, path_hits = 0, set(), set()
     for token in query.lower().split():
         named = fuzzy(token, entry["name"])
@@ -296,11 +306,12 @@ def match_entry(entry, query):
             name_hits.update(named[1])
             continue
         # Paths are long and full of common letters, so they match as plain substrings only.
-        found = tilde(entry["worktree"]).lower().find(token)
-        if found < 0:
+        if token not in tilde(entry["worktree"]).lower():
             return None
         total += len(token)
-        path_hits.update(range(found, found + len(token)))
+        found = os.path.basename(entry["worktree"]).lower().find(token)
+        if found >= 0:
+            path_hits.update(range(found, found + len(token)))
     return total, name_hits, path_hits
 
 
@@ -500,25 +511,44 @@ def init_colors():
         background = -1
     except curses.error:
         background = curses.COLOR_BLACK
-    for index, (name, color) in enumerate(
-            [("green", curses.COLOR_GREEN), ("yellow", curses.COLOR_YELLOW),
-             ("cyan", curses.COLOR_CYAN), ("red", curses.COLOR_RED), ("blue", curses.COLOR_BLUE)], 1):
+    palette = [("green", curses.COLOR_GREEN), ("yellow", curses.COLOR_YELLOW),
+               ("cyan", curses.COLOR_CYAN), ("red", curses.COLOR_RED), ("blue", curses.COLOR_BLUE)]
+    for index, (name, color) in enumerate(palette, 1):
         curses.init_pair(index, color, background)
         COLORS[name] = curses.color_pair(index)
+    if curses.COLORS >= 256 and curses.COLOR_PAIRS > 2 * len(palette) + 1:
+        # A subtle gray behind the selected row, in each color.
+        highlight = 236
+        for index, color in enumerate([-1] + [c for _, c in palette]):
+            pair = len(palette) + 1 + index
+            curses.init_pair(pair, color, highlight)
+            SELECTED_PAIRS[index] = curses.color_pair(pair)
 
 
 def style(name):
     return COLORS.get(name, 0)
 
 
+class Selected(list):
+    """A row drawn on the selected-row background."""
+
+
 def render(stdscr, rows, cursor=None):
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     for y, row in enumerate(rows[:height]):
+        highlight = isinstance(row, Selected) and SELECTED_PAIRS
+        if highlight:
+            try:
+                stdscr.addnstr(y, 0, " " * width, width - 1, SELECTED_PAIRS[0])
+            except curses.error:
+                pass
         x = 2
         for text, attr in row:
             if x >= width - 1:
                 break
+            if highlight:
+                attr = (attr & ~curses.A_COLOR) | SELECTED_PAIRS.get(curses.pair_number(attr), SELECTED_PAIRS[0])
             try:
                 stdscr.addnstr(y, x, text, width - 1 - x, attr)
             except curses.error:
@@ -554,17 +584,20 @@ def highlighted(text, hits, attr):
 def badges(entry):
     result = []
     if entry.get("main"):
-        result.append(("main checkout", style("blue")))
+        result.append((ICONS["main"] + " main checkout", style("blue")))
     if entry.get("open") is True:
-        result.append(("tab open", style("green")))
+        result.append((ICONS["tab"] + " tab open", style("green")))
     if entry.get("dirty") is True:
-        result.append(("uncommitted", style("yellow")))
+        result.append((ICONS["dirty"] + " uncommitted", style("yellow")))
     for part in entry.get("track") or []:
-        result.append((part, style("red") if part == REMOTE_DELETED else style("cyan")))
+        if part == REMOTE_DELETED:
+            result.append((ICONS["deleted"] + " " + part, style("red")))
+        else:
+            result.append((ICONS["ahead" if part.endswith("ahead") else "behind"] + " " + part, style("cyan")))
     if "locked" in entry:
-        result.append(("locked", style("red")))
+        result.append((ICONS["locked"] + " locked", style("red")))
     if missing(entry):
-        result.append(("folder missing", style("red")))
+        result.append((ICONS["missing"] + " folder missing", style("red")))
     if PENDING in (entry.get("dirty"), entry.get("open")):
         result.append(("…", style("dim")))
     return result
@@ -575,8 +608,17 @@ def badges_width(entry):
     return sum(len(text) for text, _ in labels) + 3 * max(0, len(labels) - 1)
 
 
-def entry_row(entry, selected, name_width, badge_width, match=None):
-    _, name_hits, path_hits = match or (0, set(), set())
+def worktree_source(entry):
+    """The tool that created a worktree, judged by where it lives: herdr, t3, claude, rex, or ''."""
+    path = tilde(entry["worktree"])
+    for folder, name in WORKTREE_SOURCES:
+        if path.startswith("~/" + folder + "/"):
+            return name
+    return "claude" if "/.claude/worktrees/" in path else ""
+
+
+def entry_row(entry, selected, name_width, badge_width, source_width, match=None):
+    _, name_hits, folder_hits = match or (0, set(), set())
     name = entry["name"][:name_width]
     row = [("› " if selected else "  ", style("cyan") | style("bold")),
            ("● " if entry.get("current") else "  ", style("green"))]
@@ -585,8 +627,10 @@ def entry_row(entry, selected, name_width, badge_width, match=None):
     for i, (text, attr) in enumerate(badges(entry)):
         row += ([(" · ", style("dim"))] if i else []) + [(text, attr)]
     row.append((" " * max(0, badge_width - badges_width(entry)) + "   ", 0))
-    row += highlighted(tilde(entry["worktree"]), path_hits, style("dim"))
-    return row
+    if source_width:
+        row.append((worktree_source(entry).ljust(source_width) + "  ", style("blue")))
+    row += highlighted(os.path.basename(entry["worktree"]), folder_hits, style("dim"))
+    return Selected(row) if selected else row
 
 
 ENTER = ("\n", "\r", curses.KEY_ENTER)
@@ -813,12 +857,13 @@ class Manager:
             top = min(max(top, index - capacity + 1), index, max(0, len(shown) - capacity))
             name_width = min(40, max([len(e["name"]) for e in self.entries] + [8]))
             badge_width = max([badges_width(e) for e in self.entries] + [0])
+            source_width = max([len(worktree_source(e)) for e in self.entries] + [0])
 
             if not pending_input(stdscr):
                 rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
                         search_row(query, filtering, "/ to filter"), []]
                 for e in shown[top:top + capacity]:
-                    rows.append(entry_row(e, e is selected, name_width, badge_width,
+                    rows.append(entry_row(e, e is selected, name_width, badge_width, source_width,
                                           match_entry(e, query) if query.strip() else None))
                 if not shown:
                     rows.append([("No matching worktrees", style("dim"))])
@@ -826,7 +871,8 @@ class Manager:
                 if preview_rows:
                     rows += self.preview(selected)
                 if self.message:
-                    rows.append([(self.message, style(self.message_style))])
+                    icon = {"green": "ok", "red": "error"}.get(self.message_style, "info")
+                    rows.append([(ICONS[icon] + " " + self.message, style(self.message_style))])
                 else:
                     rows.append([(f"{len(shown)}/{len(self.entries)}", style("dim"))])
                 if filtering:
@@ -879,12 +925,13 @@ class Manager:
                     ("q", "quit"),
                 ]), ("Labels", [
                     ("●", "the worktree you opened this from"),
-                    ("main checkout", "the original checkout; it can't be removed"),
-                    ("tab open", "a Rex tab is in this worktree"),
-                    ("uncommitted", "has uncommitted changes"),
-                    ("2 ahead / behind", "commits not yet pushed / not yet pulled"),
-                    ("remote deleted", "its remote branch is gone, often after merging"),
-                    ("folder missing", "the folder is gone; press p to prune"),
+                    (ICONS["main"] + " main checkout", "the original checkout; it can't be removed"),
+                    (ICONS["tab"] + " tab open", "a Rex tab is in this worktree"),
+                    (ICONS["dirty"] + " uncommitted", "has uncommitted changes"),
+                    (ICONS["ahead"] + " ahead / " + ICONS["behind"] + " behind", "commits not yet pushed / pulled"),
+                    (ICONS["deleted"] + " remote deleted", "its remote branch is gone, often after merging"),
+                    (ICONS["missing"] + " folder missing", "the folder is gone; press p to prune"),
+                    ("herdr, t3, claude, rex", "the tool that created the worktree"),
                 ])])
             elif key == ESCAPE and query:
                 query = ""
@@ -910,15 +957,15 @@ class Manager:
                     self.say(str(error))
 
     def preview(self, entry):
-        rows = [[("─" * 3 + " Recent commits", style("dim"))]]
         if entry is None:
-            return rows + [[]] * 6
+            return [[]] * 7
+        rows = [[("─── ", style("dim")), (ICONS["folder"] + " " + tilde(entry["worktree"]), style("dim"))]]
         path = entry["worktree"]
         if path not in self.commits:
             self.commits[path] = recent_commits(path)
         commits = self.commits[path]
         if missing(entry):
-            rows.append([("Directory missing", style("red"))])
+            rows.append([(ICONS["missing"] + " Folder missing", style("red"))])
         elif not commits:
             rows.append([("No commits", style("dim"))])
         for sha, subject, when in commits[:5]:
@@ -979,13 +1026,14 @@ class Manager:
                 rows.append([])
             for i, option in enumerate(options):
                 box = "[x] " if option["checked"] else "[ ] "
-                rows.append([pointer(i == cursor), (box, style("cyan"))] + option["label"])
+                option_row = [pointer(i == cursor), (box, style("cyan"))] + option["label"]
+                rows.append(Selected(option_row) if i == cursor else option_row)
             if not merged and "branch" in entry:
                 rows.append([("The branch ", 0), (entry["name"], style("bold")), (" will be kept.", 0)])
             rows.append([])
             checked = {o["id"] for o in options if o["checked"]}
             if message:
-                rows.append([(message, style("red"))])
+                rows.append([(ICONS["error"] + " " + message, style("red"))])
             elif files and "force" not in checked:
                 rows.append([("check “Discard uncommitted changes” to remove", style("dim"))])
             help_items = []
@@ -1056,7 +1104,7 @@ class Manager:
             if not pending_input(stdscr):
                 rows = [[], [("New worktree", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
                         search_row(text, filtering, "/ to filter"), [],
-                        [pointer(index == 0), ("+ Create a new branch…", style("green") | (style("bold") if index == 0 else 0))],
+                        (Selected if index == 0 else list)([pointer(index == 0), ("+ Create a new branch…", style("green") | (style("bold") if index == 0 else 0))]),
                         [], [(f"EXISTING BRANCHES ({len(existing)})", style("dim") | style("bold"))]]
                 ref_width = min(60, max([len(s["name"]) for s in existing[top:top + capacity]] + [10]))
                 for i, item in enumerate(existing[top:top + capacity], top + 1):
@@ -1067,8 +1115,9 @@ class Manager:
                     row = [pointer(i == index)]
                     row += highlighted(ref, hits, style("bold") if i == index else 0)
                     row += [(" " * (ref_width - len(ref) + 3), 0),
-                            (source_label(item), style("blue") if item["kind"] == "remote" else style("dim"))]
-                    rows.append(row)
+                            (ICONS[item["kind"]] + " " + source_label(item),
+                             style("blue") if item["kind"] == "remote" else style("dim"))]
+                    rows.append(Selected(row) if i == index else row)
                 if not existing:
                     rows.append([("  No matching branches" if text.strip() else "  No other branches", style("dim"))])
                 rows += [[]] * max(0, height - len(rows) - 4)
@@ -1076,10 +1125,10 @@ class Manager:
                 if plan is None:
                     rows.append([("enter: ", style("dim")), ("create a new branch", 0)])
                 elif plan.get("error"):
-                    rows.append([(plan["error"], style("red"))])
+                    rows.append([(ICONS["error"] + " " + plan["error"], style("red"))])
                 else:
                     rows.append([("enter: ", style("dim")), (plan["action"], 0)])
-                rows.append([(message, style("red"))] if message else [])
+                rows.append([(ICONS["error"] + " " + message, style("red"))] if message else [])
                 if filtering:
                     rows.append(help_row(("enter", "done"), ("esc", "clear")))
                 else:
@@ -1153,7 +1202,7 @@ class Manager:
             rows = [[], [("New branch", style("bold")), ("  " + repo_name(self.repo), style("dim"))], [],
                     [("Name   ", style("dim")), (text, 0)]]
             if plan.get("error") and text.strip():
-                rows.append([("       ", 0), (plan["error"], style("red"))])
+                rows.append([("       ", 0), (ICONS["error"] + " " + plan["error"], style("red"))])
             elif typed and typed != text.strip():
                 rows.append([("       → ", style("dim")), (typed, style("bold"))])
             else:
@@ -1161,9 +1210,10 @@ class Manager:
             rows.append([])
             for i, option in enumerate(bases):
                 label = "Base   " if i == 0 else "       "
-                rows.append([(label, style("dim")), pointer(i == base),
-                             (option["label"], style("bold") if i == base else 0),
-                             ("  current branch" if option["ref"] == "HEAD" else "  default branch", style("dim"))])
+                base_row = [(label, style("dim")), pointer(i == base),
+                            (option["label"], style("bold") if i == base else 0),
+                            ("  current branch" if option["ref"] == "HEAD" else "  default branch", style("dim"))]
+                rows.append(Selected(base_row) if i == base else base_row)
             height, _ = stdscr.getmaxyx()
             rows += [[]] * max(0, height - len(rows) - 4)
             rows.append([])
@@ -1171,7 +1221,7 @@ class Manager:
                 rows.append([("enter: ", style("dim")), (plan["action"], 0)])
             else:
                 rows.append([("Type a name for the new branch.", style("dim"))])
-            rows.append([(message, style("red"))] if message else [])
+            rows.append([(ICONS["error"] + " " + message, style("red"))] if message else [])
             rows.append(help_row(("enter", "create"), *([("tab/↑↓", "base")] if len(bases) > 1 else []),
                                  ("esc", "back")))
             render(stdscr, rows, cursor=(3, 7 + tpos))

@@ -108,8 +108,9 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(tracks["refs/heads/main"], ["1 ahead"])
         self.assertEqual(tracks["refs/heads/deleted"], ["remote deleted"])
         entry = {"worktree": str(self.repo), "main": True, "open": True, "dirty": True, "track": ["1 ahead", "2 behind"]}
-        self.assertEqual([t for t, _ in worktree.badges(entry)], ["main checkout", "tab open", "uncommitted", "1 ahead", "2 behind"])
-        self.assertEqual(worktree.badges_width(entry), len("main checkout · tab open · uncommitted · 1 ahead · 2 behind"))
+        labels = [t for t, _ in worktree.badges(entry)]
+        self.assertEqual([t[2:] for t in labels], ["main checkout", "tab open", "uncommitted", "1 ahead", "2 behind"])
+        self.assertEqual(worktree.badges_width(entry), len(" · ".join(labels)))
 
     def test_source_label(self):
         self.assertEqual(worktree.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
@@ -269,7 +270,15 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(worktree.filter_entries(entries, "zzz"), [])
         score, name_hits, path_hits = worktree.match_entry(entries[2], "mn")
         self.assertEqual(name_hits, {0, 3})
-        self.assertEqual(worktree.match_entry(entries[2], "w/c")[2], {1, 2, 3})
+        self.assertIsNotNone(worktree.match_entry(entries[2], "w/c"))  # Matches the full path...
+        self.assertEqual(worktree.match_entry({"name": "x", "worktree": "/w/sinch-email"}, "inch")[2], {1, 2, 3, 4})  # ...highlights the folder.
+
+    def test_worktree_sources(self):
+        home = str(worktree.Path.home())
+        cases = {home + "/.herdr/worktrees/r/a": "herdr", home + "/.t3/worktrees/r/a": "t3",
+                 home + "/.local/share/rex/worktrees/r/a": "rex", "/repo/.claude/worktrees/a": "claude", "/repo-a": ""}
+        for path, source in cases.items():
+            self.assertEqual(worktree.worktree_source({"worktree": path}), source)
 
     def test_new_branch_from_default_base_does_not_track(self):
         git(self.repo, "checkout", "-q", "-b", "feature")
