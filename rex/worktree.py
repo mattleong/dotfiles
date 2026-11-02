@@ -648,15 +648,15 @@ def show_help(stdscr, title, sections):
 
 
 def confirm(stdscr, title, lines, keys, help_items=None):
-    """Show lines and wait for one of keys (a dict of key -> result). Esc, q, and n cancel."""
+    """Show lines and wait for one of keys (a dict of key -> result). Esc cancels."""
     stdscr.timeout(-1)
     while True:
         rows = [[], [(title, style("bold"))], []]
         rows += [line if isinstance(line, list) else [line] for line in lines()]
-        rows += [[], help_row(*(help_items or []), ("n/q/esc", "cancel"))]
+        rows += [[], help_row(*(help_items or []), ("esc", "cancel"))]
         render(stdscr, rows)
         key = read_key(stdscr)
-        if key in (ESCAPE, "n", "q"):
+        if key == ESCAPE:
             return None
         if key in ENTER:
             key = "\n"
@@ -851,8 +851,8 @@ class Manager:
             keys["F"] = lambda: "force"
             help_items.append(("F", "force remove"))
         else:
-            keys["y"] = keys["\n"] = lambda: "remove"
-            help_items.append(("y/enter", "remove"))
+            keys["\n"] = lambda: "remove"
+            help_items.append(("enter", "remove"))
         if merged:
             keys["b"] = toggle
             help_items.append(("b", "toggle branch deletion"))
@@ -881,7 +881,7 @@ class Manager:
             return out + [[], [("Only Git's records are removed; branches are kept.", style("dim"))]]
 
         if confirm(self.stdscr, f"Prune {len(stale)} missing worktree{'s' if len(stale) != 1 else ''}?",
-                   lines, {"y": lambda: True, "\n": lambda: True}, [("y/enter", "prune")]):
+                   lines, {"\n": lambda: True}, [("enter", "prune")]):
             try:
                 prune_worktrees(self.repo)
                 self.say(f"Pruned {len(stale)} missing worktree{'s' if len(stale) != 1 else ''}.", "green")
