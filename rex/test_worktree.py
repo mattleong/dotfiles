@@ -221,6 +221,31 @@ class WorktreeTests(unittest.TestCase):
             self.assertEqual(request["layout"]["block"]["options"]["initial_input"], 'eval "${VISUAL:-${EDITOR:-vi}}" .\n')
             self.assertTrue(worktree.STATE["navigated"])
 
+    def test_terminal_scan_uses_one_rex_call(self):
+        found = [{"session_id": "session:1", "window": {"window_id": "window:a"}, "cwds": ["/w/a", "/w/a/src"]},
+                 {"session_id": "session:repo", "window": {"window_id": "window:b"}, "cwds": {}}]
+        with patch.object(worktree, "run", return_value=json.dumps({"windows": found}).encode()) as run, \
+                patch.dict(worktree.STATE, {"repo_sessions": ["session:repo"]}), patch.dict(os.environ, {"REX_BLOCK": "block:picker"}):
+            pairs = worktree.terminal_cwds("session:1")
+        self.assertEqual([(w["window_id"], w["session_id"], cwd) for w, cwd in pairs],
+                         [("window:a", "session:1", "/w/a"), ("window:a", "session:1", "/w/a/src")])
+        args = run.call_args[0]
+        self.assertEqual(args[:3], ("rex", "do", "-e"))
+        self.assertEqual(json.loads(args[5]), {"sessions": ["session:1", "session:repo"], "skip": "block:picker"})
+        for failure in (RuntimeError("old rex"), b'{"error": "not attached"}'):
+            with patch.object(worktree, "run", side_effect=[failure] if isinstance(failure, Exception) else None,
+                              return_value=failure), \
+                    patch.object(worktree, "terminal_cwds_slowly", return_value=["slow"]) as slow:
+                self.assertEqual(worktree.terminal_cwds("session:1"), ["slow"])
+                slow.assert_called_once()
+
+    def test_base_entries_can_defer_details(self):
+        raw = worktree.worktrees(str(self.repo))
+        quick = worktree.base_entries(str(self.repo), raw, details=False)
+        self.assertEqual((quick[0]["time"], quick[0]["track"]), (None, []))
+        worktree.fill_details(str(self.repo), quick)
+        self.assertIsNotNone(quick[0]["time"])
+
     def test_source_label(self):
         self.assertEqual(worktree.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
         self.assertEqual(worktree.source_label({"kind": "remote", "name": "feat/a", "ref": "origin/feat/a"}), "remote")
@@ -511,6 +536,8 @@ class WorktreeTests(unittest.TestCase):
                      {"block_id": "block:b", "creator_name": worktree.TERMINAL}]}]}]}
 
         def fake_run(*args, cwd=None):
+            if args[1] == "do":
+                raise RuntimeError("no scripts")  # Exercise the per-pane fallback.
             if args[1:3] == ("session", "inspect"):
                 return json.dumps({"windows": views[args[3]]}).encode()
             if args[1:3] == ("block", "call"):

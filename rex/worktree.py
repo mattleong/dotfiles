@@ -91,9 +91,56 @@ def related_sessions(session):
     return sessions
 
 
+# Lists every terminal's working directory in the given sessions, in one rex process instead of
+# one per pane. Empty Lua tables come back as {}, so callers treat them as empty lists.
+SCAN_SCRIPT = """
+local result = {}
+for _, sid in ipairs(rex.args.sessions or {}) do
+  -- A script can only read sessions it's attached to.
+  local _, attach_error = rex.session.attach({ session_id = sid })
+  local view, view_error = rex.call("session.view", { session_id = sid })
+  if not view then
+    return { error = tostring(view_error or attach_error) }
+  end
+  for _, window in ipairs(view.windows or {}) do
+    local found = { session_id = sid, window = window, cwds = {} }
+    for _, layer in ipairs(window.layers or {}) do
+      for _, block in ipairs(layer.blocks or {}) do
+        if block.creator_name == "com.superlogical.terminal" and block.block_id ~= rex.args.skip then
+          local p = rex.call("com.superlogical.terminal.process", { session_id = sid, block_id = block.block_id })
+          local cwd = p and ((p.foreground and p.foreground.cwd) or (p.child and p.child.cwd))
+          if cwd then table.insert(found.cwds, cwd) end
+        end
+      end
+    end
+    table.insert(result, found)
+  end
+end
+return { windows = result }
+"""
+
+
 def terminal_cwds(session):
     """Return (window, cwd) for each terminal in the picker's and the repository's sessions,
     except this picker. Each window records its session under "session_id"."""
+    args = {"sessions": related_sessions(session), "skip": os.environ.get("REX_BLOCK") or ""}
+    try:
+        found = json.loads(run("rex", "do", "-e", SCAN_SCRIPT, "--args", json.dumps(args), "--json"))
+    except (RuntimeError, ValueError, OSError):
+        found = None
+    if not isinstance(found, dict) or "windows" not in found:
+        return terminal_cwds_slowly(session)
+    pairs = []
+    windows = found["windows"]
+    for item in windows if isinstance(windows, list) else []:
+        window = dict(item.get("window") or {}, session_id=item.get("session_id"))
+        pairs += [(window, cwd) for cwd in (item.get("cwds") or []) if isinstance(cwd, str)]
+    return pairs
+
+
+def terminal_cwds_slowly(session):
+    """The same as terminal_cwds, asking for each pane separately, for Rex versions where the
+    one-call script doesn't work."""
     picker = os.environ.get("REX_BLOCK")
     blocks = []
     for sid in related_sessions(session):
@@ -192,7 +239,11 @@ def branch_name(entry):
 @functools.lru_cache(maxsize=None)
 def repo_name(cwd):
     """Name the repository after its main worktree, or its bare directory."""
-    name = Path(worktrees(cwd)[0]["worktree"]).name
+    return repo_label(worktrees(cwd)[0]["worktree"])
+
+
+def repo_label(main_path):
+    name = Path(main_path).name
     return name[:-4] if name.endswith(".git") and len(name) > 4 else name
 
 
@@ -207,11 +258,11 @@ def setup_command(cwd):
     return os.fsdecode(result.stdout).strip() if result.returncode == 0 else ""
 
 
-def open_tab(session, entry, client=None, setup=None, focus=True):
+def open_tab(session, entry, client=None, setup=None, focus=True, terminals=None):
     """Focus the worktree's tab, or create one in the repository's session. With focus=False, only
     create it, in the background. Returns the window ID, or None when focus=False and a tab is
     already open."""
-    matches = windows_for_path(session, entry["worktree"])
+    matches = windows_for_path(session, entry["worktree"], terminals)
     if matches and not focus:
         return None
     if not focus:
@@ -274,20 +325,30 @@ def current_entry(entries, cwd):
     return max(matches, key=lambda e: len(os.path.realpath(e["worktree"])), default=None)
 
 
-def base_entries(cwd):
-    """List worktrees quickly; status fields start as PENDING."""
-    raw = worktrees(cwd)
+def base_entries(cwd, raw=None, details=True):
+    """List worktrees quickly; status fields start as PENDING. With details=False, ages and
+    ahead/behind are left for fill_details, so the list can appear sooner."""
+    raw = worktrees(cwd) if raw is None else raw
     if not raw:
         raise RuntimeError("No worktrees found")
     raw[0]["main"] = True
     entries = [e for e in raw if "bare" not in e]
-    tracks = tracking(cwd)
-    times = commit_times(cwd, [e["HEAD"] for e in entries if e.get("HEAD")])
     current = current_entry(entries, cwd)
     for entry in entries:
         entry.update(name=branch_name(entry), current=entry is current, dirty=PENDING, open=PENDING,
-                     track=tracks.get(entry.get("branch"), []), time=times.get(entry.get("HEAD")))
+                     track=[], time=None)
+    if details:
+        fill_details(cwd, entries)
     return entries
+
+
+def fill_details(cwd, entries):
+    """Ages and ahead/behind, from one for-each-ref and one show."""
+    tracks = tracking(cwd)
+    times = commit_times(cwd, [e["HEAD"] for e in entries if e.get("HEAD")])
+    for entry in entries:
+        entry["track"] = tracks.get(entry.get("branch"), [])
+        entry["time"] = times.get(entry.get("HEAD"))
 
 
 def commit_times(cwd, shas):
@@ -328,8 +389,9 @@ def load_entries(cwd, session):
     return entries
 
 
-def load_status_async(entries, session):
-    """Fill status on daemon threads, so the list appears at once and exiting never waits."""
+def load_status_async(entries, session, scan=True):
+    """Fill status on daemon threads, so the list appears at once and exiting never waits.
+    With scan=False, the caller looks up open tabs itself."""
     work = queue.Queue()
     for entry in entries:
         work.put(entry)
@@ -350,7 +412,7 @@ def load_status_async(entries, session):
         for entry in entries:
             entry["open"] = any(inside(path, entry["worktree"]) for _, path in terminals)
 
-    for target in [dirty_worker] * min(6, max(1, len(entries))) + [open_worker]:
+    for target in [dirty_worker] * min(6, max(1, len(entries))) + ([open_worker] if scan else []):
         threading.Thread(target=target, daemon=True).start()
 
 
@@ -600,13 +662,13 @@ def cleanup_reason(entry):
     return None
 
 
-def remove_many(repo, session, items):
+def remove_many(repo, session, items, terminals=None):
     """Remove several worktrees, closing their tabs at the end so the picker's own tab closes last.
     items holds (entry, delete_branch) pairs. Returns (removed names, failure messages)."""
     removed, failures, windows = [], [], {}
     for entry, delete_branch in items:
         try:
-            for window in windows_for_path(session, entry["worktree"]):
+            for window in windows_for_path(session, entry["worktree"], terminals):
                 windows[window["window_id"]] = window
             remove_worktree(repo, session, entry, [], delete_branch=delete_branch)
             removed.append(entry["name"])
@@ -1122,19 +1184,20 @@ class Manager:
     def __init__(self, stdscr, cwd, session, client, origin=""):
         self.stdscr, self.session, self.client, self.origin = stdscr, session, client, origin
         self.origin_cwd = cwd
-        self.repo = worktrees(cwd)[0]["worktree"]
-        try:
-            remember_repo_session(find_session(repo_name(self.repo)))
-        except (RuntimeError, ValueError, OSError):
-            pass
-        self.default = default_branch(self.repo)
+        raw = worktrees(cwd)
+        self.repo = raw[0]["worktree"]
+        self.label = repo_label(self.repo)
+        self.default = None  # Filled in by a background thread; previews use it once it's known.
+        self.terminals = None  # The latest scan of open tabs; None means scan again when needed.
+        self.session_known = False
+        threading.Thread(target=self.load_default, daemon=True).start()
         self.message, self.message_style = None, "red"
         self.commits = {}
         self.prs, self.prs_loading, self.sort = {}, False, "git"
         self.show_prs = pull_requests_enabled(self.repo)
         if self.show_prs:
             self.prs = load_cached_prs(self.repo)  # Shown at once, then refreshed in the background.
-        self.reload()
+        self.reload(raw)
         if self.show_prs:
             self.load_prs()
 
@@ -1193,11 +1256,75 @@ class Manager:
         # The original directory disappears if its worktree is removed.
         return self.origin_cwd if os.path.isdir(self.origin_cwd) else self.repo
 
-    def reload(self):
-        self.entries = base_entries(self.cwd)
+    def load_default(self):
+        try:
+            self.default = default_branch(self.repo)
+        except (RuntimeError, OSError):
+            pass
+
+    def reload(self, raw=None):
+        """List the worktrees at once, then fill in the slower details on background threads."""
+        self.entries = entries = base_entries(self.cwd, raw, details=False)
         self.commits = {}
-        load_status_async(self.entries, self.session)
+        self.terminals = None
+        self.details_loading = True
         self.apply_prs()
+        load_status_async(entries, self.session, scan=False)
+
+        def details():
+            try:
+                fill_details(self.cwd, entries)
+            except (RuntimeError, OSError):
+                pass
+            finally:
+                self.details_loading = False
+
+        def scan():
+            if not self.session_known:
+                # Find the repository's session first, so tabs open there count too.
+                try:
+                    remember_repo_session(find_session(self.label))
+                except (RuntimeError, ValueError, OSError):
+                    pass
+                self.session_known = True
+            try:
+                terminals = terminal_cwds(self.session)
+            except (RuntimeError, ValueError, OSError):
+                terminals = []
+            for entry in entries:
+                entry["open"] = any(inside(path, entry["worktree"]) for _, path in terminals)
+            if self.entries is entries:
+                self.terminals = terminals
+
+        for target in (details, scan):
+            threading.Thread(target=target, daemon=True).start()
+        self.preload_branches()
+
+    def preload_branches(self):
+        """Load branches for New worktree in the background, so it opens without waiting."""
+        holder, entries, cwd = {}, self.entries, self.cwd
+
+        def work():
+            try:
+                holder["value"] = load_branches(cwd, entries)
+            except (RuntimeError, OSError, ValueError) as error:
+                holder["error"] = error
+
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+        self.branch_preload = (thread, holder)
+
+    def branches(self):
+        thread, holder = self.branch_preload
+        if thread.is_alive():
+            self.busy("Loading branches…", thread.join)
+        if "error" in holder:
+            raise holder["error"]
+        return holder["value"]
+
+    def windows_for(self, entry):
+        """Tabs open in the worktree, from the latest scan when there is one."""
+        return windows_for_path(self.session, entry["worktree"], self.terminals)
 
     def say(self, text, tone="red"):
         self.message, self.message_style = text, tone
@@ -1208,7 +1335,8 @@ class Manager:
         selected = next((e for e in self.entries if e.get("current")), None)
         top = 0
         while True:
-            loading = self.prs_loading or any(PENDING in (e["dirty"], e["open"]) for e in self.entries)
+            loading = self.prs_loading or self.details_loading or any(
+                PENDING in (e["dirty"], e["open"]) for e in self.entries)
             set_timeout(stdscr, 150 if loading else -1)
             shown = filter_entries(sort_entries(self.entries, self.sort), query)
             if selected not in shown:
@@ -1222,7 +1350,7 @@ class Manager:
 
             if not pending_input(stdscr):
                 sort_note = "" if self.sort == "git" else f" · sorted by {self.sort}"
-                rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim")),
+                rows = [[], [("Worktrees", style("bold")), ("  " + self.label, style("dim")),
                              ("   " + self.summary() + sort_note, style("dim"))],
                         search_row(query, filtering, "/ to filter"), [], header_row(widths)]
                 for e in shown[top:top + capacity]:
@@ -1363,8 +1491,10 @@ class Manager:
                         self.busy("Opening split…", lambda: open_split(self.session, selected, self.origin))
                         return
                     entry = selected
-                    opened = self.busy("Opening tab…", lambda: open_tab(self.session, entry, focus=False))
+                    opened = self.busy("Opening tab…", lambda: open_tab(self.session, entry, focus=False,
+                                                                       terminals=self.terminals))
                     entry["open"] = True
+                    self.terminals = None  # A tab was added; scan again next time.
                     self.say(f"Opened {tab_label(entry)} in the background." if opened
                              else f"{entry['name']} already has a tab open.", "green" if opened else "dim")
                 except (RuntimeError, OSError) as error:
@@ -1377,7 +1507,8 @@ class Manager:
                     continue
                 try:
                     entry = selected
-                    self.busy("Opening…", lambda: open_tab(self.session, entry, self.client))
+                    self.busy("Opening…", lambda: open_tab(self.session, entry, self.client,
+                                                          terminals=self.terminals))
                     return
                 except (RuntimeError, OSError) as error:
                     self.say(str(error))
@@ -1449,7 +1580,7 @@ class Manager:
 
         def work():
             pairs = [(e, delete_branches["checked"] and bool(merged_into(self.repo, e))) for e in chosen]
-            return remove_many(self.repo, self.session, pairs)
+            return remove_many(self.repo, self.session, pairs, self.terminals)
 
         removed, failures = self.busy(f"Removing {len(chosen)} worktree{'s' if len(chosen) != 1 else ''}…", work)
         if failures:
@@ -1471,10 +1602,10 @@ class Manager:
     def preview(self, entry):
         if entry is None:
             return [[]] * 7
-        path = entry["worktree"]
-        if path not in self.commits:
-            self.commits[path] = recent_commits(path, base=self.default)
-        description, commits = self.commits[path]
+        path, key = entry["worktree"], (entry["worktree"], self.default)
+        if key not in self.commits:
+            self.commits[key] = recent_commits(path, base=self.default)
+        description, commits = self.commits[key]
         rows = [[("─── ", style("dim")), (ICONS["folder"] + " " + tilde(path), style("dim")),
                  (("  ·  " + description) if description else "", style("dim"))]]
         if missing(entry):
@@ -1495,7 +1626,7 @@ class Manager:
             return False
         try:
             files = changed_files(entry)
-            windows = windows_for_path(self.session, entry["worktree"])
+            windows = self.windows_for(entry)
             merged = merged_into(self.repo, entry)
         except (RuntimeError, OSError) as error:
             self.say(str(error))
@@ -1599,7 +1730,7 @@ class Manager:
         stdscr = self.stdscr
         set_timeout(stdscr, -1)
         cwd = self.cwd
-        branches = self.busy("Loading branches…", lambda: load_branches(cwd, self.entries))
+        branches = self.branches()
         set_timeout(stdscr, -1)
         suggestions = branches["suggestions"]
         text, tpos, index, top, message, filtering, pending = "", 0, 0, 0, None, False, None
@@ -1618,7 +1749,7 @@ class Manager:
             top = min(max(top, list_index - capacity + 1), list_index, max(0, len(existing) - capacity))
 
             if not pending_input(stdscr):
-                rows = [[], [("New worktree", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
+                rows = [[], [("New worktree", style("bold")), ("  " + self.label, style("dim"))],
                         search_row(text, filtering, "/ to filter"), [],
                         (Selected if index == 0 else list)([pointer(index == 0), ("+ Create a new branch…", style("green") | (style("bold") if index == 0 else 0))]),
                         [], [(f"EXISTING BRANCHES ({len(existing)})", style("dim") | style("bold"))]]
@@ -1715,7 +1846,7 @@ class Manager:
         while True:
             plan = plan_branch(cwd, branches, text, None, bases[base])
             typed = normalize_branch(text)
-            rows = [[], [("New branch", style("bold")), ("  " + repo_name(self.repo), style("dim"))], [],
+            rows = [[], [("New branch", style("bold")), ("  " + self.label, style("dim"))], [],
                     [("Name   ", style("dim")), (text, 0)]]
             if plan.get("error") and text.strip():
                 rows.append([("       ", 0), (ICONS["error"] + " " + plan["error"], style("red"))])
