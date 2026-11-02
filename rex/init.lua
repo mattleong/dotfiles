@@ -1,9 +1,10 @@
 ---@diagnostic disable: undefined-global
 -- Prefix: Ctrl+B, then the indicated key.
 -- p: pane mode     r: resize mode
--- t: tab mode      g: session mode
+-- t: tab mode      g: session mode   w: worktree mode
 -- s, h/j/k/l: split in a direction
--- Escape exits all modes; tab and session modes exit after one action.
+-- w, o/n/r: open, new, or remove a Git worktree
+-- Escape exits all modes; tab, session, and worktree modes exit after one action.
 -- Ctrl+B twice sends Ctrl+B to the terminal.
 
 -- Direct pane and sidebar shortcuts
@@ -73,6 +74,47 @@ rex.bind("session/p", "session.previous")
 rex.bind("session/w", "session.switch")
 rex.bind("session/r", "session.rename")
 rex.bind("session/x", "session.close")
+
+-- Worktree actions open a temporary floating terminal for interaction.
+local function worktree_action(mode)
+	return function(ctx)
+		if not ctx.session_id or not ctx.block_id then
+			error("Worktrees require a focused terminal and session")
+		end
+		local process, err = rex.block.call("com.superlogical.terminal", "process", { block_id = ctx.block_id })
+		if not process then error(err) end
+		local cwd = (process.foreground and process.foreground.cwd) or (process.child and process.child.cwd)
+		if not cwd then error("Cannot determine the focused terminal's working directory") end
+		local home = os.getenv("HOME")
+		if not home then error("HOME is not set") end
+		local result, layer_err = rex.session.new_layer({
+			session_id = ctx.session_id,
+			bounds = { 0.15, 0.15, 0.7, 0.6 },
+			focus = true,
+			layout = rex.layout.block({
+				flavor = "com.superlogical.terminal.shell",
+				options = {
+					shell = "none",
+					cwd = "/",
+					command = { "python3", home .. "/.config/rex/worktree.py", mode, cwd, ctx.session_id, ctx.client_id or "", ctx.block_id },
+				},
+			}),
+		})
+		if not result then error(layer_err) end
+	end
+end
+
+rex.mode("worktree", { exclusive = true })
+rex.bind("ctrl+b>w", "client.mode.enter", { name = "worktree", once = true })
+for _, item in ipairs({
+	{ "open", "Open Worktree", "o" },
+	{ "new", "New Worktree", "n" },
+	{ "remove", "Remove Worktree", "r" },
+}) do
+	local name = "worktree_" .. item[1]
+	rex.action({ name = name, title = item[2], category = "Worktrees", run = worktree_action(item[1]) })
+	rex.bind("worktree/" .. item[3], name)
+end
 
 -- Resize mode: Ctrl+B, r. Stays active for repeated adjustments.
 rex.mode("resize", { exclusive = true })
