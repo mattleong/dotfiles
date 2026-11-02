@@ -2,6 +2,7 @@
 """Interactive Git worktree manager, launched in a Rex floating terminal."""
 from concurrent.futures import ThreadPoolExecutor
 import curses
+import functools
 import hashlib
 import json
 import locale
@@ -117,6 +118,7 @@ def branch_name(entry):
     return "detached " + entry.get("HEAD", "")[:7]
 
 
+@functools.lru_cache(maxsize=None)
 def repo_name(cwd):
     """Name the repository after its main worktree, or its bare directory."""
     name = Path(worktrees(cwd)[0]["worktree"]).name
@@ -386,11 +388,15 @@ def normalize_branch(value):
     return "HEAD-branch" if branch == "HEAD" else branch
 
 
-def new_path(cwd, branch):
+@functools.lru_cache(maxsize=None)
+def worktree_root_key(cwd):
     common = git_text(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    repo = repo_name(cwd)
     # Hash the common Git directory to distinguish repositories with the same name.
-    repo_key = repo + "-" + hashlib.sha256(os.fsencode(os.path.realpath(common))).hexdigest()[:10]
+    return repo_name(cwd) + "-" + hashlib.sha256(os.fsencode(os.path.realpath(common))).hexdigest()[:10]
+
+
+def new_path(cwd, branch):
+    repo_key = worktree_root_key(cwd)
     slug = branch.replace("/", "-")[:100]
     suffix = hashlib.sha256(branch.encode()).hexdigest()[:8]
     return Path.home() / ".local/share/rex/worktrees" / repo_key / (slug + "-" + suffix)
@@ -657,6 +663,27 @@ def picker_focused(session):
     return False
 
 
+def unget(key):
+    if isinstance(key, int):
+        curses.ungetch(key)
+    else:
+        curses.unget_wch(key)
+
+
+def pending_input(stdscr):
+    """Whether more keys are already queued, such as from a held-down key. Drawing is skipped until
+    the queue drains, so the selection stops moving as soon as the key is released."""
+    stdscr.timeout(0)
+    try:
+        key = stdscr.get_wch()
+    except curses.error:
+        return False
+    finally:
+        stdscr.timeout(STATE.get("timeout", -1))
+    unget(key)
+    return True
+
+
 def read_key(stdscr):
     """Return the next key, or None when the input timeout passes first or after a focus event.
 
@@ -686,7 +713,7 @@ def read_key(stdscr):
                     raise FocusLost()
             return None
         for char in reversed(follow):
-            curses.unget_wch(char)
+            unget(char)
         return ESCAPE
     finally:
         stdscr.timeout(STATE.get("timeout", -1))
@@ -781,26 +808,27 @@ class Manager:
             name_width = min(40, max([len(e["name"]) for e in self.entries] + [8]))
             badge_width = max([sum(len(t) + 1 for t, _ in badges(e)) for e in self.entries] + [0])
 
-            rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
-                    search_row(query, filtering, "/ to filter"), []]
-            for e in shown[top:top + capacity]:
-                rows.append(entry_row(e, e is selected, name_width, badge_width,
-                                      match_entry(e, query) if query.strip() else None))
-            if not shown:
-                rows.append([("No matching worktrees", style("dim"))])
-            rows += [[]] * max(0, height - len(rows) - 3 - preview_rows)
-            if preview_rows:
-                rows += self.preview(selected)
-            if self.message:
-                rows.append([(self.message, style(self.message_style))])
-            else:
-                rows.append([(f"{len(shown)}/{len(self.entries)}", style("dim"))])
-            if filtering:
-                rows.append(help_row(("enter", "done"), ("esc", "clear")))
-            else:
-                rows.append(help_row(("enter", "open"), ("n", "new"), ("dd", "remove"), ("/", "filter"),
-                                     ("?", "help"), ("esc", "clear filter") if query else ("q", "quit")))
-            render(stdscr, rows, cursor=(2, 1 + qpos) if filtering else None)
+            if not pending_input(stdscr):
+                rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
+                        search_row(query, filtering, "/ to filter"), []]
+                for e in shown[top:top + capacity]:
+                    rows.append(entry_row(e, e is selected, name_width, badge_width,
+                                          match_entry(e, query) if query.strip() else None))
+                if not shown:
+                    rows.append([("No matching worktrees", style("dim"))])
+                rows += [[]] * max(0, height - len(rows) - 3 - preview_rows)
+                if preview_rows:
+                    rows += self.preview(selected)
+                if self.message:
+                    rows.append([(self.message, style(self.message_style))])
+                else:
+                    rows.append([(f"{len(shown)}/{len(self.entries)}", style("dim"))])
+                if filtering:
+                    rows.append(help_row(("enter", "done"), ("esc", "clear")))
+                else:
+                    rows.append(help_row(("enter", "open"), ("n", "new"), ("dd", "remove"), ("/", "filter"),
+                                         ("?", "help"), ("esc", "clear filter") if query else ("q", "quit")))
+                render(stdscr, rows, cursor=(2, 1 + qpos) if filtering else None)
 
             key = read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:
@@ -974,9 +1002,9 @@ class Manager:
         text, tpos, index, top, message, filtering, pending = "", 0, 0, 0, None, False, None
         while True:
             # items[0] creates a new branch; the rest are existing branches.
-            existing = [s for s in suggestions if fuzzy_all(text, s["ref"])]
+            existing = [s for s in suggestions if fuzzy_all(text, s["name"])]
             if text.strip():
-                existing.sort(key=lambda s: -fuzzy_all(text, s["ref"]))
+                existing.sort(key=lambda s: -fuzzy_all(text, s["name"]))
             items = [None] + existing
             index = min(index, len(items) - 1)
             plan = plan_branch(cwd, branches, "", items[index]) if index else None
@@ -986,38 +1014,39 @@ class Manager:
             list_index = max(0, index - 1)
             top = min(max(top, list_index - capacity + 1), list_index, max(0, len(existing) - capacity))
 
-            rows = [[], [("New worktree", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
-                    search_row(text, filtering, "/ to filter"), [],
-                    [pointer(index == 0), ("+ Create a new branch…", style("green") | (style("bold") if index == 0 else 0))],
-                    [], [(f"EXISTING BRANCHES ({len(existing)})", style("dim") | style("bold"))]]
-            ref_width = min(60, max([len(s["ref"]) for s in existing[top:top + capacity]] + [10]))
-            for i, item in enumerate(existing[top:top + capacity], top + 1):
-                hits = set()
-                for token in text.lower().split():
-                    hits.update((fuzzy(token, item["ref"]) or (0, []))[1])
-                ref = item["ref"][:ref_width]
-                row = [pointer(i == index)]
-                row += highlighted(ref, hits, style("bold") if i == index else 0)
-                row += [(" " * (ref_width - len(ref) + 3), 0),
-                        (item["kind"], style("blue") if item["kind"] == "remote" else style("dim"))]
-                rows.append(row)
-            if not existing:
-                rows.append([("  No matching branches" if text.strip() else "  No other branches", style("dim"))])
-            rows += [[]] * max(0, height - len(rows) - 4)
-            rows.append([])
-            if plan is None:
-                rows.append([("enter: ", style("dim")), ("create a new branch", 0)])
-            elif plan.get("error"):
-                rows.append([(plan["error"], style("red"))])
-            else:
-                rows.append([("enter: ", style("dim")), (plan["action"], 0)])
-            rows.append([(message, style("red"))] if message else [])
-            if filtering:
-                rows.append(help_row(("enter", "done"), ("esc", "clear")))
-            else:
-                rows.append(help_row(("enter", "select"), ("/", "filter"), ("?", "help"),
-                                     ("esc", "clear filter") if text else ("q", "back")))
-            render(stdscr, rows, cursor=(2, 1 + tpos) if filtering else None)
+            if not pending_input(stdscr):
+                rows = [[], [("New worktree", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
+                        search_row(text, filtering, "/ to filter"), [],
+                        [pointer(index == 0), ("+ Create a new branch…", style("green") | (style("bold") if index == 0 else 0))],
+                        [], [(f"EXISTING BRANCHES ({len(existing)})", style("dim") | style("bold"))]]
+                ref_width = min(60, max([len(s["name"]) for s in existing[top:top + capacity]] + [10]))
+                for i, item in enumerate(existing[top:top + capacity], top + 1):
+                    hits = set()
+                    for token in text.lower().split():
+                        hits.update((fuzzy(token, item["name"]) or (0, []))[1])
+                    ref = item["name"][:ref_width]
+                    row = [pointer(i == index)]
+                    row += highlighted(ref, hits, style("bold") if i == index else 0)
+                    row += [(" " * (ref_width - len(ref) + 3), 0),
+                            (source_label(item), style("blue") if item["kind"] == "remote" else style("dim"))]
+                    rows.append(row)
+                if not existing:
+                    rows.append([("  No matching branches" if text.strip() else "  No other branches", style("dim"))])
+                rows += [[]] * max(0, height - len(rows) - 4)
+                rows.append([])
+                if plan is None:
+                    rows.append([("enter: ", style("dim")), ("create a new branch", 0)])
+                elif plan.get("error"):
+                    rows.append([(plan["error"], style("red"))])
+                else:
+                    rows.append([("enter: ", style("dim")), (plan["action"], 0)])
+                rows.append([(message, style("red"))] if message else [])
+                if filtering:
+                    rows.append(help_row(("enter", "done"), ("esc", "clear")))
+                else:
+                    rows.append(help_row(("enter", "select"), ("/", "filter"), ("?", "help"),
+                                         ("esc", "clear filter") if text else ("q", "back")))
+                render(stdscr, rows, cursor=(2, 1 + tpos) if filtering else None)
             key = read_key(stdscr)
             message = None
             if key is None or key == curses.KEY_RESIZE:
@@ -1142,6 +1171,14 @@ class Manager:
                      self.client, setup_command(cwd))
         except (RuntimeError, OSError) as error:
             raise RuntimeError(f"Worktree created at {plan['path']}, but opening its tab failed: {error}") from error
+
+
+def source_label(item):
+    """'local', 'remote' for origin, or the remote's name for any other remote."""
+    if item["kind"] != "remote":
+        return "local"
+    remote = item["ref"][:-len(item["name"]) - 1]
+    return "remote" if remote == "origin" else remote
 
 
 def pointer(selected):

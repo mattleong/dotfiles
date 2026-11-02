@@ -96,6 +96,11 @@ class WorktreeTests(unittest.TestCase):
                 self.assertEqual(worktree.read_key(screen), "\x1b")
                 self.assertEqual(worktree.read_key(screen), "x")
 
+    def test_source_label(self):
+        self.assertEqual(worktree.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
+        self.assertEqual(worktree.source_label({"kind": "remote", "name": "feat/a", "ref": "origin/feat/a"}), "remote")
+        self.assertEqual(worktree.source_label({"kind": "remote", "name": "a", "ref": "upstream/a"}), "upstream")
+
     def test_vim_motions(self):
         motion = worktree.motion
         self.assertEqual(motion("j", 0, 5, 4, None), (1, None))
