@@ -54,6 +54,48 @@ class WorktreeTests(unittest.TestCase):
         self.assertTrue(current["current"] and current["dirty"] and current["open"])
         self.assertEqual(current["name"], "other")
 
+    def test_line_editing_at_cursor(self):
+        edit, c = worktree.edit_text, worktree.curses
+        self.assertEqual(edit("helo", 4, c.KEY_LEFT), ("helo", 3))
+        self.assertEqual(edit("helo", 3, "l"), ("hello", 4))
+        self.assertEqual(edit("hello", 0, c.KEY_LEFT), ("hello", 0))
+        self.assertEqual(edit("hello", 5, c.KEY_RIGHT), ("hello", 5))
+        self.assertEqual(edit("hello", 2, "\x7f"), ("hllo", 1))
+        self.assertEqual(edit("hello", 0, "\x7f"), ("hello", 0))
+        self.assertEqual(edit("hello", 1, c.KEY_DC), ("hllo", 1))
+        self.assertEqual(edit("hello", 3, "\x01"), ("hello", 0))
+        self.assertEqual(edit("hello", 0, "\x05"), ("hello", 5))
+        self.assertEqual(edit("hello world", 8, "\x15"), ("rld", 0))
+        self.assertEqual(edit("hello world", 5, "\x0b"), ("hello", 5))
+        self.assertEqual(edit("foo bar baz", 7, "\x17"), ("foo  baz", 4))
+
+    def test_read_key_handles_focus_reports(self):
+        class Screen:
+            def __init__(self, keys):
+                self.keys = list(keys)
+            def get_wch(self):
+                if not self.keys:
+                    raise worktree.curses.error()
+                return self.keys.pop(0)
+            def timeout(self, ms):
+                pass
+        unget = lambda screen: (lambda char: screen.keys.insert(0, char))
+        with patch.dict(worktree.STATE, {"session": "session:1"}):
+            screen = Screen(["\x1b", "[", "I"])
+            self.assertIsNone(worktree.read_key(screen))
+            screen = Screen(["\x1b", "[", "O"])
+            with patch.object(worktree, "picker_focused", return_value=True):
+                self.assertIsNone(worktree.read_key(screen))  # The whole app lost focus.
+            screen = Screen(["\x1b", "[", "O"])
+            with patch.object(worktree, "picker_focused", return_value=False), self.assertRaises(worktree.FocusLost):
+                worktree.read_key(screen)
+            screen = Screen(["\x1b"])
+            self.assertEqual(worktree.read_key(screen), "\x1b")
+            screen = Screen(["\x1b", "x"])
+            with patch.object(worktree.curses, "unget_wch", unget(screen)):
+                self.assertEqual(worktree.read_key(screen), "\x1b")
+                self.assertEqual(worktree.read_key(screen), "x")
+
     def test_vim_motions(self):
         motion = worktree.motion
         self.assertEqual(motion("j", 0, 5, 4, None), (1, None))
@@ -81,30 +123,52 @@ class WorktreeTests(unittest.TestCase):
                 if normalized:
                     git(self.repo, "check-ref-format", "--branch", normalized)
 
-    def test_plan_new_existing_remote_and_checked_out_branches(self):
+    def setup_branches(self):
         git(self.repo, "branch", "existing")
         git(self.repo, "remote", "add", "origin", "https://example.invalid/repo.git")
         git(self.repo, "update-ref", "refs/remotes/origin/remote-only", "HEAD")
-        branches = worktree.load_branches(str(self.repo), worktree.worktrees(str(self.repo)))
         cwd = str(self.repo)
+        return cwd, worktree.load_branches(cwd, worktree.worktrees(cwd))
 
+    def suggestion(self, branches, ref):
+        return next(s for s in branches["suggestions"] if s["ref"] == ref)
+
+    def test_plan_new_and_existing_branches(self):
+        cwd, branches = self.setup_branches()
         new = worktree.plan_branch(cwd, branches, "test branch")
-        self.assertEqual((new["branch"], new["summary"]), ("test-branch", "new branch from main"))
+        self.assertEqual((new["branch"], new["action"]), ("test-branch", "create new branch test-branch from main"))
         self.assertNotIn("error", new)
-        self.assertEqual(worktree.plan_branch(cwd, branches, "existing")["summary"], "existing branch")
-        self.assertEqual(worktree.plan_branch(cwd, branches, "remote-only")["summary"], "track origin/remote-only")
+        local = worktree.plan_branch(cwd, branches, "", self.suggestion(branches, "existing"))
+        self.assertEqual(local["action"], "check out existing branch existing")
+        remote = worktree.plan_branch(cwd, branches, "", self.suggestion(branches, "origin/remote-only"))
+        self.assertEqual(remote["action"], "check out origin/remote-only as local branch remote-only, tracking it")
+        # A typed name only ever creates a new branch; existing ones are picked from the list.
         self.assertIn("Already checked out", worktree.plan_branch(cwd, branches, "main")["error"])
-        self.assertEqual({s["ref"] for s in branches["suggestions"]}, {"existing", "origin/remote-only"})
+        self.assertIn("select it under Existing branches", worktree.plan_branch(cwd, branches, "existing")["error"])
+        self.assertIn("origin/remote-only exists", worktree.plan_branch(cwd, branches, "remote-only")["error"])
+
+    def test_branch_order_recent_local_then_remote_then_old_local(self):
+        def commit_at(branch, when):
+            env = {**os.environ, "GIT_COMMITTER_DATE": when, "GIT_AUTHOR_DATE": when}
+            subprocess.run(["git", "-C", str(self.repo), "checkout", "-q", "-b", branch, "main"], check=True)
+            subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q",
+                            "--allow-empty", "-m", branch], check=True, env=env)
+        commit_at("old-local", "2020-01-01T00:00:00")
+        commit_at("new-local", "2030-01-01T00:00:00")
+        git(self.repo, "checkout", "-q", "main")
+        git(self.repo, "remote", "add", "origin", "https://example.invalid/repo.git")
+        git(self.repo, "update-ref", "refs/remotes/origin/remote-only", "old-local")
+        now = 1893456000 + 86400  # 2030-01-02
+        branches = worktree.load_branches(str(self.repo), worktree.worktrees(str(self.repo)), now)
+        self.assertEqual([s["ref"] for s in branches["suggestions"]], ["new-local", "origin/remote-only", "old-local"])
 
     def test_create_worktree_for_each_plan(self):
-        git(self.repo, "branch", "existing")
-        git(self.repo, "remote", "add", "origin", "https://example.invalid/repo.git")
-        git(self.repo, "update-ref", "refs/remotes/origin/remote-only", "HEAD")
-        cwd = str(self.repo)
-        branches = worktree.load_branches(cwd, worktree.worktrees(cwd))
-        for text in ("new branch", "existing", "remote-only"):
-            with self.subTest(text=text):
-                plan = worktree.plan_branch(cwd, branches, text)
+        cwd, branches = self.setup_branches()
+        plans = [worktree.plan_branch(cwd, branches, "new branch"),
+                 worktree.plan_branch(cwd, branches, "", self.suggestion(branches, "existing")),
+                 worktree.plan_branch(cwd, branches, "", self.suggestion(branches, "origin/remote-only"))]
+        for plan in plans:
+            with self.subTest(branch=plan["branch"]):
                 worktree.create_worktree(cwd, plan)
                 head = git(plan["path"], "rev-parse", "--abbrev-ref", "HEAD").stdout.decode().strip()
                 self.assertEqual(head, plan["branch"])
@@ -194,7 +258,7 @@ class WorktreeTests(unittest.TestCase):
         branches = worktree.load_branches(cwd, worktree.worktrees(cwd))
         self.assertEqual([b["label"] for b in branches["bases"]], ["feature", "main"])
         plan = worktree.plan_branch(cwd, branches, "from main", None, branches["bases"][1])
-        self.assertEqual(plan["summary"], "new branch from main")
+        self.assertEqual(plan["action"], "create new branch from-main from main")
         worktree.create_worktree(cwd, plan)
         self.assertEqual(git(cwd, "rev-parse", "from-main").stdout, git(cwd, "rev-parse", "main").stdout)
         upstream = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "from-main@{upstream}"], capture_output=True)

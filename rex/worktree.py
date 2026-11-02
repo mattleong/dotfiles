@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 
 TERMINAL = "com.superlogical.terminal"
 COLORS = {}
@@ -395,17 +396,28 @@ def new_path(cwd, branch):
     return Path.home() / ".local/share/rex/worktrees" / repo_key / (slug + "-" + suffix)
 
 
-def load_branches(cwd, entries):
-    """Collect local branches and remote-only branches, newest first, plus base choices."""
+RECENT_DAYS = 30
+
+
+def load_branches(cwd, entries, now=None):
+    """Collect branches without worktrees: recent local ones, then remote-only ones, then older local ones."""
     checked_out = {e["branch"].removeprefix("refs/heads/"): e["worktree"] for e in entries if "branch" in e}
-    local = git_text(cwd, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads").splitlines()
+
+    def refs(namespace):
+        out = git_text(cwd, "for-each-ref", "--sort=-committerdate",
+                       "--format=%(refname:short)%00%(committerdate:unix)", namespace)
+        return [(ref, int(stamp or 0)) for ref, _, stamp in (line.partition("\0") for line in out.splitlines())]
+
+    local = refs("refs/heads")
+    local_names = {name for name, _ in local}
     remotes = sorted(git_text(cwd, "remote").splitlines(), key=len, reverse=True)
     remote = {}
-    refs = git_text(cwd, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/remotes")
-    for ref in refs.splitlines():
+    remote_refs = []
+    for ref, _ in refs("refs/remotes"):
         for name in remotes:
             if ref.startswith(name + "/") and ref != name + "/HEAD":
                 remote.setdefault(ref[len(name) + 1:], []).append(ref)
+                remote_refs.append((ref[len(name) + 1:], ref))
                 break
     head = git_text(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     if head == "HEAD":
@@ -414,23 +426,26 @@ def load_branches(cwd, entries):
     default = default_branch(cwd)
     if default and default != head:
         bases.append({"ref": default, "label": default})
-    suggestions = [{"name": b, "ref": b, "kind": "local"} for b in local if b not in checked_out]
-    for name, refs in remote.items():
-        if name not in local and name not in checked_out:
-            suggestions += [{"name": name, "ref": ref, "kind": "remote"} for ref in refs]
-    return {"local": set(local), "remote": remote, "checked_out": checked_out,
+    cutoff = (time.time() if now is None else now) - RECENT_DAYS * 86400
+    available = [(name, stamp) for name, stamp in local if name not in checked_out]
+    suggestions = [{"name": n, "ref": n, "kind": "local"} for n, stamp in available if stamp >= cutoff]
+    suggestions += [{"name": name, "ref": ref, "kind": "remote"} for name, ref in remote_refs
+                    if name not in local_names and name not in checked_out]
+    suggestions += [{"name": n, "ref": n, "kind": "local"} for n, stamp in available if stamp < cutoff]
+    return {"local": local_names, "remote": remote, "checked_out": checked_out,
             "suggestions": suggestions, "head": head, "bases": bases}
 
 
 def plan_branch(cwd, branches, text, suggestion=None, base=None):
-    """Describe what creating a worktree for the input would do."""
+    """Describe what creating a worktree would do: for an existing branch, or a new one named by text."""
     base = base or {"ref": "HEAD", "label": branches["head"]}
     if suggestion:
         name, ref = suggestion["name"], suggestion["ref"]
         if suggestion["kind"] == "local":
-            plan = {"branch": name, "summary": "existing branch", "args": [name]}
+            plan = {"branch": name, "action": f"check out existing branch {name}", "args": [name]}
         else:
-            plan = {"branch": name, "summary": "track " + ref, "args": ["--track", "-b", name, None, ref]}
+            plan = {"branch": name, "action": f"check out {ref} as local branch {name}, tracking it",
+                    "args": ["--track", "-b", name, None, ref]}
     else:
         name = normalize_branch(text)
         if not name:
@@ -439,16 +454,13 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
             return {"branch": name, "error": "Not a valid branch name."}
         if name in branches["checked_out"]:
             return {"branch": name, "error": "Already checked out at " + tilde(branches["checked_out"][name])}
-        refs = branches["remote"].get(name, [])
-        tracked = refs[0] if len(refs) == 1 else next((r for r in refs if r.startswith("origin/")), None)
         if name in branches["local"]:
-            plan = {"branch": name, "summary": "existing branch", "args": [name]}
-        elif tracked:
-            plan = {"branch": name, "summary": "track " + tracked, "args": ["--track", "-b", name, None, tracked]}
-        else:
-            # --no-track keeps a branch started from origin/main from pushing to or tracking main.
-            plan = {"branch": name, "summary": "new branch from " + base["label"],
-                    "args": ["--no-track", "-b", name, None, base["ref"]]}
+            return {"branch": name, "error": "A branch with this name exists; select it under Existing branches."}
+        if branches["remote"].get(name):
+            return {"branch": name, "error": f"{branches['remote'][name][0]} exists; select it under Existing branches."}
+        # --no-track keeps a branch started from origin/main from pushing to or tracking main.
+        plan = {"branch": name, "action": f"create new branch {name} from {base['label']}",
+                "args": ["--no-track", "-b", name, None, base["ref"]]}
     path = new_path(cwd, plan["branch"])
     if path.exists():
         plan["error"] = "Destination already exists: " + tilde(str(path))
@@ -570,16 +582,31 @@ BACKSPACE = ("\x7f", "\b", curses.KEY_BACKSPACE)
 ESCAPE = "\x1b"
 
 
-def edit_text(text, key):
+def edit_text(text, pos, key):
+    """Apply a line-editing key at the cursor. Returns (text, cursor position)."""
+    pos = max(0, min(pos, len(text)))
+    if key == curses.KEY_LEFT:
+        return text, max(0, pos - 1)
+    if key == curses.KEY_RIGHT:
+        return text, min(len(text), pos + 1)
+    if key in (curses.KEY_HOME, "\x01"):
+        return text, 0
+    if key in (curses.KEY_END, "\x05"):
+        return text, len(text)
     if key in BACKSPACE:
-        return text[:-1]
+        return (text[:pos - 1] + text[pos:], pos - 1) if pos else (text, pos)
+    if key in (curses.KEY_DC, "\x04"):
+        return text[:pos] + text[pos + 1:], pos
     if key == "\x15":
-        return ""
+        return text[pos:], 0
+    if key == "\x0b":
+        return text[:pos], pos
     if key == "\x17":
-        return re.sub(r"\S*\s*$", "", text.rstrip())
+        start = len(re.sub(r"\S*\s*$", "", text[:pos]))
+        return text[:start] + text[pos:], start
     if isinstance(key, str) and key.isprintable():
-        return text + key
-    return text
+        return text[:pos] + key + text[pos:], pos + len(key)
+    return text, pos
 
 
 def motion(key, index, count, page, pending):
@@ -609,12 +636,60 @@ def help_row(*items):
     return row
 
 
+class FocusLost(Exception):
+    """The picker's pane lost focus to another pane."""
+
+
+def set_timeout(stdscr, ms):
+    STATE["timeout"] = ms
+    stdscr.timeout(ms)
+
+
+def picker_focused(session):
+    """Whether this picker's pane is still the session's focused pane."""
+    picker = os.environ.get("REX_BLOCK")
+    if not picker:
+        return True
+    view = json.loads(run("rex", "session", "inspect", session, "--json"))
+    for window in view.get("windows", []):
+        if any(b.get("block_id") == picker for layer in window.get("layers", []) for b in layer.get("blocks", [])):
+            return window["window_id"] == view.get("active_window_id") and window.get("focused_block_id") == picker
+    return False
+
+
 def read_key(stdscr):
-    """Return the next key, or None when the input timeout passes first."""
+    """Return the next key, or None when the input timeout passes first or after a focus event.
+
+    The terminal reports focus changes as ESC [ I and ESC [ O. Losing focus to another pane raises
+    FocusLost; losing it because the whole app went to the background doesn't."""
     try:
-        return stdscr.get_wch()
+        key = stdscr.get_wch()
     except curses.error:
         return None
+    if key != ESCAPE:
+        return key
+    stdscr.timeout(0)
+    try:
+        follow = []
+        for _ in range(2):
+            try:
+                follow.append(stdscr.get_wch())
+            except curses.error:
+                break
+        if follow[:1] == ["["] and follow[1:] in (["I"], ["O"]):
+            if follow[1] == "O" and STATE.get("session"):
+                try:
+                    focused = picker_focused(STATE["session"])
+                except (RuntimeError, ValueError, OSError):
+                    focused = True
+                if not focused:
+                    raise FocusLost()
+            return None
+        for char in reversed(follow):
+            curses.unget_wch(char)
+        return ESCAPE
+    finally:
+        stdscr.timeout(STATE.get("timeout", -1))
 
 
 def search_row(text, filtering, placeholder):
@@ -642,14 +717,14 @@ def show_help(stdscr, title, sections):
         width = max(len(k) for k, _ in items)
         rows += [[(k.ljust(width), style("bold")), ("   " + label, 0)] for k, label in items]
     rows += [[], [("Press any key to go back.", style("dim"))]]
-    stdscr.timeout(-1)
+    set_timeout(stdscr, -1)
     render(stdscr, rows)
     read_key(stdscr)
 
 
 def confirm(stdscr, title, lines, keys, help_items=None):
     """Show lines and wait for one of keys (a dict of key -> result). Esc cancels."""
-    stdscr.timeout(-1)
+    set_timeout(stdscr, -1)
     while True:
         rows = [[], [(title, style("bold"))], []]
         rows += [line if isinstance(line, list) else [line] for line in lines()]
@@ -690,11 +765,11 @@ class Manager:
 
     def list_screen(self):
         stdscr = self.stdscr
-        query, filtering, pending = "", False, None
+        query, qpos, filtering, pending = "", 0, False, None
         selected = next((e for e in self.entries if e.get("current")), None)
         top = 0
         while True:
-            stdscr.timeout(150 if any(PENDING in (e["dirty"], e["open"]) for e in self.entries) else -1)
+            set_timeout(stdscr, 150 if any(PENDING in (e["dirty"], e["open"]) for e in self.entries) else -1)
             shown = filter_entries(self.entries, query)
             if selected not in shown:
                 selected = shown[0] if shown else None
@@ -725,7 +800,7 @@ class Manager:
             else:
                 rows.append(help_row(("enter", "open"), ("n", "new"), ("dd", "remove"), ("/", "filter"),
                                      ("?", "help"), ("esc", "clear filter") if query else ("q", "quit")))
-            render(stdscr, rows, cursor=(2, 1 + len(query)) if filtering else None)
+            render(stdscr, rows, cursor=(2, 1 + qpos) if filtering else None)
 
             key = read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:
@@ -743,7 +818,7 @@ class Manager:
                     if new_index is not None:
                         selected = shown[new_index]
                 else:
-                    query = edit_text(query, key)
+                    query, qpos = edit_text(query, qpos, key)
                 continue
             if key == "d":
                 if pending == "d":
@@ -758,7 +833,7 @@ class Manager:
             if new_index is not None:
                 selected = shown[new_index]
             elif key == "/":
-                filtering = True
+                filtering, qpos = True, len(query)
             elif key == "?":
                 show_help(stdscr, "Worktrees", [("Move", NAVIGATION_HELP), ("Actions", [
                     ("enter / l", "open the worktree's tab"),
@@ -776,7 +851,7 @@ class Manager:
             elif key == "n":
                 if self.new_screen():
                     return
-                stdscr.timeout(-1)
+                set_timeout(stdscr, -1)
             elif key == "p":
                 self.prune()
                 selected, query = None, ""
@@ -890,70 +965,59 @@ class Manager:
             self.reload()
 
     def new_screen(self):
-        """Create a worktree. Returns True once one is created and opened."""
+        """Pick a branch for a new worktree. Returns True once one is created and opened."""
         stdscr = self.stdscr
-        stdscr.timeout(-1)
+        set_timeout(stdscr, -1)
         cwd = self.cwd
         branches = load_branches(cwd, self.entries)
-        suggestions, bases = branches["suggestions"], branches["bases"]
-        text, index, top, message, filtering, pending, base = "", 0, 0, None, False, None, 0
+        suggestions = branches["suggestions"]
+        text, tpos, index, top, message, filtering, pending = "", 0, 0, 0, None, False, None
         while True:
-            items = [s for s in suggestions if fuzzy_all(text, s["ref"])]
+            # items[0] creates a new branch; the rest are existing branches.
+            existing = [s for s in suggestions if fuzzy_all(text, s["ref"])]
             if text.strip():
-                items.sort(key=lambda s: -fuzzy_all(text, s["ref"]))
-            typed = normalize_branch(text)
-            if typed and typed not in {s["name"] for s in items}:
-                items.insert(0, None)  # None is the new branch named by the filter text.
-            index = min(index, max(0, len(items) - 1))
-            plans = {}
-
-            def plan_for(i):
-                if i not in plans:
-                    plans[i] = plan_branch(cwd, branches, text, items[i], bases[base])
-                return plans[i]
+                existing.sort(key=lambda s: -fuzzy_all(text, s["ref"]))
+            items = [None] + existing
+            index = min(index, len(items) - 1)
+            plan = plan_branch(cwd, branches, "", items[index]) if index else None
 
             height, _ = stdscr.getmaxyx()
-            capacity = max(1, height - 9)
-            top = min(max(top, index - capacity + 1), index, max(0, len(items) - capacity))
-            base_row = [("Base for new branches: ", style("dim"))]
-            for i, option in enumerate(bases):
-                base_row.append((option["label"], (style("cyan") | style("bold")) if i == base else style("dim")))
-                base_row.append(("  ", 0))
+            capacity = max(1, height - 11)
+            list_index = max(0, index - 1)
+            top = min(max(top, list_index - capacity + 1), list_index, max(0, len(existing) - capacity))
+
             rows = [[], [("New worktree", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
-                    search_row(text, filtering, "/ to filter or name a new branch"), base_row, []]
-            for i in range(top, min(top + capacity, len(items))):
-                item, selected = items[i], i == index
-                row = [("› " if selected else "  ", style("cyan") | style("bold"))]
-                if item is None:
-                    is_new = plan_for(i).get("summary", "").startswith("new branch")
-                    attr = (style("bold") if selected else 0) | (style("green") if is_new else 0)
-                    row += [(("+ " if is_new else "") + typed, attr), ("  new" if is_new else "", style("dim"))]
-                else:
-                    hits = set()
-                    for token in text.lower().split():
-                        hits.update((fuzzy(token, item["ref"]) or (0, []))[1])
-                    row += highlighted(item["ref"], hits, style("bold") if selected else 0)
-                    row.append(("  remote" if item["kind"] == "remote" else "", style("dim")))
+                    search_row(text, filtering, "/ to filter"), [],
+                    [pointer(index == 0), ("+ Create a new branch…", style("green") | (style("bold") if index == 0 else 0))],
+                    [], [(f"EXISTING BRANCHES ({len(existing)})", style("dim") | style("bold"))]]
+            ref_width = min(60, max([len(s["ref"]) for s in existing[top:top + capacity]] + [10]))
+            for i, item in enumerate(existing[top:top + capacity], top + 1):
+                hits = set()
+                for token in text.lower().split():
+                    hits.update((fuzzy(token, item["ref"]) or (0, []))[1])
+                ref = item["ref"][:ref_width]
+                row = [pointer(i == index)]
+                row += highlighted(ref, hits, style("bold") if i == index else 0)
+                row += [(" " * (ref_width - len(ref) + 3), 0),
+                        (item["kind"], style("blue") if item["kind"] == "remote" else style("dim"))]
                 rows.append(row)
-            if not items:
-                rows.append([("No branches. Press / to name a new one.", style("dim"))])
-            rows += [[]] * max(0, height - len(rows) - 3)
-            if items:
-                plan = plan_for(index)
-                preview = [("→ ", style("dim")), (plan.get("branch", ""), style("bold"))]
-                preview.append(("  " + plan["error"], style("red")) if plan.get("error")
-                               else ("  " + plan["summary"], style("dim")))
-                rows.append(preview)
+            if not existing:
+                rows.append([("  No matching branches" if text.strip() else "  No other branches", style("dim"))])
+            rows += [[]] * max(0, height - len(rows) - 4)
+            rows.append([])
+            if plan is None:
+                rows.append([("enter: ", style("dim")), ("create a new branch", 0)])
+            elif plan.get("error"):
+                rows.append([(plan["error"], style("red"))])
             else:
-                rows.append([])
+                rows.append([("enter: ", style("dim")), (plan["action"], 0)])
             rows.append([(message, style("red"))] if message else [])
             if filtering:
                 rows.append(help_row(("enter", "done"), ("esc", "clear")))
             else:
-                rows.append(help_row(("enter", "create"), ("/", "filter or name"),
-                                     *([("b", "base")] if len(bases) > 1 else []), ("?", "help"),
-                                     ("esc", "clear filter") if text else ("q/esc", "back")))
-            render(stdscr, rows, cursor=(2, 1 + len(text)) if filtering else None)
+                rows.append(help_row(("enter", "select"), ("/", "filter"), ("?", "help"),
+                                     ("esc", "clear filter") if text else ("q", "back")))
+            render(stdscr, rows, cursor=(2, 1 + tpos) if filtering else None)
             key = read_key(stdscr)
             message = None
             if key is None or key == curses.KEY_RESIZE:
@@ -962,28 +1026,29 @@ class Manager:
                 if key in ENTER:
                     filtering = False
                 elif key == ESCAPE:
-                    filtering, text = False, ""
+                    filtering, text, index = False, "", 0
                 elif key in BACKSPACE and not text:
                     filtering = False
-                elif key in (curses.KEY_DOWN, "\x0e") and items:
+                elif key in (curses.KEY_DOWN, "\x0e"):
                     index = min(len(items) - 1, index + 1)
                 elif key in (curses.KEY_UP, "\x10"):
                     index = max(0, index - 1)
                 else:
-                    text, index = edit_text(text, key), 0
+                    new_text, tpos = edit_text(text, tpos, key)
+                    if new_text != text:
+                        # Keep the first match selected while typing.
+                        text, index = new_text, 1 if new_text.strip() else 0
                 continue
             new_index, pending = motion(key, index, len(items), capacity, pending)
             if new_index is not None:
                 index = new_index
             elif key == "/":
-                filtering = True
-            elif key == "b" and len(bases) > 1:
-                base = (base + 1) % len(bases)
+                filtering, tpos = True, len(text)
             elif key == "?":
                 show_help(stdscr, "New worktree", [("Move", NAVIGATION_HELP), ("Actions", [
-                    ("enter / l", "create a worktree for the selection"),
-                    ("/", "filter branches, or name a new one"),
-                    ("b", "switch the base for new branches"),
+                    ("enter / l", "create a worktree for the selected branch"),
+                    ("", "or, on the first row, create a new branch"),
+                    ("/", "filter existing branches"),
                     ("esc", "clear the filter, or go back"),
                     ("q", "go back"),
                 ])])
@@ -991,21 +1056,96 @@ class Manager:
                 text, index = "", 0
             elif key in (ESCAPE, "q"):
                 return False
-            elif (key in ENTER or key == "l") and items:
-                plan = plan_for(index)
-                if plan.get("error"):
-                    continue  # The preview line already shows the error.
-                try:
-                    create_worktree(cwd, plan)
-                except (RuntimeError, OSError) as error:
-                    message = str(error)
+            elif key in ENTER or key == "l":
+                if plan is None:
+                    if self.new_branch_screen(cwd, branches, text):
+                        return True
+                    set_timeout(stdscr, -1)
                     continue
+                if plan.get("error"):
+                    continue  # The action line already shows the error.
                 try:
-                    open_tab(self.session, {"worktree": str(plan["path"]), "branch": plan["branch"]},
-                             self.client, setup_command(cwd))
-                except (RuntimeError, OSError) as error:
-                    raise RuntimeError(f"Worktree created at {plan['path']}, but opening its tab failed: {error}") from error
+                    self.create_and_open(cwd, plan)
+                except RuntimeError as error:
+                    if not os.path.isdir(plan["path"]):
+                        message = str(error)
+                        continue
+                    raise
                 return True
+
+    def new_branch_screen(self, cwd, branches, name=""):
+        """Name a new branch and choose its base. Returns True once a worktree is created and opened."""
+        stdscr = self.stdscr
+        set_timeout(stdscr, -1)
+        bases = branches["bases"]
+        text, tpos, base, message = name, len(name), 0, None
+        while True:
+            plan = plan_branch(cwd, branches, text, None, bases[base])
+            typed = normalize_branch(text)
+            rows = [[], [("New branch", style("bold")), ("  " + repo_name(self.repo), style("dim"))], [],
+                    [("Name   ", style("dim")), (text, 0)]]
+            if plan.get("error") and text.strip():
+                rows.append([("       ", 0), (plan["error"], style("red"))])
+            elif typed and typed != text.strip():
+                rows.append([("       → ", style("dim")), (typed, style("bold"))])
+            else:
+                rows.append([])
+            rows.append([])
+            for i, option in enumerate(bases):
+                label = "Base   " if i == 0 else "       "
+                rows.append([(label, style("dim")), pointer(i == base),
+                             (option["label"], style("bold") if i == base else 0),
+                             ("  current branch" if option["ref"] == "HEAD" else "  default branch", style("dim"))])
+            height, _ = stdscr.getmaxyx()
+            rows += [[]] * max(0, height - len(rows) - 4)
+            rows.append([])
+            if text.strip() and not plan.get("error"):
+                rows.append([("enter: ", style("dim")), (plan["action"], 0)])
+            else:
+                rows.append([("Type a name for the new branch.", style("dim"))])
+            rows.append([(message, style("red"))] if message else [])
+            rows.append(help_row(("enter", "create"), *([("tab/↑↓", "base")] if len(bases) > 1 else []),
+                                 ("esc", "back")))
+            render(stdscr, rows, cursor=(3, 7 + tpos))
+            key = read_key(stdscr)
+            message = None
+            if key is None or key == curses.KEY_RESIZE:
+                continue
+            if key == ESCAPE:
+                return False
+            if key in ("\t", curses.KEY_DOWN, "\x0e"):
+                base = (base + 1) % len(bases)
+            elif key in (curses.KEY_BTAB, curses.KEY_UP, "\x10"):
+                base = (base - 1) % len(bases)
+            elif key in ENTER:
+                if not plan.get("error"):
+                    try:
+                        self.create_and_open(cwd, plan)
+                        return True
+                    except RuntimeError as error:
+                        if os.path.isdir(plan["path"]):
+                            raise
+                        message = str(error)
+                elif not text.strip():
+                    message = "Type a name for the new branch."
+            else:
+                text, tpos = edit_text(text, tpos, key)
+
+    def create_and_open(self, cwd, plan):
+        """Create the worktree, then open its tab. Raises RuntimeError on failure."""
+        try:
+            create_worktree(cwd, plan)
+        except OSError as error:
+            raise RuntimeError(str(error)) from error
+        try:
+            open_tab(self.session, {"worktree": str(plan["path"]), "branch": plan["branch"]},
+                     self.client, setup_command(cwd))
+        except (RuntimeError, OSError) as error:
+            raise RuntimeError(f"Worktree created at {plan['path']}, but opening its tab failed: {error}") from error
+
+
+def pointer(selected):
+    return ("› " if selected else "  ", style("cyan") | style("bold"))
 
 
 def fuzzy_all(query, text):
@@ -1024,6 +1164,10 @@ def main(stdscr, mode, cwd, session, client=""):
         curses.set_escdelay(25)
     init_colors()
     stdscr.keypad(True)
+    STATE["session"] = session
+    # Ask the terminal to report focus changes, so the picker closes when another pane is focused.
+    sys.stdout.write("\x1b[?1004h")
+    sys.stdout.flush()
     render(stdscr, [[], [("Loading worktrees…", style("dim"))]])
     try:
         manager = Manager(stdscr, cwd, session, client)
@@ -1031,11 +1175,16 @@ def main(stdscr, mode, cwd, session, client=""):
             manager.new_screen()
         else:
             manager.list_screen()
+    except FocusLost:
+        STATE["navigated"] = True  # Focus already moved where the user wanted it.
     except (RuntimeError, OSError, UnicodeError, ValueError) as error:
-        stdscr.timeout(-1)
+        set_timeout(stdscr, -1)
         render(stdscr, [[], [("Worktree operation failed", style("red") | style("bold"))], [],
                         [(str(error), 0)], [], [("Press any key to close.", style("dim"))]])
-        read_key(stdscr)
+        try:
+            read_key(stdscr)
+        except FocusLost:
+            STATE["navigated"] = True
 
 
 def setup_locale():
