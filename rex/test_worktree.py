@@ -16,6 +16,29 @@ def git(cwd, *args):
     return subprocess.run(["git", "-C", str(cwd), *args], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+class FakeRex:
+    """Stands in for the rex CLI: records calls and answers session.list, new_window, and create."""
+    def __init__(self, sessions=()):
+        self.sessions = [{"session_id": sid, "label": label} for sid, label in sessions]
+        self.calls = []
+
+    def __call__(self, *args, cwd=None):
+        self.calls.append(args)
+        if "session.list" in args:
+            return json.dumps({"sessions": self.sessions}).encode()
+        if "session.new_window" in args:
+            return b'{"window_id": "window:new"}'
+        if "session.create" in args:
+            request = json.loads(args[-1])
+            self.sessions.append({"session_id": "session:repo", "label": request["label"]})
+            return b'{"session_id": "session:repo", "initial_windows": [{"window_id": "window:first"}]}'
+        return b"{}"
+
+    def request(self, method):
+        args = next(a for a in self.calls if method in a)
+        return args, json.loads(args[-1])
+
+
 class WorktreeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -189,11 +212,13 @@ class WorktreeTests(unittest.TestCase):
             run.assert_called_once_with(["pbcopy"], input=b"/w/path", check=True)
         with patch.object(worktree.shutil, "which", return_value=None), self.assertRaises(RuntimeError):
             worktree.copy_to_clipboard("x")
-        with patch.object(worktree, "repo_name", return_value="repo"), \
-                patch.object(worktree, "run", return_value=b'{"window_id": "window:e"}') as run, patch.dict(worktree.STATE, {"navigated": False}):
+        rex = FakeRex([("session:repo", "repo")])
+        with patch.object(worktree, "repo_name", return_value="repo"), patch.object(worktree, "run", rex), \
+                patch.dict(worktree.STATE, {"navigated": False, "repo_sessions": []}):
             worktree.open_editor("session:1", {"worktree": "/w/t", "branch": "refs/heads/t"})
-            options = json.loads(run.call_args_list[0][0][6])["layout"]["block"]["options"]
-            self.assertEqual(options["initial_input"], 'eval "${VISUAL:-${EDITOR:-vi}}" .\n')
+            args, request = rex.request("session.new_window")
+            self.assertEqual(args[3:5], ("-s", "session:repo"))
+            self.assertEqual(request["layout"]["block"]["options"]["initial_input"], 'eval "${VISUAL:-${EDITOR:-vi}}" .\n')
             self.assertTrue(worktree.STATE["navigated"])
 
     def test_source_label(self):
@@ -373,10 +398,12 @@ class WorktreeTests(unittest.TestCase):
             self.assertEqual(worktree.pull_requests("/repo"), {})
 
     def test_open_in_background_and_split(self):
+        rex = FakeRex([("session:repo", "repo")])
         with patch.object(worktree, "windows_for_path", return_value=[]), patch.object(worktree, "repo_name", return_value="repo"), \
-                patch.object(worktree, "run", return_value=b'{"window_id": "window:bg"}') as run, patch.dict(worktree.STATE, {"navigated": False}):
-            self.assertEqual(worktree.open_tab("session:1", {"worktree": "/w/t", "branch": "refs/heads/t"}, focus=False), "window:bg")
-            run.assert_called_once_with("rex", "window", "new", "-s", "session:1", "repo - t", "-c", "/w/t", "--focus=false", "--json")
+                patch.object(worktree, "run", rex), patch.dict(worktree.STATE, {"navigated": False, "repo_sessions": []}):
+            self.assertEqual(worktree.open_tab("session:1", {"worktree": "/w/t", "branch": "refs/heads/t"}, focus=False), "window:new")
+            args, request = rex.request("session.new_window")
+            self.assertEqual((args[4], request["focus"], request["window_label"]), ("session:repo", False, "repo - t"))
             self.assertFalse(worktree.STATE["navigated"])
         with patch.object(worktree, "windows_for_path", return_value=[{"window_id": "window:1"}]), patch.object(worktree, "run") as run:
             self.assertIsNone(worktree.open_tab("session:1", {"worktree": "/w/t"}, focus=False))
@@ -423,13 +450,12 @@ class WorktreeTests(unittest.TestCase):
     def test_setup_command_types_into_new_tab(self):
         git(self.repo, "config", "rex.worktreeSetup", "make setup")
         self.assertEqual(worktree.setup_command(str(self.repo)), "make setup")
+        rex = FakeRex([("session:repo", "repo")])
         with patch.object(worktree, "windows_for_path", return_value=[]), patch.object(worktree, "repo_name", return_value="repo"), \
-                patch.object(worktree, "run", return_value=b'{"window_id": "window:new"}') as run:
+                patch.object(worktree, "run", rex), patch.dict(worktree.STATE, {"repo_sessions": []}):
             worktree.open_tab("session:1", {"worktree": "/tmp/test", "branch": "refs/heads/topic"}, None, "make setup")
-        args = run.call_args_list[0][0]
-        self.assertEqual(args[:6], ("rex", "api", "call", "-s", "session:1", "session.new_window"))
-        options = json.loads(args[6])["layout"]["block"]["options"]
-        self.assertEqual(options, {"cwd": "/tmp/test", "initial_input": "make setup\n"})
+        _, request = rex.request("session.new_window")
+        self.assertEqual(request["layout"]["block"]["options"], {"cwd": "/tmp/test", "initial_input": "make setup\n"})
 
     def test_close_picker_window_last(self):
         own = {"window_id": "window:own", "layers": [{"blocks": [{"block_id": "block:picker"}]}]}
@@ -457,17 +483,45 @@ class WorktreeTests(unittest.TestCase):
             worktree.restore_focus("session:1", "block:closed")
 
     def test_open_focuses_existing_window(self):
-        with patch.object(worktree, "windows_for_path", return_value=[{"window_id": "window:1"}]), patch.object(worktree, "run") as run:
+        window = {"window_id": "window:1", "session_id": "session:repo"}
+        with patch.object(worktree, "windows_for_path", return_value=[window]), patch.object(worktree, "run") as run:
             self.assertEqual(worktree.open_tab("session:1", {"worktree": "/tmp/test", "branch": "refs/heads/topic"}), "window:1")
-            run.assert_called_once_with("rex", "focus", "-s", "session:1", "window:1")
+            run.assert_called_once_with("rex", "focus", "-s", "session:repo", "window:1")
 
     def test_open_creates_tab_and_shows_it_in_app(self):
-        with patch.object(worktree, "windows_for_path", return_value=[]), patch.object(worktree, "repo_name", return_value="dotfiles"), patch.object(worktree, "run", return_value=b'{"window_id": "window:new"}') as run:
+        rex = FakeRex([("session:1", "crisp-fjord")])
+        with patch.object(worktree, "windows_for_path", return_value=[]), patch.object(worktree, "repo_name", return_value="dotfiles"), \
+                patch.object(worktree, "run", rex), patch.dict(worktree.STATE, {"repo_sessions": []}):
             worktree.open_tab("session:1", {"worktree": "/tmp/test", "branch": "refs/heads/topic"}, "client:app")
-            self.assertEqual(run.call_args_list, [
-                call("rex", "window", "new", "-s", "session:1", "dotfiles - topic", "-c", "/tmp/test", "--json"),
-                call("rex", "-C", "client:app", "do", "session.select", "session_id=session:1", "window_id=window:new"),
-            ])
+            # No session for the repository yet, so one is created, named after it.
+            _, request = rex.request("session.create")
+            self.assertEqual((request["label"], request["initial_windows"][0]["window_label"]), ("dotfiles", "dotfiles - topic"))
+            self.assertEqual(rex.calls[-1], ("rex", "-C", "client:app", "do", "session.select",
+                                             "session_id=session:repo", "window_id=window:first"))
+            self.assertIn("session:repo", worktree.STATE["repo_sessions"])
+            # The next worktree tab goes into that same session.
+            worktree.open_tab("session:1", {"worktree": "/tmp/other", "branch": "refs/heads/other"})
+            args, _ = rex.request("session.new_window")
+            self.assertEqual(args[4], "session:repo")
+
+    def test_tabs_are_found_and_closed_in_the_repository_session(self):
+        views = {"session:1": [{"window_id": "window:a", "layers": [{"blocks": [
+                     {"block_id": "block:a", "creator_name": worktree.TERMINAL}]}]}],
+                 "session:repo": [{"window_id": "window:b", "layers": [{"blocks": [
+                     {"block_id": "block:b", "creator_name": worktree.TERMINAL}]}]}]}
+
+        def fake_run(*args, cwd=None):
+            if args[1:3] == ("session", "inspect"):
+                return json.dumps({"windows": views[args[3]]}).encode()
+            if args[1:3] == ("block", "call"):
+                return json.dumps({"foreground": {"cwd": "/w/a" if args[6] == "block:a" else "/w/b/src"}}).encode()
+            return b"{}"
+
+        with patch.object(worktree, "run", side_effect=fake_run) as run, patch.dict(worktree.STATE, {"repo_sessions": ["session:repo"]}):
+            windows = worktree.windows_for_path("session:1", "/w/b")
+            self.assertEqual([(w["window_id"], w["session_id"]) for w in windows], [("window:b", "session:repo")])
+            worktree.close_worktree_tabs("session:1", windows)
+            self.assertEqual(run.call_args_list[-1], call("rex", "window", "close", "-s", "session:repo", "window:b"))
 
     def test_open_reports_app_switch_failure(self):
         def fake_run(*args):

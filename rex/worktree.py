@@ -82,18 +82,35 @@ def session_windows(session):
     return json.loads(run("rex", "session", "inspect", session, "--json"))["windows"]
 
 
+def related_sessions(session):
+    """The picker's session plus the repository's own session, where worktree tabs are opened."""
+    sessions = [session] if session else []
+    for other in STATE.get("repo_sessions", []):
+        if other not in sessions:
+            sessions.append(other)
+    return sessions
+
+
 def terminal_cwds(session):
-    """Return (window, cwd) for each terminal in the session, except this picker."""
+    """Return (window, cwd) for each terminal in the picker's and the repository's sessions,
+    except this picker. Each window records its session under "session_id"."""
     picker = os.environ.get("REX_BLOCK")
-    blocks = [(window, block["block_id"])
-              for window in session_windows(session)
-              for layer in window.get("layers", [])
-              for block in layer.get("blocks", [])
-              if block.get("creator_name") == TERMINAL and block.get("block_id") != picker]
+    blocks = []
+    for sid in related_sessions(session):
+        try:
+            windows = session_windows(sid)
+        except (RuntimeError, ValueError, OSError):
+            continue
+        for window in windows:
+            window["session_id"] = sid
+            blocks += [(window, block["block_id"]) for layer in window.get("layers", [])
+                       for block in layer.get("blocks", [])
+                       if block.get("creator_name") == TERMINAL and block.get("block_id") != picker]
 
     def cwd(item):
+        window, block = item
         try:
-            process = json.loads(run("rex", "block", "call", "-s", session, "-b", item[1], "process"))
+            process = json.loads(run("rex", "block", "call", "-s", window["session_id"], "-b", block, "process"))
         except (RuntimeError, ValueError, OSError):
             return None
         return (process.get("foreground") or {}).get("cwd") or (process.get("child") or {}).get("cwd")
@@ -121,7 +138,49 @@ def close_worktree_tabs(session, windows):
                    for block in layer.get("blocks", []))
 
     for window in sorted(windows, key=contains_picker):
-        run("rex", "window", "close", "-s", session, window["window_id"])
+        run("rex", "window", "close", "-s", window.get("session_id", session), window["window_id"])
+
+
+def find_session(label):
+    """The ID of the session with this label, or None."""
+    sessions = json.loads(run("rex", "api", "call", "session.list", "{}")).get("sessions") or []
+    return next((s["session_id"] for s in sessions if s.get("label") == label), None)
+
+
+def remember_repo_session(session_id):
+    sessions = STATE.setdefault("repo_sessions", [])
+    if session_id and session_id not in sessions:
+        sessions.append(session_id)
+
+
+def new_repo_tab(entry, initial_input=None, focus=True):
+    """Open a tab for the worktree in its repository's session, named after the repository,
+    creating the session if needed. Returns (session ID, window ID)."""
+    label = repo_name(entry["worktree"])
+    options = {"cwd": entry["worktree"]}
+    if initial_input:
+        options["initial_input"] = initial_input
+    window = {"window_label": tab_label(entry), "layout": {"block": {"flavor": TERMINAL + ".shell", "options": options}}}
+    session_id = find_session(label)
+    if session_id:
+        created = json.loads(run("rex", "api", "call", "-s", session_id, "session.new_window",
+                                 json.dumps({**window, "focus": focus})))
+        window_id = created["window_id"]
+    else:
+        created = json.loads(run("rex", "api", "call", "session.create",
+                                 json.dumps({"label": label, "initial_windows": [window]})))
+        session_id, window_id = created["session_id"], created["initial_windows"][0]["window_id"]
+    remember_repo_session(session_id)
+    return session_id, window_id
+
+
+def show_tab(client, session_id, window_id):
+    """Ask the app to show the tab; the server's active window alone doesn't move the app's view."""
+    if client:
+        try:
+            run("rex", "-C", client, "do", "session.select", f"session_id={session_id}", f"window_id={window_id}")
+        except RuntimeError as error:
+            raise RuntimeError(f"Couldn't switch to the tab: {error}") from error
 
 
 def branch_name(entry):
@@ -149,34 +208,23 @@ def setup_command(cwd):
 
 
 def open_tab(session, entry, client=None, setup=None, focus=True):
-    """Focus the worktree's tab, or create one. With focus=False, only create it, in the background.
-    Returns the window ID, or None when focus=False and a tab is already open."""
-    path = entry["worktree"]
-    matches = windows_for_path(session, path)
+    """Focus the worktree's tab, or create one in the repository's session. With focus=False, only
+    create it, in the background. Returns the window ID, or None when focus=False and a tab is
+    already open."""
+    matches = windows_for_path(session, entry["worktree"])
     if matches and not focus:
         return None
     if not focus:
-        created = run("rex", "window", "new", "-s", session, tab_label(entry), "-c", path, "--focus=false", "--json")
-        return json.loads(created)["window_id"]
+        return new_repo_tab(entry, focus=False)[1]
     if matches:
-        window_id = matches[0]["window_id"]
-        run("rex", "focus", "-s", session, window_id)
-    elif setup:
-        # Type the setup command into the new tab's shell, so its output stays visible there.
-        args = {"window_label": tab_label(entry), "layout": {"block": {
-            "flavor": TERMINAL + ".shell", "options": {"cwd": path, "initial_input": setup + "\n"}}}}
-        created = run("rex", "api", "call", "-s", session, "session.new_window", json.dumps(args))
-        window_id = json.loads(created)["window_id"]
+        window = matches[0]
+        session_id, window_id = window.get("session_id", session), window["window_id"]
+        run("rex", "focus", "-s", session_id, window_id)
     else:
-        created = run("rex", "window", "new", "-s", session, tab_label(entry), "-c", path, "--json")
-        window_id = json.loads(created)["window_id"]
+        # A setup command is typed into the new tab's shell, so its output stays visible there.
+        session_id, window_id = new_repo_tab(entry, setup + "\n" if setup else None)
     STATE["navigated"] = True
-    if client:
-        # The server's active window doesn't move the app's view; ask the app itself to show the tab.
-        try:
-            run("rex", "-C", client, "do", "session.select", f"session_id={session}", f"window_id={window_id}")
-        except RuntimeError as error:
-            raise RuntimeError(f"Couldn't switch to the tab: {error}") from error
+    show_tab(client, session_id, window_id)
     return window_id
 
 
@@ -367,16 +415,11 @@ def copy_to_clipboard(text):
 
 
 def open_editor(session, entry, client=None):
-    """Open the worktree in a new tab, typing your editor command into its interactive shell, where
-    $VISUAL or $EDITOR are set."""
-    args = {"window_label": tab_label(entry), "layout": {"block": {
-        "flavor": TERMINAL + ".shell",
-        "options": {"cwd": entry["worktree"], "initial_input": 'eval "${VISUAL:-${EDITOR:-vi}}" .\n'}}}}
-    created = run("rex", "api", "call", "-s", session, "session.new_window", json.dumps(args))
-    window_id = json.loads(created)["window_id"]
+    """Open the worktree in a new tab in the repository's session, typing your editor command into
+    its interactive shell, where $VISUAL or $EDITOR are set."""
+    session_id, window_id = new_repo_tab(entry, 'eval "${VISUAL:-${EDITOR:-vi}}" .\n')
     STATE["navigated"] = True
-    if client:
-        run("rex", "-C", client, "do", "session.select", f"session_id={session}", f"window_id={window_id}")
+    show_tab(client, session_id, window_id)
 
 
 def open_pull_request(repo, number):
@@ -1080,6 +1123,10 @@ class Manager:
         self.stdscr, self.session, self.client, self.origin = stdscr, session, client, origin
         self.origin_cwd = cwd
         self.repo = worktrees(cwd)[0]["worktree"]
+        try:
+            remember_repo_session(find_session(repo_name(self.repo)))
+        except (RuntimeError, ValueError, OSError):
+            pass
         self.default = default_branch(self.repo)
         self.message, self.message_style = None, "red"
         self.commits = {}
