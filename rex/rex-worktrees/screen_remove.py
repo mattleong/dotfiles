@@ -1,6 +1,4 @@
 """Removing worktrees: one at a time, cleaning up finished ones, and pruning."""
-import curses
-
 import actions
 import keyboard
 import ui
@@ -46,10 +44,10 @@ class RemovalScreens:
 
     def removal_options(self, entry, files, windows, merged, options):
         """Show the removal confirmation. Returns the set of checked option ids, or None if cancelled."""
-        stdscr, cursor, message = self.stdscr, 0, None
+        stdscr, cursor, message, pending = self.stdscr, 0, None, None
         keyboard.set_timeout(stdscr, -1)
         while True:
-            rows = [[], [("Remove worktree?", ui.style("bold"))], [],
+            rows = [[], ui.header("Remove worktree?", self.label), [],
                     [(entry["name"], ui.style("bold"))], [(util.tilde(entry["worktree"]), ui.style("dim"))], []]
             if files:
                 rows.append([(f"Uncommitted changes ({len(files)}):", ui.style("yellow"))])
@@ -73,23 +71,24 @@ class RemovalScreens:
                 rows.append([(util.ICONS["error"] + " " + message, ui.style("red"))])
             elif files and "force" not in checked:
                 rows.append([("check “Discard uncommitted changes” to remove", ui.style("dim"))])
-            help_items = []
-            if options:
-                help_items.append(("space", "toggle"))
-            if len(options) > 1:
-                help_items.append(("j/k", "move"))
-            rows.append(ui.help_row(*help_items, ("enter", "remove"), ("esc", "cancel")))
+            rows.append(ui.footer(enter="remove", move=len(options) > 1, toggle=bool(options), back="cancel"))
             ui.render(stdscr, rows)
             key = keyboard.read_key(stdscr)
             message = None
-            if key == keyboard.ESCAPE:
+            if key in keyboard.CLOSE:
                 return None
-            if key == " " and options:
+            new_cursor, pending = keyboard.motion(key, cursor, len(options), len(options), pending)
+            if new_cursor is not None:
+                cursor = new_cursor
+            elif key == " " and options:
                 options[cursor]["checked"] = not options[cursor]["checked"]
-            elif key in ("j", curses.KEY_DOWN, "\x0e") and options:
-                cursor = min(len(options) - 1, cursor + 1)
-            elif key in ("k", curses.KEY_UP, "\x10") and options:
-                cursor = max(0, cursor - 1)
+            elif key == "?":
+                ui.show_help(stdscr, "Remove worktree", [("Keys", [
+                    ("j / k", "move between the options"),
+                    ("space", "check or uncheck the option"),
+                    ("enter", "remove the worktree"),
+                    ui.CLOSE_HELP,
+                ])])
             elif key in keyboard.ENTER:
                 if files and "force" not in checked:
                     message = "Check “Discard uncommitted changes” first, or press esc to cancel."
@@ -103,15 +102,16 @@ class RemovalScreens:
             note = " (pull requests are still loading)" if self.prs_loading else ""
             self.say("No worktrees with merged pull requests or deleted remote branches" + note + ".", "dim")
             return False
-        stdscr, cursor = self.stdscr, 0
+        stdscr, cursor, pending = self.stdscr, 0, None
         # Worktrees with uncommitted changes start unchecked, and are never force-removed here.
         items = [{"entry": e, "checked": e.get("dirty") is not True} for e in candidates]
         delete_branches = {"checked": False}
         keyboard.set_timeout(stdscr, -1)
         name_width = min(40, max(len(e["name"]) for e in candidates))
         while True:
-            rows = [[], [(f"Clean up {len(candidates)} finished worktree{'s' if len(candidates) != 1 else ''}",
-                          ui.style("bold"))], [("Merged pull requests or deleted remote branches.", ui.style("dim"))], []]
+            title = f"Clean up {len(candidates)} finished worktree{'s' if len(candidates) != 1 else ''}"
+            rows = [[], ui.header(title, self.label),
+                    [("Merged pull requests or deleted remote branches.", ui.style("dim"))], []]
             for i, item in enumerate(items):
                 entry = item["entry"]
                 name = entry["name"] if len(entry["name"]) <= name_width else entry["name"][:name_width - 1] + "…"
@@ -129,15 +129,21 @@ class RemovalScreens:
                           ("Also delete their branches", 0), ("   (only ones with no unmerged commits)", ui.style("dim"))]
             rows.append(ui.Selected(branch_row) if cursor == index else branch_row)
             count = sum(i["checked"] for i in items)
-            rows += [[], ui.help_row(("space", "toggle"), ("j/k", "move"), ("enter", f"remove {count}"), ("esc", "cancel"))]
+            rows += [[], ui.footer(enter=f"remove {count}", move=True, toggle=True, back="cancel")]
             ui.render(stdscr, rows)
             key = keyboard.read_key(stdscr)
-            if key == keyboard.ESCAPE:
+            if key in keyboard.CLOSE:
                 return False
-            if key in ("j", curses.KEY_DOWN, "\x0e"):
-                cursor = min(len(items), cursor + 1)
-            elif key in ("k", curses.KEY_UP, "\x10"):
-                cursor = max(0, cursor - 1)
+            # The last row is the "Also delete their branches" option.
+            new_cursor, pending = keyboard.motion(key, cursor, len(items) + 1, len(items) + 1, pending)
+            if new_cursor is not None:
+                cursor = new_cursor
+            elif key == "?":
+                ui.show_help(stdscr, "Clean up", [("Move", ui.NAVIGATION_HELP), ("Actions", [
+                    ("space", "check or uncheck the worktree or option"),
+                    ("enter", "remove the checked worktrees"),
+                    ui.CLOSE_HELP,
+                ])])
             elif key == " ":
                 if cursor == len(items):
                     delete_branches["checked"] = not delete_branches["checked"]
@@ -172,8 +178,9 @@ class RemovalScreens:
             out += [[("  " + e["name"], ui.style("bold")), ("  " + util.tilde(e["worktree"]), ui.style("dim"))] for e in stale]
             return out + [[], [("Only Git's records are removed; branches are kept.", ui.style("dim"))]]
 
-        if ui.confirm(self.stdscr, f"Prune {len(stale)} missing worktree{'s' if len(stale) != 1 else ''}?",
-                   lines, {"\n": lambda: True}, [("enter", "prune")]):
+        title = f"Prune {len(stale)} missing worktree{'s' if len(stale) != 1 else ''}?"
+        if ui.confirm(self.stdscr, title, self.label, lines, {"\n": lambda: True}, "prune",
+                      [("enter", "prune: forget the missing worktrees")]):
             try:
                 self.busy("Pruning…", lambda: worktrees.prune_worktrees(self.repo))
                 self.say(f"Pruned {len(stale)} missing worktree{'s' if len(stale) != 1 else ''}.", "green")

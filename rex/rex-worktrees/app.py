@@ -75,9 +75,12 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
         thread.join(0.15)  # Quick work finishes without a spinner flashing up.
         previous, frame, lost = util.STATE.get("timeout", -1), 0, False
         keyboard.set_timeout(self.stdscr, 80)
+        # The spinner replaces the key hints, so the screen stays visible underneath.
+        base = list(ui.LAST_FRAME["rows"]) or [[]]
         try:
             while thread.is_alive():
-                ui.render(self.stdscr, [[], [(SPINNER[frame % len(SPINNER)] + " " + label, ui.style("cyan"))]])
+                spinner = [(SPINNER[frame % len(SPINNER)] + " " + label, ui.style("cyan"))]
+                ui.render(self.stdscr, base[:-1] + [spinner])
                 frame += 1
                 try:
                     keyboard.read_key(self.stdscr)

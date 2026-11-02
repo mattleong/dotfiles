@@ -34,8 +34,7 @@ class ListScreen:
 
             if not keyboard.pending_input(stdscr):
                 sort_note = "" if self.sort == "git" else f" · sorted by {self.sort}"
-                rows = [[], [("Worktrees", ui.style("bold")), ("  " + self.label, ui.style("dim")),
-                             ("   " + self.summary() + sort_note, ui.style("dim"))],
+                rows = [[], ui.header("Worktrees", self.label, self.summary() + sort_note),
                         ui.search_row(query, filtering, "/ to filter"), [], ui.header_row(widths)]
                 for e in shown[top:top + capacity]:
                     rows.append(ui.entry_row(e, e is selected, widths,
@@ -48,15 +47,17 @@ class ListScreen:
                 if self.message:
                     icon = {"green": "ok", "red": "error"}.get(self.message_style, "info")
                     rows.append([(util.ICONS[icon] + " " + self.message, ui.style(self.message_style))])
+                elif query.strip():
+                    rows.append([(f"{len(shown)} of {len(self.entries)} match", ui.style("dim"))])
                 else:
-                    rows.append([(f"{len(shown)}/{len(self.entries)}", ui.style("dim"))])
+                    rows.append([])
                 if filtering:
-                    rows.append(ui.help_row(("enter", "done"), ("esc", "clear")))
+                    rows.append(ui.help_row(*ui.TYPING_FOOTER))
                 else:
                     finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e))
-                    rows.append(ui.help_row(("enter", "open"), ("s", "split"), ("n", "new"), ("dd", "remove"),
-                                         *([("c", f"clean up ({finished})")] if finished else []),
-                                         ("?", "help"), ("esc", "clear filter") if query else ("q", "quit")))
+                    rows.append(ui.footer(enter="open", move=True, slash="filter", back="quit", clear_filter=bool(query),
+                                          actions=[("s", "split"), ("n", "new"), ("dd", "remove")]
+                                          + ([("c", f"clean up ({finished})")] if finished else [])))
                 ui.render(stdscr, rows, cursor=(2, qpos) if filtering else None)
 
             key = keyboard.read_key(stdscr)
@@ -126,7 +127,7 @@ class ListScreen:
                 ])])
             elif key == keyboard.ESCAPE and query:
                 query = ""
-            elif key in (keyboard.ESCAPE, "q"):
+            elif key in keyboard.CLOSE:
                 return
             elif key == "n":
                 if self.new_screen():
@@ -183,7 +184,7 @@ class ListScreen:
                              else f"{entry['name']} already has a tab open.", "green" if opened else "dim")
                 except (RuntimeError, OSError) as error:
                     self.say(str(error))
-            elif key in keyboard.ENTER or key == "l":
+            elif key in keyboard.SELECT:
                 if selected is None:
                     continue
                 if worktrees.missing(selected):

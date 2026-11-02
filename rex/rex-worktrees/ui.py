@@ -9,6 +9,7 @@ import worktrees
 
 
 COLORS = {}
+LAST_FRAME = {"rows": [], "cursor": None}  # What render drew last, so a spinner can draw over it.
 SELECTED_PAIRS = {}  # Color pair number -> the same colors on the selected-row background.
 
 
@@ -57,6 +58,7 @@ class Selected(list):
 
 
 def render(stdscr, rows, cursor=None):
+    LAST_FRAME.update(rows=rows, cursor=cursor)
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     for y, row in enumerate(rows[:height]):
@@ -194,6 +196,31 @@ def entry_row(entry, selected, widths, match=None):
     return Selected(row) if selected else row
 
 
+def header(title, repo, extra=""):
+    """The first line of every screen: its title and the repository."""
+    return [(title, style("bold")), ("  " + repo, style("dim"))] + ([("   " + extra, style("dim"))] if extra else [])
+
+
+def footer(enter=None, move=False, slash=None, toggle=False, actions=(), back="back", clear_filter=False):
+    """The key hints at the bottom of every screen, always in the same order."""
+    items = [("j/k", "move")] if move else []
+    if slash:
+        items.append(("/", slash))
+    if toggle:
+        items.append(("space", "toggle"))
+    if enter:
+        items.append(("enter", enter))
+    items += list(actions)
+    items.append(("?", "help"))
+    if clear_filter:
+        items.append(("esc", "clear filter"))
+    items.append(("q", back))
+    return help_row(*items)
+
+
+TYPING_FOOTER = [("enter", "done"), ("esc", "clear")]
+
+
 def help_row(*items):
     row = []
     for key, label in items:
@@ -215,6 +242,7 @@ NAVIGATION_HELP = [
     ("ctrl+d / ctrl+u", "half page down / up"),
     ("ctrl+f / ctrl+b", "page down / up"),
 ]
+CLOSE_HELP = ("q / esc", "go back, or cancel")
 
 
 def show_help(stdscr, title, sections):
@@ -229,17 +257,20 @@ def show_help(stdscr, title, sections):
     keyboard.read_key(stdscr)
 
 
-def confirm(stdscr, title, lines, keys, help_items=None):
-    """Show lines and wait for one of keys (a dict of key -> result). Esc cancels."""
+def confirm(stdscr, title, repo, lines, keys, enter, help_items):
+    """Show lines and wait for one of keys (a dict of key -> result). q and esc cancel."""
     keyboard.set_timeout(stdscr, -1)
     while True:
-        rows = [[], [(title, style("bold"))], []]
+        rows = [[], header(title, repo), []]
         rows += [line if isinstance(line, list) else [line] for line in lines()]
-        rows += [[], help_row(*(help_items or []), ("esc", "cancel"))]
+        rows += [[], footer(enter=enter, back="cancel")]
         render(stdscr, rows)
         key = keyboard.read_key(stdscr)
-        if key == keyboard.ESCAPE:
+        if key in keyboard.CLOSE:
             return None
+        if key == "?":
+            show_help(stdscr, title, [("Keys", help_items + [CLOSE_HELP])])
+            continue
         if key in keyboard.ENTER:
             key = "\n"
         if key in keys:
