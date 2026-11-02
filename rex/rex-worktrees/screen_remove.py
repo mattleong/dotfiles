@@ -44,19 +44,19 @@ class RemovalScreens:
 
     def removal_options(self, entry, files, windows, merged, options):
         """Show the removal confirmation. Returns the set of checked option ids, or None if cancelled."""
-        stdscr, cursor, message, pending = self.stdscr, 0, None, None
-        keyboard.set_timeout(stdscr, -1)
+        stdscr, cursor, pending, flash = self.stdscr, 0, None, ui.Flash()
         while True:
+            keyboard.set_timeout(stdscr, flash.wait(-1))
             rows = [[], ui.header("Remove worktree?", self.label), [],
                     [(entry["name"], ui.style("bold"))], [(util.tilde(entry["worktree"]), ui.style("dim"))], []]
             if files:
-                rows.append([(f"Uncommitted changes ({len(files)}):", ui.style("yellow"))])
+                rows.append(ui.section(f"Uncommitted changes ({len(files)})", tone="yellow"))
                 rows += [[("  " + f, 0)] for f in files[:8]]
                 if len(files) > 8:
                     rows.append([(f"  …and {len(files) - 8} more", ui.style("dim"))])
                 rows.append([])
             if windows:
-                rows.append([("These tabs and all their panes will close:", ui.style("yellow"))])
+                rows.append(ui.section("Tabs that will close", "with all their panes", tone="yellow"))
                 rows += [[("  " + (w.get("label") or w["window_id"]), 0)] for w in windows]
                 rows.append([])
             for i, option in enumerate(options):
@@ -67,14 +67,16 @@ class RemovalScreens:
                 rows.append([("The branch ", 0), (entry["name"], ui.style("bold")), (" will be kept.", 0)])
             rows.append([])
             checked = {o["id"] for o in options if o["checked"]}
-            if message:
-                rows.append([(util.ICONS["error"] + " " + message, ui.style("red"))])
+            if flash.row():
+                rows.append(flash.row())
             elif files and "force" not in checked:
                 rows.append([("check “Discard uncommitted changes” to remove", ui.style("dim"))])
             rows.append(ui.footer(enter="remove", move=len(options) > 1, toggle=bool(options), back="cancel"))
             ui.render(stdscr, rows)
             key = keyboard.read_key(stdscr)
-            message = None
+            if key is None:
+                continue
+            flash.clear()
             if key in keyboard.CLOSE:
                 return None
             new_cursor, pending = keyboard.motion(key, cursor, len(options), len(options), pending)
@@ -91,7 +93,7 @@ class RemovalScreens:
                 ])])
             elif key in keyboard.ENTER:
                 if files and "force" not in checked:
-                    message = "Check “Discard uncommitted changes” first, or press esc to cancel."
+                    flash.set("Check “Discard uncommitted changes” first, or press q to cancel.")
                     continue
                 return checked
 
@@ -174,7 +176,7 @@ class RemovalScreens:
             return
 
         def lines():
-            out = [[("These worktrees' directories no longer exist:", 0)]]
+            out = [ui.section("Missing folders", tone="yellow")]
             out += [[("  " + e["name"], ui.style("bold")), ("  " + util.tilde(e["worktree"]), ui.style("dim"))] for e in stale]
             return out + [[], [("Only Git's records are removed; branches are kept.", ui.style("dim"))]]
 

@@ -20,8 +20,10 @@ class NewScreens:
         branches = self.branches()
         keyboard.set_timeout(stdscr, -1)
         suggestions = branches["suggestions"]
-        text, tpos, index, top, message, filtering, pending = "", 0, 0, 0, None, False, None
+        text, tpos, index, top, filtering, pending = "", 0, 0, 0, False, None
+        flash = ui.Flash()
         while True:
+            keyboard.set_timeout(stdscr, flash.wait(-1))
             # items[0] creates a new branch; the rest are existing branches.
             existing = [s for s in suggestions if matching.fuzzy_all(text, s["name"])]
             if text.strip():
@@ -47,7 +49,7 @@ class NewScreens:
                 pr_width = max([ui.cell_width(c) for c in prs] + [0])
                 pr_width = max(pr_width, 2) if pr_width else 0
                 dim = ui.style("dim") | ui.style("bold")
-                rows.append([(f"EXISTING BRANCHES ({len(existing)})", dim)])
+                rows.append(ui.section(f"Existing branches ({len(existing)})"))
                 rows.append([("  " + "BRANCH".ljust(ref_width + 2), dim), ("AGE  ", dim)]
                             + ([("PR".ljust(pr_width + 3), dim)] if pr_width else []) + [("FROM", dim)])
                 for i, (item, pr) in enumerate(zip(visible, prs), top + 1):
@@ -76,16 +78,16 @@ class NewScreens:
                     rows.append([(util.ICONS["error"] + " " + plan["error"], ui.style("red"))])
                 else:
                     rows.append([("enter: ", ui.style("dim")), (plan["action"], 0)])
-                rows.append([(util.ICONS["error"] + " " + message, ui.style("red"))] if message else [])
+                rows.append(flash.row())
                 if filtering:
                     rows.append(ui.help_row(*ui.TYPING_FOOTER))
                 else:
                     rows.append(ui.footer(enter="select", move=True, slash="filter", clear_filter=bool(text)))
                 ui.render(stdscr, rows, cursor=(2, tpos) if filtering else None)
             key = keyboard.read_key(stdscr)
-            message = None
             if key is None or key == curses.KEY_RESIZE:
                 continue
+            flash.clear()
             if filtering:
                 if key in keyboard.ENTER:
                     filtering = False
@@ -132,7 +134,7 @@ class NewScreens:
                     self.create_and_open(cwd, plan)
                 except RuntimeError as error:
                     if not os.path.isdir(plan["path"]):
-                        message = str(error)
+                        flash.set(str(error))
                         continue
                     raise
                 return True
@@ -143,8 +145,10 @@ class NewScreens:
         keyboard.set_timeout(stdscr, -1)
         bases = branches["bases"]
         # Works like the other screens: j/k choose the base, and / types the name (enter done, esc clear).
-        text, tpos, base, message, editing, pending = name, len(name), 0, None, False, None
+        text, tpos, base, editing, pending = name, len(name), 0, False, None
+        flash = ui.Flash()
         while True:
+            keyboard.set_timeout(stdscr, flash.wait(-1))
             plan = branching.plan_branch(cwd, branches, text, None, bases[base])
             typed = branching.normalize_branch(text)
             name_cell = (text, 0) if text or editing else ("/ to type a name", ui.style("dim"))
@@ -170,16 +174,16 @@ class NewScreens:
                 rows.append([("enter: ", ui.style("dim")), (plan["action"], 0)])
             else:
                 rows.append([("Type a name for the new branch.", ui.style("dim"))])
-            rows.append([(util.ICONS["error"] + " " + message, ui.style("red"))] if message else [])
+            rows.append(flash.row())
             if editing:
                 rows.append(ui.help_row(*ui.TYPING_FOOTER))
             else:
                 rows.append(ui.footer(enter="create", move=len(bases) > 1, slash="name"))
             ui.render(stdscr, rows, cursor=(3, 7 + tpos) if editing else None)
             key = keyboard.read_key(stdscr)
-            message = None
             if key is None or key == curses.KEY_RESIZE:
                 continue
+            flash.clear()
             if editing:
                 # The same keys as the filters on the other screens.
                 if key in keyboard.ENTER:
@@ -220,7 +224,7 @@ class NewScreens:
                     except RuntimeError as error:
                         if os.path.isdir(plan["path"]):
                             raise
-                        message = str(error)
+                        flash.set(str(error))
                 elif not text.strip():
                     editing, tpos = True, len(text)  # Nothing to create yet; start typing the name.
 

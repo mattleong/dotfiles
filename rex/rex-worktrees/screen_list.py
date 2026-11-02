@@ -21,17 +21,13 @@ class ListScreen:
         while True:
             loading = self.prs_loading or self.details_loading or any(
                 util.PENDING in (e["dirty"], e["open"]) for e in self.entries)
-            wait = 150 if loading else -1
-            left = self.message_left()
-            if left is not None:  # Wake up to fade the message.
-                wait = int(left * 1000) + 50 if wait < 0 else min(wait, int(left * 1000) + 50)
-            keyboard.set_timeout(stdscr, wait)
+            keyboard.set_timeout(stdscr, self.flash.wait(150 if loading else -1))
             shown = matching.filter_entries(matching.sort_entries(self.entries, self.sort), query)
             if selected not in shown:
                 selected = shown[0] if shown else None
             height, _ = stdscr.getmaxyx()
             preview_rows = 7 if height >= 22 else 0
-            capacity = max(1, height - 8 - preview_rows - (1 if preview_rows else 0))
+            capacity = max(1, height - 8 - preview_rows)
             index = shown.index(selected) if selected in shown else 0
             top = min(max(top, index - capacity + 1), index, max(0, len(shown) - capacity))
             widths = ui.column_widths(self.entries)
@@ -45,13 +41,11 @@ class ListScreen:
                                           matching.match_entry(e, query) if query.strip() else None))
                 if not shown:
                     rows.append([("No matching worktrees", ui.style("dim"))])
+                rows += [[]] * max(0, height - len(rows) - 3 - preview_rows)
                 if preview_rows:
-                    # The preview sits right under the list, not at the bottom of the pane.
-                    rows += [[]] + self.preview(selected)
-                rows += [[]] * max(0, height - len(rows) - 2)
-                if self.message:
-                    icon = {"green": "ok", "red": "error"}.get(self.message_style, "info")
-                    rows.append([(util.ICONS[icon] + " " + self.message, ui.style(self.message_style))])
+                    rows += self.preview(selected)  # Pinned to the bottom of the pane.
+                if self.flash.row():
+                    rows.append(self.flash.row())
                 elif query.strip():
                     rows.append([(f"{len(shown)} of {len(self.entries)} match", ui.style("dim"))])
                 else:
@@ -68,7 +62,7 @@ class ListScreen:
             key = keyboard.read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:
                 continue
-            self.message = None
+            self.flash.clear()
             if filtering:
                 if key in keyboard.ENTER:
                     filtering = False
@@ -231,8 +225,11 @@ class ListScreen:
         if key not in self.commits:
             self.commits[key] = worktrees.recent_commits(path, base=self.default)
         description, commits = self.commits[key]
-        rows = [[("─── ", ui.style("dim")), (util.ICONS["folder"] + " " + util.tilde(path), ui.style("dim")),
-                 (("  ·  " + description) if description else "", ui.style("dim"))]]
+        # "Recent commits", or "Commits" with how many aren't in the default branch yet.
+        if description and description != "Recent commits":
+            rows = [ui.section("Commits", description + " · " + util.tilde(path))]
+        else:
+            rows = [ui.section("Recent commits", util.tilde(path))]
         if worktrees.missing(entry):
             rows.append([(util.ICONS["missing"] + " Folder missing", ui.style("red"))])
         elif not commits:

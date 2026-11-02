@@ -262,6 +262,22 @@ class WorktreeTests(unittest.TestCase):
         worktrees.fill_details(str(self.repo), quick)
         self.assertIsNotNone(quick[0]["time"])
 
+    def test_flash_messages_fade(self):
+        flash = ui.Flash()
+        self.assertEqual((flash.row(), flash.wait(-1), flash.wait(150)), ([], -1, 150))
+        with patch.object(ui.time, "monotonic", return_value=100.0):
+            flash.set("Saved", "green")
+        with patch.object(ui.time, "monotonic", return_value=101.0):
+            self.assertEqual(flash.wait(-1), 3050)  # Wakes up when the message fades.
+            self.assertEqual(flash.wait(150), 150)
+            self.assertIn("Saved", flash.row()[0][0])
+        with patch.object(ui.time, "monotonic", return_value=106.0):
+            self.assertEqual(flash.row(), [])
+        with patch.object(ui.time, "monotonic", return_value=100.0):
+            flash.set("Failed")
+        with patch.object(ui.time, "monotonic", return_value=106.0):
+            self.assertIn("Failed", flash.row()[0][0])  # Errors stay longer.
+
     def test_source_label(self):
         self.assertEqual(branching.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
         self.assertEqual(branching.source_label({"kind": "remote", "name": "feat/a", "ref": "origin/feat/a"}), "remote")

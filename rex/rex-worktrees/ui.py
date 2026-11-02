@@ -196,6 +196,50 @@ def entry_row(entry, selected, widths, match=None):
     return Selected(row) if selected else row
 
 
+class Flash:
+    """A status message that fades: after 4 seconds, or 8 for errors."""
+    SECONDS = 4
+    ICONS = {"green": "ok", "red": "error"}
+
+    def __init__(self):
+        self.text, self.tone, self.at = None, "red", 0.0
+
+    def set(self, text, tone="red"):
+        self.text, self.tone, self.at = text, tone, time.monotonic()
+
+    def clear(self):
+        self.text = None
+
+    def left(self):
+        """Seconds until it fades, or None when there's no message. Clears an expired one."""
+        if not self.text:
+            return None
+        left = self.SECONDS * (2 if self.tone == "red" else 1) - (time.monotonic() - self.at)
+        if left <= 0:
+            self.text = None
+            return None
+        return left
+
+    def wait(self, wait):
+        """The input timeout to use, shortened so the screen redraws when the message fades."""
+        left = self.left()
+        if left is None:
+            return wait
+        ms = int(left * 1000) + 50
+        return ms if wait < 0 else min(wait, ms)
+
+    def row(self):
+        if self.left() is None:
+            return []
+        icon = util.ICONS[self.ICONS.get(self.tone, "info")]
+        return [(icon + " " + self.text, style(self.tone))]
+
+
+def section(title, extra="", tone="dim"):
+    """A heading inside a screen, such as EXISTING BRANCHES. Warnings use a color as the tone."""
+    return [(title.upper(), style(tone) | style("bold"))] + ([("  " + extra, style("dim"))] if extra else [])
+
+
 def header(title, repo, extra=""):
     """The first line of every screen: its title and the repository."""
     return [(title, style("bold")), ("  " + repo, style("dim"))] + ([("   " + extra, style("dim"))] if extra else [])
@@ -246,13 +290,30 @@ CLOSE_HELP = ("q / esc", "go back, or cancel")
 
 
 def show_help(stdscr, title, sections):
-    rows = [[], header(title + " — keys", util.STATE.get("label", ""))]
+    """List a screen's keys. j/k and the other motions scroll it when it doesn't fit."""
+    body = []
     for heading, items in sections:
-        rows += [[], [(heading, style("dim"))]]
+        body += [[], section(heading)]
         width = max(len(k) for k, _ in items)
-        rows += [[(k.ljust(width), style("bold")), ("   " + label, 0)] for k, label in items]
-    rows += [[], help_row(("q", "back"))]
-    wait_to_close(stdscr, rows)
+        body += [[(k.ljust(width), style("bold")), ("   " + label, 0)] for k, label in items]
+    top, pending = 0, None
+    keyboard.set_timeout(stdscr, -1)
+    while True:
+        height, _ = stdscr.getmaxyx()
+        visible = max(1, height - 4)
+        scrolls = len(body) > visible
+        top = min(top, max(0, len(body) - visible))
+        rows = [[], header(title + " — keys", util.STATE.get("label", ""))] + body[top:top + visible]
+        rows += [[]] * max(0, height - len(rows) - 1)
+        rows.append(help_row(*([("j/k", "scroll")] if scrolls else []), ("q", "back")))
+        render(stdscr, rows)
+        key = keyboard.read_key(stdscr)
+        if key in keyboard.CLOSE or key in keyboard.ENTER or key == "?":
+            return
+        last = max(0, len(body) - visible)
+        moved, pending = keyboard.motion(key, top, last + 1, visible, pending)
+        if moved is not None:
+            top = moved
 
 
 def show_error(stdscr, message):
