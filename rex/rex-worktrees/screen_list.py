@@ -57,7 +57,7 @@ class ListScreen:
                     rows.append(ui.help_row(("enter", "open"), ("s", "split"), ("n", "new"), ("dd", "remove"),
                                          *([("c", f"clean up ({finished})")] if finished else []),
                                          ("?", "help"), ("esc", "clear filter") if query else ("q", "quit")))
-                ui.render(stdscr, rows, cursor=(2, 1 + qpos) if filtering else None)
+                ui.render(stdscr, rows, cursor=(2, qpos) if filtering else None)
 
             key = keyboard.read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:

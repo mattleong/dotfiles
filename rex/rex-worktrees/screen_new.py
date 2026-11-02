@@ -68,7 +68,7 @@ class NewScreens:
                 else:
                     rows.append(ui.help_row(("enter", "select"), ("/", "filter"), ("?", "help"),
                                          ("esc", "clear filter") if text else ("q", "back")))
-                ui.render(stdscr, rows, cursor=(2, 1 + tpos) if filtering else None)
+                ui.render(stdscr, rows, cursor=(2, tpos) if filtering else None)
             key = keyboard.read_key(stdscr)
             message = None
             if key is None or key == curses.KEY_RESIZE:
@@ -129,12 +129,14 @@ class NewScreens:
         stdscr = self.stdscr
         keyboard.set_timeout(stdscr, -1)
         bases = branches["bases"]
-        text, tpos, base, message = name, len(name), 0, None
+        # Works like the other screens: j/k choose the base, and / types the name (enter done, esc clear).
+        text, tpos, base, message, editing = name, len(name), 0, None, False
         while True:
             plan = branching.plan_branch(cwd, branches, text, None, bases[base])
             typed = branching.normalize_branch(text)
+            name_cell = (text, 0) if text or editing else ("/ to type a name", ui.style("dim"))
             rows = [[], [("New branch", ui.style("bold")), ("  " + self.label, ui.style("dim"))], [],
-                    [("Name   ", ui.style("dim")), (text, 0)]]
+                    [("Name   ", ui.style("dim")), name_cell]]
             if plan.get("error") and text.strip():
                 rows.append([("       ", 0), (util.ICONS["error"] + " " + plan["error"], ui.style("red"))])
             elif typed and typed != text.strip():
@@ -156,19 +158,49 @@ class NewScreens:
             else:
                 rows.append([("Type a name for the new branch.", ui.style("dim"))])
             rows.append([(util.ICONS["error"] + " " + message, ui.style("red"))] if message else [])
-            rows.append(ui.help_row(("enter", "create"), *([("tab/↑↓", "base")] if len(bases) > 1 else []),
-                                 ("esc", "back")))
-            ui.render(stdscr, rows, cursor=(3, 7 + tpos))
+            if editing:
+                rows.append(ui.help_row(("enter", "done"), ("esc", "clear")))
+            else:
+                rows.append(ui.help_row(*([("j/k", "base")] if len(bases) > 1 else []), ("/", "name"),
+                                        ("enter", "create"), ("?", "help"), ("q/esc", "back")))
+            ui.render(stdscr, rows, cursor=(3, 7 + tpos) if editing else None)
             key = keyboard.read_key(stdscr)
             message = None
             if key is None or key == curses.KEY_RESIZE:
                 continue
-            if key == keyboard.ESCAPE:
+            if editing:
+                # The same keys as the filters on the other screens.
+                if key in keyboard.ENTER:
+                    editing = False
+                elif key == keyboard.ESCAPE:
+                    editing, text, tpos = False, "", 0
+                elif key in keyboard.BACKSPACE and not text:
+                    editing = False
+                elif key in (curses.KEY_DOWN, "\x0e"):
+                    base = min(len(bases) - 1, base + 1)
+                elif key in (curses.KEY_UP, "\x10"):
+                    base = max(0, base - 1)
+                else:
+                    text, tpos = keyboard.edit_text(text, tpos, key)
+                continue
+            if key in ("j", curses.KEY_DOWN, "\x0e"):
+                base = min(len(bases) - 1, base + 1)
+            elif key in ("k", curses.KEY_UP, "\x10"):
+                base = max(0, base - 1)
+            elif key == "/":
+                editing, tpos = True, len(text)
+            elif key in (keyboard.ESCAPE, "q"):
                 return False
-            if key in ("\t", curses.KEY_DOWN, "\x0e"):
-                base = (base + 1) % len(bases)
-            elif key in (curses.KEY_BTAB, curses.KEY_UP, "\x10"):
-                base = (base - 1) % len(bases)
+            elif key == "?":
+                ui.show_help(stdscr, "New branch", [("Name", [
+                    ("/", "type the name; spaces become dashes"),
+                    ("enter / esc", "finish typing / clear the name"),
+                ]), ("Base", [
+                    ("j / k", "choose what the branch starts from"),
+                ]), ("Actions", [
+                    ("enter", "create the worktree and open its tab"),
+                    ("q / esc", "go back"),
+                ])])
             elif key in keyboard.ENTER:
                 if not plan.get("error"):
                     try:
@@ -179,9 +211,7 @@ class NewScreens:
                             raise
                         message = str(error)
                 elif not text.strip():
-                    message = "Type a name for the new branch."
-            else:
-                text, tpos = keyboard.edit_text(text, tpos, key)
+                    editing, tpos = True, len(text)  # Nothing to create yet; start typing the name.
 
     def create_and_open(self, cwd, plan):
         """Create the worktree, then open its tab. Raises RuntimeError on failure."""

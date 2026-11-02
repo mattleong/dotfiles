@@ -202,10 +202,10 @@ def help_row(*items):
 
 
 def search_row(text, filtering, placeholder):
-    if filtering:
-        return [("/", style("cyan")), (text, 0)]
-    if text:
-        return [("/", style("dim")), (text, 0)]
+    """An input: the placeholder while it's empty and inactive, otherwise just its text. The
+    cursor shows while typing."""
+    if filtering or text:
+        return [(text, 0)]
     return [(placeholder, style("dim"))]
 
 
