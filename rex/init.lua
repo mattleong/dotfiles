@@ -1,10 +1,9 @@
 ---@diagnostic disable: undefined-global
 -- Prefix: Ctrl+B, then the indicated key.
 -- p: pane mode     r: resize mode
--- t: tab mode      g: session mode   w: worktree mode
+-- t: tab mode      g: session mode   w: worktree picker
 -- s, h/j/k/l: split in a direction
--- w, o/n/r: open, new, or remove a Git worktree
--- Escape exits all modes; tab, session, and worktree modes exit after one action.
+-- Escape exits all modes; tab and session modes exit after one action.
 -- Ctrl+B twice sends Ctrl+B to the terminal.
 
 -- Direct pane and sidebar shortcuts
@@ -89,7 +88,7 @@ local function worktree_action(mode)
 		if not home then error("HOME is not set") end
 		local result, layer_err = rex.session.new_layer({
 			session_id = ctx.session_id,
-			bounds = { 0.15, 0.15, 0.7, 0.6 },
+			bounds = { 0.25, 0.2, 0.5, 0.45 },
 			focus = true,
 			layout = rex.layout.block({
 				flavor = "com.superlogical.terminal.shell",
@@ -104,17 +103,10 @@ local function worktree_action(mode)
 	end
 end
 
-rex.mode("worktree", { exclusive = true })
-rex.bind("ctrl+b>w", "client.mode.enter", { name = "worktree", once = true })
-for _, item in ipairs({
-	{ "open", "Open Worktree", "o" },
-	{ "new", "New Worktree", "n" },
-	{ "remove", "Remove Worktree", "r" },
-}) do
-	local name = "worktree_" .. item[1]
-	rex.action({ name = name, title = item[2], category = "Worktrees", run = worktree_action(item[1]) })
-	rex.bind("worktree/" .. item[3], name)
-end
+-- Ctrl+B, w opens the worktree picker; New Worktree is also in the command palette.
+rex.action({ name = "worktrees", title = "Worktrees…", category = "Worktrees", run = worktree_action("list") })
+rex.action({ name = "worktree_new", title = "New Worktree…", category = "Worktrees", run = worktree_action("new") })
+rex.bind("ctrl+b>w", "worktrees")
 
 -- Resize mode: Ctrl+B, r. Stays active for repeated adjustments.
 rex.mode("resize", { exclusive = true })

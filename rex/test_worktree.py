@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -64,12 +65,6 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(motion("\x15", 1, 10, 4, None), (0, None))
         self.assertEqual(motion("x", 1, 10, 4, None), (None, None))
 
-    def test_filter_matches_all_tokens_case_insensitively(self):
-        entries = [{"name": "feature/Login", "worktree": "/w/login"}, {"name": "fix/search", "worktree": "/w/search"}]
-        self.assertEqual(worktree.filter_entries(entries, "FEAT log"), entries[:1])
-        self.assertEqual(worktree.filter_entries(entries, "w/sea"), entries[1:])
-        self.assertEqual(worktree.filter_entries(entries, ""), entries)
-
     def test_normalize_branch_names(self):
         cases = {
             "test branch": "test-branch",
@@ -117,7 +112,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(upstream, "origin/remote-only")
         self.assertIn("Destination already exists", worktree.plan_branch(cwd, {**branches, "checked_out": {}, "local": set()}, "new branch")["error"])
 
-    def test_removal_problems(self):
+    def test_removal_problems_and_changed_files(self):
         dirty = self.add("dirty", "dirty")
         (dirty / "untracked").write_text("changes")
         clean = self.add("clean", "clean")
@@ -125,9 +120,11 @@ class WorktreeTests(unittest.TestCase):
         main, dirty_entry, clean_entry = (entries["refs/heads/" + b] for b in ("main", "dirty", "clean"))
         main["main"] = True
         self.assertIn("main worktree", worktree.removal_problem(main))
-        self.assertIn("uncommitted or untracked", worktree.removal_problem(dirty_entry))
-        self.assertIsNone(worktree.removal_problem(clean_entry))
+        self.assertIsNone(worktree.removal_problem(dirty_entry))
         self.assertIn("locked", worktree.removal_problem({**clean_entry, "locked": ""}))
+        self.assertIn("press p to prune", worktree.removal_problem({**clean_entry, "prunable": ""}))
+        self.assertEqual(worktree.changed_files(dirty_entry), ["?? untracked"])
+        self.assertEqual(worktree.changed_files(clean_entry), [])
         self.assertTrue(dirty.exists() and clean.exists())
 
     def test_remove_worktree_then_close_tabs(self):
@@ -147,6 +144,72 @@ class WorktreeTests(unittest.TestCase):
         with patch.object(worktree, "close_worktree_tabs") as close, self.assertRaises(RuntimeError):
             worktree.remove_worktree(str(self.repo), "session:1", entry, [{"window_id": "window:1"}])
         close.assert_not_called()
+
+    def test_force_remove_and_delete_merged_branch(self):
+        other = self.add("merged", "merged")
+        (other / "untracked").write_text("changes")
+        entry = {**worktree.worktrees(str(self.repo))[1], "name": "merged"}
+        self.assertEqual(worktree.merged_into(str(self.repo), entry), "main")
+        with patch.object(worktree, "close_worktree_tabs"):
+            worktree.remove_worktree(str(self.repo), "session:1", entry, [], force=True, delete_branch=True)
+        self.assertFalse(other.exists())
+        self.assertFalse(subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--verify", "--quiet", "refs/heads/merged"]).returncode == 0)
+
+    def test_unmerged_branch_is_not_offered_for_deletion(self):
+        other = self.add("ahead", "ahead")
+        git(other, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "ahead")
+        entry = {**worktree.worktrees(str(self.repo))[1], "name": "ahead"}
+        self.assertIsNone(worktree.merged_into(str(self.repo), entry))
+
+    def test_prune_missing_worktree(self):
+        other = self.add("gone", "gone")
+        subprocess.run(["rm", "-rf", str(other)], check=True)
+        stale = [e for e in worktree.worktrees(str(self.repo)) if "prunable" in e]
+        self.assertEqual(len(stale), 1)
+        worktree.prune_worktrees(str(self.repo))
+        self.assertEqual(len(worktree.worktrees(str(self.repo))), 1)
+        git(self.repo, "rev-parse", "--verify", "refs/heads/gone")
+
+    def test_recent_commits(self):
+        commits = worktree.recent_commits(str(self.repo))
+        self.assertEqual(len(commits), 1)
+        self.assertEqual(commits[0][1], "initial")
+        self.assertEqual(worktree.recent_commits(str(self.repo / "missing")), [])
+
+    def test_fuzzy_filter_ranks_and_highlights(self):
+        entries = [{"name": "fix/login-bug", "worktree": "/w/a"}, {"name": "feature/login", "worktree": "/w/b"},
+                   {"name": "main", "worktree": "/w/c"}]
+        ranked = [{"name": "l-x-o-x-g", "worktree": "/w/d"}, {"name": "logs", "worktree": "/w/e"}]
+        self.assertEqual([e["name"] for e in worktree.filter_entries(ranked, "log")], ["logs", "l-x-o-x-g"])
+        self.assertEqual([e["name"] for e in worktree.filter_entries(entries, "flog")], ["fix/login-bug", "feature/login"])
+        self.assertEqual(worktree.filter_entries(entries, "zzz"), [])
+        score, name_hits, path_hits = worktree.match_entry(entries[2], "mn")
+        self.assertEqual(name_hits, {0, 3})
+        self.assertEqual(worktree.match_entry(entries[2], "w/c")[2], {1, 2, 3})
+
+    def test_new_branch_from_default_base_does_not_track(self):
+        git(self.repo, "checkout", "-q", "-b", "feature")
+        git(self.repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "feature work")
+        cwd = str(self.repo)
+        branches = worktree.load_branches(cwd, worktree.worktrees(cwd))
+        self.assertEqual([b["label"] for b in branches["bases"]], ["feature", "main"])
+        plan = worktree.plan_branch(cwd, branches, "from main", None, branches["bases"][1])
+        self.assertEqual(plan["summary"], "new branch from main")
+        worktree.create_worktree(cwd, plan)
+        self.assertEqual(git(cwd, "rev-parse", "from-main").stdout, git(cwd, "rev-parse", "main").stdout)
+        upstream = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "from-main@{upstream}"], capture_output=True)
+        self.assertNotEqual(upstream.returncode, 0)
+
+    def test_setup_command_types_into_new_tab(self):
+        git(self.repo, "config", "rex.worktreeSetup", "make setup")
+        self.assertEqual(worktree.setup_command(str(self.repo)), "make setup")
+        with patch.object(worktree, "windows_for_path", return_value=[]), patch.object(worktree, "repo_name", return_value="repo"), \
+                patch.object(worktree, "run", return_value=b'{"window_id": "window:new"}') as run:
+            worktree.open_tab("session:1", {"worktree": "/tmp/test", "branch": "refs/heads/topic"}, None, "make setup")
+        args = run.call_args_list[0][0]
+        self.assertEqual(args[:6], ("rex", "api", "call", "-s", "session:1", "session.new_window"))
+        options = json.loads(args[6])["layout"]["block"]["options"]
+        self.assertEqual(options, {"cwd": "/tmp/test", "initial_input": "make setup\n"})
 
     def test_close_picker_window_last(self):
         own = {"window_id": "window:own", "layers": [{"blocks": [{"block_id": "block:picker"}]}]}
