@@ -163,6 +163,9 @@ def open_tab(session, entry, client=None, setup=None):
 
 # Worktree state ---------------------------------------------------------------
 
+REMOTE_DELETED = "remote deleted"
+
+
 def tracking(cwd):
     out = git_text(cwd, "for-each-ref", "--format=%(refname)%00%(upstream:track)", "refs/heads")
     result = {}
@@ -170,10 +173,10 @@ def tracking(cwd):
         ref, _, track = line.partition("\0")
         ahead = re.search(r"ahead (\d+)", track)
         behind = re.search(r"behind (\d+)", track)
-        parts = (["↑" + ahead.group(1)] if ahead else []) + (["↓" + behind.group(1)] if behind else [])
+        parts = ([ahead.group(1) + " ahead"] if ahead else []) + ([behind.group(1) + " behind"] if behind else [])
         if "gone" in track:
-            parts.append("gone")
-        result[ref] = " ".join(parts)
+            parts.append(REMOTE_DELETED)
+        result[ref] = parts
     return result
 
 
@@ -206,7 +209,7 @@ def base_entries(cwd):
     current = current_entry(entries, cwd)
     for entry in entries:
         entry.update(name=branch_name(entry), current=entry is current, dirty=PENDING, open=PENDING,
-                     track=tracks.get(entry.get("branch"), ""))
+                     track=tracks.get(entry.get("branch"), []))
     return entries
 
 
@@ -551,20 +554,25 @@ def highlighted(text, hits, attr):
 def badges(entry):
     result = []
     if entry.get("main"):
-        result.append(("primary", style("blue")))
+        result.append(("main checkout", style("blue")))
     if entry.get("open") is True:
-        result.append(("open", style("green")))
+        result.append(("tab open", style("green")))
     if entry.get("dirty") is True:
-        result.append(("modified", style("yellow")))
-    if entry.get("track"):
-        result.append((entry["track"], style("red") if "gone" in entry["track"] else style("cyan")))
+        result.append(("uncommitted", style("yellow")))
+    for part in entry.get("track") or []:
+        result.append((part, style("red") if part == REMOTE_DELETED else style("cyan")))
     if "locked" in entry:
         result.append(("locked", style("red")))
     if missing(entry):
-        result.append(("missing", style("red")))
+        result.append(("folder missing", style("red")))
     if PENDING in (entry.get("dirty"), entry.get("open")):
         result.append(("…", style("dim")))
     return result
+
+
+def badges_width(entry):
+    labels = badges(entry)
+    return sum(len(text) for text, _ in labels) + 3 * max(0, len(labels) - 1)
 
 
 def entry_row(entry, selected, name_width, badge_width, match=None):
@@ -574,11 +582,9 @@ def entry_row(entry, selected, name_width, badge_width, match=None):
            ("● " if entry.get("current") else "  ", style("green"))]
     row += highlighted(name, name_hits, style("bold") if selected else 0)
     row.append((" " * (name_width - len(name) + 2), 0))
-    used = 0
-    for text, attr in badges(entry):
-        row += [(text, attr), (" ", 0)]
-        used += len(text) + 1
-    row.append((" " * max(0, badge_width - used) + " ", 0))
+    for i, (text, attr) in enumerate(badges(entry)):
+        row += ([(" · ", style("dim"))] if i else []) + [(text, attr)]
+    row.append((" " * max(0, badge_width - badges_width(entry)) + "   ", 0))
     row += highlighted(tilde(entry["worktree"]), path_hits, style("dim"))
     return row
 
@@ -806,7 +812,7 @@ class Manager:
             index = shown.index(selected) if selected in shown else 0
             top = min(max(top, index - capacity + 1), index, max(0, len(shown) - capacity))
             name_width = min(40, max([len(e["name"]) for e in self.entries] + [8]))
-            badge_width = max([sum(len(t) + 1 for t, _ in badges(e)) for e in self.entries] + [0])
+            badge_width = max([badges_width(e) for e in self.entries] + [0])
 
             if not pending_input(stdscr):
                 rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
@@ -871,6 +877,14 @@ class Manager:
                     ("/", "filter (fuzzy)"),
                     ("esc", "clear the filter, or quit"),
                     ("q", "quit"),
+                ]), ("Labels", [
+                    ("●", "the worktree you opened this from"),
+                    ("main checkout", "the original checkout; it can't be removed"),
+                    ("tab open", "a Rex tab is in this worktree"),
+                    ("uncommitted", "has uncommitted changes"),
+                    ("2 ahead / behind", "commits not yet pushed / not yet pulled"),
+                    ("remote deleted", "its remote branch is gone, often after merging"),
+                    ("folder missing", "the folder is gone; press p to prune"),
                 ])])
             elif key == ESCAPE and query:
                 query = ""

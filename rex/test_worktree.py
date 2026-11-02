@@ -96,6 +96,21 @@ class WorktreeTests(unittest.TestCase):
                 self.assertEqual(worktree.read_key(screen), "\x1b")
                 self.assertEqual(worktree.read_key(screen), "x")
 
+    def test_tracking_labels(self):
+        git(self.repo, "remote", "add", "origin", "https://example.invalid/repo.git")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "branch", "--set-upstream-to=origin/main", "main")
+        git(self.repo, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "ahead")
+        git(self.repo, "branch", "deleted")
+        git(self.repo, "config", "branch.deleted.remote", "origin")
+        git(self.repo, "config", "branch.deleted.merge", "refs/heads/deleted")
+        tracks = worktree.tracking(str(self.repo))
+        self.assertEqual(tracks["refs/heads/main"], ["1 ahead"])
+        self.assertEqual(tracks["refs/heads/deleted"], ["remote deleted"])
+        entry = {"worktree": str(self.repo), "main": True, "open": True, "dirty": True, "track": ["1 ahead", "2 behind"]}
+        self.assertEqual([t for t, _ in worktree.badges(entry)], ["main checkout", "tab open", "uncommitted", "1 ahead", "2 behind"])
+        self.assertEqual(worktree.badges_width(entry), len("main checkout · tab open · uncommitted · 1 ahead · 2 behind"))
+
     def test_source_label(self):
         self.assertEqual(worktree.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
         self.assertEqual(worktree.source_label({"kind": "remote", "name": "feat/a", "ref": "origin/feat/a"}), "remote")
