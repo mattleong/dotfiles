@@ -95,7 +95,7 @@ local function worktree_action(mode)
 				options = {
 					shell = "none",
 					cwd = "/",
-					command = { "python3", home .. "/.config/rex/worktree.py", mode, cwd, ctx.session_id, ctx.client_id or "", ctx.block_id },
+					command = { "python3", home .. "/.config/rex/rex-worktrees", mode, cwd, ctx.session_id, ctx.client_id or "", ctx.block_id },
 				},
 			}),
 		})

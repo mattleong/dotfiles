@@ -1,0 +1,252 @@
+"""Drawing: colors, rows, columns, and shared screens such as help and confirmation."""
+import curses
+import os
+import time
+
+import keyboard
+import util
+import worktrees
+
+
+COLORS = {}
+SELECTED_PAIRS = {}  # Color pair number -> the same colors on the selected-row background.
+
+
+def short_age(stamp, now=None):
+    """A compact age such as 5m, 3h, 2d, 3w, 4mo, or 1y."""
+    if not stamp:
+        return ""
+    seconds = max(0, (time.time() if now is None else now) - stamp)
+    for unit, size in (("y", 365 * 86400), ("mo", 30 * 86400), ("w", 7 * 86400), ("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit}"
+    return "now"
+
+
+def init_colors():
+    COLORS.update(dim=curses.A_DIM, bold=curses.A_BOLD)
+    if not curses.has_colors():
+        return
+    curses.start_color()
+    try:
+        curses.use_default_colors()
+        background = -1
+    except curses.error:
+        background = curses.COLOR_BLACK
+    palette = [("green", curses.COLOR_GREEN), ("yellow", curses.COLOR_YELLOW),
+               ("cyan", curses.COLOR_CYAN), ("red", curses.COLOR_RED), ("blue", curses.COLOR_BLUE),
+               ("magenta", curses.COLOR_MAGENTA)]
+    for index, (name, color) in enumerate(palette, 1):
+        curses.init_pair(index, color, background)
+        COLORS[name] = curses.color_pair(index)
+    if curses.COLORS >= 256 and curses.COLOR_PAIRS > 2 * len(palette) + 1:
+        # A subtle gray behind the selected row, in each color.
+        highlight = 236
+        for index, color in enumerate([-1] + [c for _, c in palette]):
+            pair = len(palette) + 1 + index
+            curses.init_pair(pair, color, highlight)
+            SELECTED_PAIRS[index] = curses.color_pair(pair)
+
+
+def style(name):
+    return COLORS.get(name, 0)
+
+
+class Selected(list):
+    """A row drawn on the selected-row background."""
+
+
+def render(stdscr, rows, cursor=None):
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    for y, row in enumerate(rows[:height]):
+        highlight = isinstance(row, Selected) and SELECTED_PAIRS
+        if highlight:
+            try:
+                stdscr.addnstr(y, 0, " " * width, width - 1, SELECTED_PAIRS[0])
+            except curses.error:
+                pass
+        x = 2
+        for text, attr in row:
+            if x >= width - 1:
+                break
+            if highlight:
+                attr = (attr & ~curses.A_COLOR) | SELECTED_PAIRS.get(curses.pair_number(attr), SELECTED_PAIRS[0])
+            try:
+                stdscr.addnstr(y, x, text, width - 1 - x, attr)
+            except curses.error:
+                pass
+            x += len(text)
+    if cursor:
+        curses.curs_set(1)
+        try:
+            stdscr.move(min(cursor[0], height - 1), min(cursor[1] + 2, width - 1))
+        except curses.error:
+            pass
+    else:
+        curses.curs_set(0)
+    stdscr.refresh()
+
+
+def highlighted(text, hits, attr):
+    """Split text into segments, emphasizing the characters at the hit positions."""
+    segments, start = [], 0
+    for i in range(1, len(text) + 1):
+        if i == len(text) or (i in hits) != (start in hits):
+            hit = start in hits
+            segments.append((text[start:i], (style("yellow") | style("bold")) if hit else attr))
+            start = i
+    return segments
+
+
+def pr_cell(entry):
+    pr = entry.get("pr")
+    if not pr:
+        return []
+    state = "draft" if pr.get("isDraft") and pr["state"] == "OPEN" else pr["state"].lower()
+    color = {"open": "green", "merged": "magenta", "closed": "red"}.get(state, "dim")
+    return [(f"{util.ICONS['pr']} #{pr['number']} {state}", style(color))]
+
+
+def sync_cell(entry):
+    cell = []
+    for part in entry.get("track") or []:
+        if part == worktrees.REMOTE_DELETED:
+            cell.append((util.ICONS["deleted"] + " " + part, style("red")))
+        else:
+            cell.append((util.ICONS["ahead" if part.endswith("ahead") else "behind"] + " " + part, style("cyan")))
+    return cell
+
+
+def state_cell(entry):
+    cell = []
+    if entry.get("main"):
+        cell.append((util.ICONS["main"] + " main checkout", style("blue")))
+    if entry.get("open") is True:
+        cell.append((util.ICONS["tab"] + " tab open", style("green")))
+    if entry.get("dirty") is True:
+        cell.append((util.ICONS["dirty"] + " uncommitted", style("yellow")))
+    if "locked" in entry:
+        cell.append((util.ICONS["locked"] + " locked", style("red")))
+    if worktrees.missing(entry):
+        cell.append((util.ICONS["missing"] + " folder missing", style("red")))
+    if util.PENDING in (entry.get("dirty"), entry.get("open")):
+        cell.append(("…", style("dim")))
+    return cell
+
+
+def badges(entry):
+    """Every status label for a worktree, in column order."""
+    return pr_cell(entry) + sync_cell(entry) + state_cell(entry)
+
+
+def cell_width(cell):
+    return sum(len(text) for text, _ in cell) + 3 * max(0, len(cell) - 1)
+
+
+def badges_width(entry):
+    return cell_width(badges(entry))
+
+
+CELLS = [("PR", pr_cell), ("SYNC", sync_cell), ("STATE", state_cell)]
+
+
+def column_widths(entries):
+    """Widths for the list's columns, sized to every worktree so they don't shift while filtering.
+    A column that's empty for every worktree gets width 0 and is hidden."""
+    widths = {"BRANCH": min(40, max([len(e["name"]) for e in entries] + [6]))}
+    for title, cell in CELLS:
+        width = max([cell_width(cell(e)) for e in entries] + [0])
+        widths[title] = max(width, len(title)) if width else 0
+    widths["SOURCE"] = max([len(worktrees.worktree_source(e)) for e in entries] + [0])
+    return widths
+
+
+def header_row(widths):
+    dim = style("dim") | style("bold")
+    row = [("    " + "BRANCH".ljust(widths["BRANCH"] + 2), dim), ("AGE  ", dim)]
+    for title, _ in CELLS:
+        if widths[title]:
+            row.append((title.ljust(widths[title] + 3), dim))
+    row.append(("FROM", dim))
+    return row
+
+
+def entry_row(entry, selected, widths, match=None):
+    _, name_hits, folder_hits = match or (0, set(), set())
+    width = widths["BRANCH"]
+    name = entry["name"] if len(entry["name"]) <= width else entry["name"][:width - 1] + "…"
+    row = [("› " if selected else "  ", style("cyan") | style("bold")),
+           ("● " if entry.get("current") else "  ", style("green"))]
+    row += highlighted(name, {h for h in name_hits if h < len(name)}, style("bold") if selected else 0)
+    row.append((" " * (width - len(name) + 2), 0))
+    row.append((short_age(entry.get("time")).rjust(3) + "  ", style("dim")))
+    for title, cell_for in CELLS:
+        if not widths[title]:
+            continue
+        cell = cell_for(entry)
+        for i, (text, attr) in enumerate(cell):
+            row += ([(" · ", style("dim"))] if i else []) + [(text, attr)]
+        row.append((" " * (widths[title] - cell_width(cell) + 3), 0))
+    if widths["SOURCE"]:
+        row.append((worktrees.worktree_source(entry).ljust(widths["SOURCE"]) + "  ", style("blue")))
+    row += highlighted(os.path.basename(entry["worktree"]), folder_hits, style("dim"))
+    return Selected(row) if selected else row
+
+
+def help_row(*items):
+    row = []
+    for key, label in items:
+        row += [(key, style("bold")), (" " + label + "   ", style("dim"))]
+    return row
+
+
+def search_row(text, filtering, placeholder):
+    if filtering:
+        return [("/", style("cyan")), (text, 0)]
+    if text:
+        return [("/", style("dim")), (text, 0)]
+    return [(placeholder, style("dim"))]
+
+
+NAVIGATION_HELP = [
+    ("j / k", "move down / up"),
+    ("gg / G", "first / last"),
+    ("ctrl+d / ctrl+u", "half page down / up"),
+    ("ctrl+f / ctrl+b", "page down / up"),
+]
+
+
+def show_help(stdscr, title, sections):
+    rows = [[], [(title + " — keys", style("bold"))]]
+    for heading, items in sections:
+        rows += [[], [(heading, style("dim"))]]
+        width = max(len(k) for k, _ in items)
+        rows += [[(k.ljust(width), style("bold")), ("   " + label, 0)] for k, label in items]
+    rows += [[], [("Press any key to go back.", style("dim"))]]
+    keyboard.set_timeout(stdscr, -1)
+    render(stdscr, rows)
+    keyboard.read_key(stdscr)
+
+
+def confirm(stdscr, title, lines, keys, help_items=None):
+    """Show lines and wait for one of keys (a dict of key -> result). Esc cancels."""
+    keyboard.set_timeout(stdscr, -1)
+    while True:
+        rows = [[], [(title, style("bold"))], []]
+        rows += [line if isinstance(line, list) else [line] for line in lines()]
+        rows += [[], help_row(*(help_items or []), ("esc", "cancel"))]
+        render(stdscr, rows)
+        key = keyboard.read_key(stdscr)
+        if key == keyboard.ESCAPE:
+            return None
+        if key in keyboard.ENTER:
+            key = "\n"
+        if key in keys:
+            result = keys[key]()
+            if result is not None:
+                return result
+
+
+def pointer(selected):
+    return ("› " if selected else "  ", style("cyan") | style("bold"))
