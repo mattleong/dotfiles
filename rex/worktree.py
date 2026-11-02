@@ -938,53 +938,78 @@ class Manager:
         except (RuntimeError, OSError) as error:
             self.say(str(error))
             return False
-        choice = {"delete_branch": False}
-
-        def lines():
-            out = [[(entry["name"], style("bold"))], [(tilde(entry["worktree"]), style("dim"))], []]
-            if files:
-                out.append([(f"Uncommitted changes ({len(files)}):", style("yellow"))])
-                out += [[("  " + f, 0)] for f in files[:8]]
-                if len(files) > 8:
-                    out.append([(f"  …and {len(files) - 8} more", style("dim"))])
-                out += [[("Force removing discards these changes.", style("red"))], []]
-            if windows:
-                out.append([("These tabs and all their panes will close:", style("yellow"))])
-                out += [[("  " + (w.get("label") or w["window_id"]), 0)] for w in windows]
-                out.append([])
-            if merged:
-                box = "[x]" if choice["delete_branch"] else "[ ]"
-                out.append([(box + " ", style("cyan")), ("Also delete branch ", 0), (entry["name"], style("bold")),
-                            ("  (no unmerged commits)", style("dim"))])
-            elif "branch" in entry:
-                out.append([("The branch ", 0), (entry["name"], style("bold")), (" will be kept.", 0)])
-            return out
-
-        def toggle():
-            choice["delete_branch"] = not choice["delete_branch"]
-
-        keys, help_items = {}, []
+        options = []  # Checkboxes, toggled with space.
         if files:
-            keys["F"] = lambda: "force"
-            help_items.append(("F", "force remove"))
-        else:
-            keys["\n"] = lambda: "remove"
-            help_items.append(("enter", "remove"))
+            options.append({"id": "force", "checked": False,
+                            "label": [("Discard uncommitted changes", style("red"))]})
         if merged:
-            keys["b"] = toggle
-            help_items.append(("b", "toggle branch deletion"))
-        result = confirm(self.stdscr, "Remove worktree?", lines, keys, help_items)
-        if not result:
+            options.append({"id": "delete_branch", "checked": False,
+                            "label": [("Also delete branch ", 0), (entry["name"], style("bold")),
+                                      ("   (no unmerged commits)", style("dim"))]})
+        checked = self.removal_options(entry, files, windows, merged, options)
+        if checked is None:
             return False
+        delete_branch = "delete_branch" in checked
         try:
-            remove_worktree(self.repo, self.session, entry, windows, force=result == "force",
-                            delete_branch=choice["delete_branch"])
+            remove_worktree(self.repo, self.session, entry, windows, force="force" in checked,
+                            delete_branch=delete_branch)
         except (RuntimeError, OSError) as error:
             self.say(str(error))
         else:
-            self.say(f"Removed {entry['name']}" + (" and its branch" if choice["delete_branch"] else ""), "green")
+            self.say(f"Removed {entry['name']}" + (" and its branch" if delete_branch else ""), "green")
         self.reload()
         return False
+
+    def removal_options(self, entry, files, windows, merged, options):
+        """Show the removal confirmation. Returns the set of checked option ids, or None if cancelled."""
+        stdscr, cursor, message = self.stdscr, 0, None
+        set_timeout(stdscr, -1)
+        while True:
+            rows = [[], [("Remove worktree?", style("bold"))], [],
+                    [(entry["name"], style("bold"))], [(tilde(entry["worktree"]), style("dim"))], []]
+            if files:
+                rows.append([(f"Uncommitted changes ({len(files)}):", style("yellow"))])
+                rows += [[("  " + f, 0)] for f in files[:8]]
+                if len(files) > 8:
+                    rows.append([(f"  …and {len(files) - 8} more", style("dim"))])
+                rows.append([])
+            if windows:
+                rows.append([("These tabs and all their panes will close:", style("yellow"))])
+                rows += [[("  " + (w.get("label") or w["window_id"]), 0)] for w in windows]
+                rows.append([])
+            for i, option in enumerate(options):
+                box = "[x] " if option["checked"] else "[ ] "
+                rows.append([pointer(i == cursor), (box, style("cyan"))] + option["label"])
+            if not merged and "branch" in entry:
+                rows.append([("The branch ", 0), (entry["name"], style("bold")), (" will be kept.", 0)])
+            rows.append([])
+            checked = {o["id"] for o in options if o["checked"]}
+            if message:
+                rows.append([(message, style("red"))])
+            elif files and "force" not in checked:
+                rows.append([("check “Discard uncommitted changes” to remove", style("dim"))])
+            help_items = []
+            if options:
+                help_items.append(("space", "toggle"))
+            if len(options) > 1:
+                help_items.append(("j/k", "move"))
+            rows.append(help_row(*help_items, ("enter", "remove"), ("esc", "cancel")))
+            render(stdscr, rows)
+            key = read_key(stdscr)
+            message = None
+            if key == ESCAPE:
+                return None
+            if key == " " and options:
+                options[cursor]["checked"] = not options[cursor]["checked"]
+            elif key in ("j", curses.KEY_DOWN, "\x0e") and options:
+                cursor = min(len(options) - 1, cursor + 1)
+            elif key in ("k", curses.KEY_UP, "\x10") and options:
+                cursor = max(0, cursor - 1)
+            elif key in ENTER:
+                if files and "force" not in checked:
+                    message = "Check “Discard uncommitted changes” first, or press esc to cancel."
+                    continue
+                return checked
 
     def prune(self):
         stale = [e for e in self.entries if "prunable" in e]
