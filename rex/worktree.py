@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -23,6 +24,7 @@ ICONS = {
     "main": "\uf015", "tab": "\uf120", "dirty": "\uf040", "ahead": "\uf062", "behind": "\uf063",
     "deleted": "\uf127", "missing": "\uf114", "locked": "\uf023", "remote": "\uf0c2",
     "local": "\ue725", "ok": "\uf00c", "error": "\uf00d", "info": "\uf05a", "folder": "\uf07b",
+    "pr": "\uf407",
 }
 # Where tools keep the worktrees they create, to tag each worktree with its source.
 WORKTREE_SOURCES = [(".herdr/worktrees", "herdr"), (".t3/worktrees", "t3"),
@@ -146,9 +148,16 @@ def setup_command(cwd):
     return os.fsdecode(result.stdout).strip() if result.returncode == 0 else ""
 
 
-def open_tab(session, entry, client=None, setup=None):
+def open_tab(session, entry, client=None, setup=None, focus=True):
+    """Focus the worktree's tab, or create one. With focus=False, only create it, in the background.
+    Returns the window ID, or None when focus=False and a tab is already open."""
     path = entry["worktree"]
     matches = windows_for_path(session, path)
+    if matches and not focus:
+        return None
+    if not focus:
+        created = run("rex", "window", "new", "-s", session, tab_label(entry), "-c", path, "--focus=false", "--json")
+        return json.loads(created)["window_id"]
     if matches:
         window_id = matches[0]["window_id"]
         run("rex", "focus", "-s", session, window_id)
@@ -169,6 +178,15 @@ def open_tab(session, entry, client=None, setup=None):
         except RuntimeError as error:
             raise RuntimeError(f"Couldn't switch to the tab: {error}") from error
     return window_id
+
+
+def open_split(session, entry, block):
+    """Open the worktree in a new pane beside block, and focus it."""
+    if not block:
+        raise RuntimeError("Can't tell which pane to split.")
+    run("rex", "split", "-s", session, "-b", block, "--split=right", "-c", entry["worktree"],
+        "--label", branch_name(entry))
+    STATE["navigated"] = True
 
 
 # Worktree state ---------------------------------------------------------------
@@ -216,11 +234,34 @@ def base_entries(cwd):
     raw[0]["main"] = True
     entries = [e for e in raw if "bare" not in e]
     tracks = tracking(cwd)
+    times = commit_times(cwd, [e["HEAD"] for e in entries if e.get("HEAD")])
     current = current_entry(entries, cwd)
     for entry in entries:
         entry.update(name=branch_name(entry), current=entry is current, dirty=PENDING, open=PENDING,
-                     track=tracks.get(entry.get("branch"), []))
+                     track=tracks.get(entry.get("branch"), []), time=times.get(entry.get("HEAD")))
     return entries
+
+
+def commit_times(cwd, shas):
+    """Commit times for a list of commits, in one Git call."""
+    if not shas:
+        return {}
+    try:
+        out = git_text(cwd, "show", "-s", "--format=%H %ct", *sorted(set(shas)))
+    except RuntimeError:
+        return {}
+    return {sha: int(stamp) for sha, _, stamp in (line.partition(" ") for line in out.splitlines()) if stamp}
+
+
+def short_age(stamp, now=None):
+    """A compact age such as 5m, 3h, 2d, 3w, 4mo, or 1y."""
+    if not stamp:
+        return ""
+    seconds = max(0, (time.time() if now is None else now) - stamp)
+    for unit, size in (("y", 365 * 86400), ("mo", 30 * 86400), ("w", 7 * 86400), ("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit}"
+    return "now"
 
 
 def fill_status(entries, session):
@@ -265,14 +306,55 @@ def load_status_async(entries, session):
         threading.Thread(target=target, daemon=True).start()
 
 
-def recent_commits(path, count=5):
+def recent_commits(path, count=5, base=None):
+    """Commits for the preview: those not in base when there are any, else the latest ones.
+    Returns (description, [(sha, subject, author, unix time)])."""
     if not os.path.isdir(path):
-        return []
+        return "", []
+    since = 0
+    if base:
+        try:
+            since = int(git_text(path, "rev-list", "--count", f"{base}..HEAD") or 0)
+        except (RuntimeError, ValueError):
+            since = 0
     try:
-        out = git_text(path, "log", f"-n{count}", "--format=%h%x00%s%x00%cr")
+        out = git_text(path, "log", f"-n{count}", "--format=%h%x00%s%x00%an%x00%ct",
+                       *([f"{base}..HEAD"] if since else []))
     except (RuntimeError, OSError):
-        return []
-    return [line.split("\0") for line in out.splitlines() if line.count("\0") == 2]
+        return "", []
+    commits = []
+    for line in out.splitlines():
+        parts = line.split("\0")
+        if len(parts) == 4:
+            commits.append((parts[0], parts[1], parts[2], int(parts[3] or 0)))
+    if since:
+        return f"{since} commit{'s' if since != 1 else ''} not in {base}", commits
+    return "Recent commits", commits
+
+
+def pull_requests_enabled(repo):
+    if not shutil.which("gh"):
+        return False
+    result = subprocess.run(["git", "-C", repo, "config", "--get", "rex.worktreePullRequests"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return os.fsdecode(result.stdout).strip().lower() not in ("false", "no", "off", "0")
+
+
+def pull_requests(repo):
+    """Map branch names to their newest pull request, from your PRs and the repository's recent ones."""
+    fields = "number,state,headRefName,isDraft"
+    found = {}
+    for extra in (["--author", "@me"], []):
+        try:
+            out = run("gh", "pr", "list", "--state", "all", "--limit", "200", "--json", fields, *extra, cwd=repo)
+            prs = json.loads(out)
+        except (RuntimeError, OSError, ValueError):
+            continue
+        for pr in prs:
+            branch = pr.get("headRefName")
+            if branch and (branch not in found or pr["number"] > found[branch]["number"]):
+                found[branch] = pr
+    return found
 
 
 # Matching ---------------------------------------------------------------------
@@ -341,12 +423,18 @@ def changed_files(entry):
 
 
 def default_branch(cwd):
-    """The repository's default branch, preferring the remote's: origin/main, main, and so on."""
-    result = subprocess.run(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    if result.returncode == 0 and result.stdout.strip():
-        return os.fsdecode(result.stdout).strip()
-    for ref in ("origin/main", "origin/master", "main", "master"):
+    """The remote's default branch, such as origin/main or upstream/master.
+
+    Uses each remote's recorded HEAD, trying origin first, then common names on each remote, then
+    a local main or master when there's no remote."""
+    remotes = git_text(cwd, "remote").splitlines()
+    remotes.sort(key=lambda name: name != "origin")
+    for remote in remotes:
+        result = subprocess.run(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD"],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if result.returncode == 0 and result.stdout.strip():
+            return os.fsdecode(result.stdout).strip()
+    for ref in [f"{r}/{name}" for r in remotes for name in ("main", "master")] + ["main", "master"]:
         if git_ok(cwd, "rev-parse", "--verify", "--quiet", ref + "^{commit}"):
             return ref
     return None
@@ -442,10 +530,11 @@ def load_branches(cwd, entries, now=None):
     head = git_text(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     if head == "HEAD":
         head = git_text(cwd, "rev-parse", "--short", "HEAD")
+    # The default branch comes first, so new branches start from it unless you choose otherwise.
     bases = [{"ref": "HEAD", "label": head}]
     default = default_branch(cwd)
     if default and default != head:
-        bases.append({"ref": default, "label": default})
+        bases.insert(0, {"ref": default, "label": default})
     cutoff = (time.time() if now is None else now) - RECENT_DAYS * 86400
     available = [(name, stamp) for name, stamp in local if name not in checked_out]
     suggestions = [{"name": n, "ref": n, "kind": "local"} for n, stamp in available if stamp >= cutoff]
@@ -512,7 +601,8 @@ def init_colors():
     except curses.error:
         background = curses.COLOR_BLACK
     palette = [("green", curses.COLOR_GREEN), ("yellow", curses.COLOR_YELLOW),
-               ("cyan", curses.COLOR_CYAN), ("red", curses.COLOR_RED), ("blue", curses.COLOR_BLUE)]
+               ("cyan", curses.COLOR_CYAN), ("red", curses.COLOR_RED), ("blue", curses.COLOR_BLUE),
+               ("magenta", curses.COLOR_MAGENTA)]
     for index, (name, color) in enumerate(palette, 1):
         curses.init_pair(index, color, background)
         COLORS[name] = curses.color_pair(index)
@@ -581,31 +671,77 @@ def highlighted(text, hits, attr):
     return segments
 
 
-def badges(entry):
-    result = []
-    if entry.get("main"):
-        result.append((ICONS["main"] + " main checkout", style("blue")))
-    if entry.get("open") is True:
-        result.append((ICONS["tab"] + " tab open", style("green")))
-    if entry.get("dirty") is True:
-        result.append((ICONS["dirty"] + " uncommitted", style("yellow")))
+def pr_cell(entry):
+    pr = entry.get("pr")
+    if not pr:
+        return []
+    state = "draft" if pr.get("isDraft") and pr["state"] == "OPEN" else pr["state"].lower()
+    color = {"open": "green", "merged": "magenta", "closed": "red"}.get(state, "dim")
+    return [(f"{ICONS['pr']} #{pr['number']} {state}", style(color))]
+
+
+def sync_cell(entry):
+    cell = []
     for part in entry.get("track") or []:
         if part == REMOTE_DELETED:
-            result.append((ICONS["deleted"] + " " + part, style("red")))
+            cell.append((ICONS["deleted"] + " " + part, style("red")))
         else:
-            result.append((ICONS["ahead" if part.endswith("ahead") else "behind"] + " " + part, style("cyan")))
+            cell.append((ICONS["ahead" if part.endswith("ahead") else "behind"] + " " + part, style("cyan")))
+    return cell
+
+
+def state_cell(entry):
+    cell = []
+    if entry.get("main"):
+        cell.append((ICONS["main"] + " main checkout", style("blue")))
+    if entry.get("open") is True:
+        cell.append((ICONS["tab"] + " tab open", style("green")))
+    if entry.get("dirty") is True:
+        cell.append((ICONS["dirty"] + " uncommitted", style("yellow")))
     if "locked" in entry:
-        result.append((ICONS["locked"] + " locked", style("red")))
+        cell.append((ICONS["locked"] + " locked", style("red")))
     if missing(entry):
-        result.append((ICONS["missing"] + " folder missing", style("red")))
+        cell.append((ICONS["missing"] + " folder missing", style("red")))
     if PENDING in (entry.get("dirty"), entry.get("open")):
-        result.append(("…", style("dim")))
-    return result
+        cell.append(("…", style("dim")))
+    return cell
+
+
+def badges(entry):
+    """Every status label for a worktree, in column order."""
+    return pr_cell(entry) + sync_cell(entry) + state_cell(entry)
+
+
+def cell_width(cell):
+    return sum(len(text) for text, _ in cell) + 3 * max(0, len(cell) - 1)
 
 
 def badges_width(entry):
-    labels = badges(entry)
-    return sum(len(text) for text, _ in labels) + 3 * max(0, len(labels) - 1)
+    return cell_width(badges(entry))
+
+
+CELLS = [("PR", pr_cell), ("SYNC", sync_cell), ("STATE", state_cell)]
+
+
+def column_widths(entries):
+    """Widths for the list's columns, sized to every worktree so they don't shift while filtering.
+    A column that's empty for every worktree gets width 0 and is hidden."""
+    widths = {"BRANCH": min(40, max([len(e["name"]) for e in entries] + [6]))}
+    for title, cell in CELLS:
+        width = max([cell_width(cell(e)) for e in entries] + [0])
+        widths[title] = max(width, len(title)) if width else 0
+    widths["SOURCE"] = max([len(worktree_source(e)) for e in entries] + [0])
+    return widths
+
+
+def header_row(widths):
+    dim = style("dim") | style("bold")
+    row = [("    " + "BRANCH".ljust(widths["BRANCH"] + 2), dim), ("AGE  ", dim)]
+    for title, _ in CELLS:
+        if widths[title]:
+            row.append((title.ljust(widths[title] + 3), dim))
+    row.append(("FROM", dim))
+    return row
 
 
 def worktree_source(entry):
@@ -617,18 +753,24 @@ def worktree_source(entry):
     return "claude" if "/.claude/worktrees/" in path else ""
 
 
-def entry_row(entry, selected, name_width, badge_width, source_width, match=None):
+def entry_row(entry, selected, widths, match=None):
     _, name_hits, folder_hits = match or (0, set(), set())
-    name = entry["name"][:name_width]
+    width = widths["BRANCH"]
+    name = entry["name"] if len(entry["name"]) <= width else entry["name"][:width - 1] + "…"
     row = [("› " if selected else "  ", style("cyan") | style("bold")),
            ("● " if entry.get("current") else "  ", style("green"))]
-    row += highlighted(name, name_hits, style("bold") if selected else 0)
-    row.append((" " * (name_width - len(name) + 2), 0))
-    for i, (text, attr) in enumerate(badges(entry)):
-        row += ([(" · ", style("dim"))] if i else []) + [(text, attr)]
-    row.append((" " * max(0, badge_width - badges_width(entry)) + "   ", 0))
-    if source_width:
-        row.append((worktree_source(entry).ljust(source_width) + "  ", style("blue")))
+    row += highlighted(name, {h for h in name_hits if h < len(name)}, style("bold") if selected else 0)
+    row.append((" " * (width - len(name) + 2), 0))
+    row.append((short_age(entry.get("time")).rjust(3) + "  ", style("dim")))
+    for title, cell_for in CELLS:
+        if not widths[title]:
+            continue
+        cell = cell_for(entry)
+        for i, (text, attr) in enumerate(cell):
+            row += ([(" · ", style("dim"))] if i else []) + [(text, attr)]
+        row.append((" " * (widths[title] - cell_width(cell) + 3), 0))
+    if widths["SOURCE"]:
+        row.append((worktree_source(entry).ljust(widths["SOURCE"]) + "  ", style("blue")))
     row += highlighted(os.path.basename(entry["worktree"]), folder_hits, style("dim"))
     return Selected(row) if selected else row
 
@@ -818,14 +960,69 @@ def confirm(stdscr, title, lines, keys, help_items=None):
                 return result
 
 
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
 class Manager:
-    def __init__(self, stdscr, cwd, session, client):
-        self.stdscr, self.session, self.client = stdscr, session, client
+    def __init__(self, stdscr, cwd, session, client, origin=""):
+        self.stdscr, self.session, self.client, self.origin = stdscr, session, client, origin
         self.origin_cwd = cwd
         self.repo = worktrees(cwd)[0]["worktree"]
+        self.default = default_branch(self.repo)
         self.message, self.message_style = None, "red"
         self.commits = {}
+        self.prs, self.prs_loading = {}, False
+        self.show_prs = pull_requests_enabled(self.repo)
         self.reload()
+        if self.show_prs:
+            self.load_prs()
+
+    def load_prs(self):
+        """Fetch pull requests on a daemon thread; badges appear when they arrive."""
+        def work():
+            try:
+                self.prs = pull_requests(self.repo)
+                self.apply_prs()
+            finally:
+                self.prs_loading = False
+        self.prs_loading = True
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_prs(self):
+        for entry in self.entries:
+            if not entry.get("main") and "branch" in entry:
+                entry["pr"] = self.prs.get(entry["name"])
+
+    def busy(self, label, work):
+        """Run work on a thread while showing a spinner. Keys pressed meanwhile are ignored."""
+        result = {}
+
+        def target():
+            try:
+                result["value"] = work()
+            except BaseException as error:  # Re-raised on this thread below.
+                result["error"] = error
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        thread.join(0.15)  # Quick work finishes without a spinner flashing up.
+        previous, frame, lost = STATE.get("timeout", -1), 0, False
+        set_timeout(self.stdscr, 80)
+        try:
+            while thread.is_alive():
+                render(self.stdscr, [[], [(SPINNER[frame % len(SPINNER)] + " " + label, style("cyan"))]])
+                frame += 1
+                try:
+                    read_key(self.stdscr)
+                except FocusLost:
+                    lost = True  # Finish the work first; it mustn't be left half done.
+        finally:
+            set_timeout(self.stdscr, previous)
+        if "error" in result:
+            raise result["error"]
+        if lost:
+            raise FocusLost()
+        return result.get("value")
 
     @property
     def cwd(self):
@@ -836,6 +1033,7 @@ class Manager:
         self.entries = base_entries(self.cwd)
         self.commits = {}
         load_status_async(self.entries, self.session)
+        self.apply_prs()
 
     def say(self, text, tone="red"):
         self.message, self.message_style = text, tone
@@ -846,24 +1044,24 @@ class Manager:
         selected = next((e for e in self.entries if e.get("current")), None)
         top = 0
         while True:
-            set_timeout(stdscr, 150 if any(PENDING in (e["dirty"], e["open"]) for e in self.entries) else -1)
+            loading = self.prs_loading or any(PENDING in (e["dirty"], e["open"]) for e in self.entries)
+            set_timeout(stdscr, 150 if loading else -1)
             shown = filter_entries(self.entries, query)
             if selected not in shown:
                 selected = shown[0] if shown else None
             height, _ = stdscr.getmaxyx()
             preview_rows = 7 if height >= 22 else 0
-            capacity = max(1, height - 7 - preview_rows)
+            capacity = max(1, height - 8 - preview_rows)
             index = shown.index(selected) if selected in shown else 0
             top = min(max(top, index - capacity + 1), index, max(0, len(shown) - capacity))
-            name_width = min(40, max([len(e["name"]) for e in self.entries] + [8]))
-            badge_width = max([badges_width(e) for e in self.entries] + [0])
-            source_width = max([len(worktree_source(e)) for e in self.entries] + [0])
+            widths = column_widths(self.entries)
 
             if not pending_input(stdscr):
-                rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim"))],
-                        search_row(query, filtering, "/ to filter"), []]
+                rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim")),
+                             ("   " + self.summary(), style("dim"))],
+                        search_row(query, filtering, "/ to filter"), [], header_row(widths)]
                 for e in shown[top:top + capacity]:
-                    rows.append(entry_row(e, e is selected, name_width, badge_width, source_width,
+                    rows.append(entry_row(e, e is selected, widths,
                                           match_entry(e, query) if query.strip() else None))
                 if not shown:
                     rows.append([("No matching worktrees", style("dim"))])
@@ -878,7 +1076,7 @@ class Manager:
                 if filtering:
                     rows.append(help_row(("enter", "done"), ("esc", "clear")))
                 else:
-                    rows.append(help_row(("enter", "open"), ("n", "new"), ("dd", "remove"), ("/", "filter"),
+                    rows.append(help_row(("enter", "open"), ("s", "split"), ("n", "new"), ("dd", "remove"),
                                          ("?", "help"), ("esc", "clear filter") if query else ("q", "quit")))
                 render(stdscr, rows, cursor=(2, 1 + qpos) if filtering else None)
 
@@ -917,20 +1115,25 @@ class Manager:
             elif key == "?":
                 show_help(stdscr, "Worktrees", [("Move", NAVIGATION_HELP), ("Actions", [
                     ("enter / l", "open the worktree's tab"),
+                    ("s", "open the worktree in a split beside your pane"),
+                    ("o", "open its tab in the background and stay here"),
                     ("n", "new worktree"),
                     ("dd", "remove the worktree"),
                     ("p", "prune missing worktrees"),
+                    ("r", "refresh"),
                     ("/", "filter (fuzzy)"),
                     ("esc", "clear the filter, or quit"),
                     ("q", "quit"),
                 ]), ("Labels", [
                     ("●", "the worktree you opened this from"),
+                    ("3d", "time since the worktree's last commit"),
                     (ICONS["main"] + " main checkout", "the original checkout; it can't be removed"),
                     (ICONS["tab"] + " tab open", "a Rex tab is in this worktree"),
                     (ICONS["dirty"] + " uncommitted", "has uncommitted changes"),
                     (ICONS["ahead"] + " ahead / " + ICONS["behind"] + " behind", "commits not yet pushed / pulled"),
                     (ICONS["deleted"] + " remote deleted", "its remote branch is gone, often after merging"),
                     (ICONS["missing"] + " folder missing", "the folder is gone; press p to prune"),
+                    (ICONS["pr"] + " #12 open", "its pull request: open, draft, merged, or closed"),
                     ("herdr, t3, claude, rex", "the tool that created the worktree"),
                 ])])
             elif key == ESCAPE and query:
@@ -944,6 +1147,28 @@ class Manager:
             elif key == "p":
                 self.prune()
                 selected, query = None, ""
+            elif key == "r":
+                path = selected["worktree"] if selected else None
+                self.reload()
+                if self.show_prs:
+                    self.load_prs()
+                selected = next((e for e in self.entries if e["worktree"] == path), None)
+                self.say("Refreshed.", "dim")
+            elif key in ("s", "o") and selected:
+                if missing(selected):
+                    self.say("This worktree's directory is missing; press p to prune it.")
+                    continue
+                try:
+                    if key == "s":
+                        self.busy("Opening split…", lambda: open_split(self.session, selected, self.origin))
+                        return
+                    entry = selected
+                    opened = self.busy("Opening tab…", lambda: open_tab(self.session, entry, focus=False))
+                    entry["open"] = True
+                    self.say(f"Opened {tab_label(entry)} in the background." if opened
+                             else f"{entry['name']} already has a tab open.", "green" if opened else "dim")
+                except (RuntimeError, OSError) as error:
+                    self.say(str(error))
             elif key in ENTER or key == "l":
                 if selected is None:
                     continue
@@ -951,25 +1176,38 @@ class Manager:
                     self.say("This worktree's directory is missing; press p to prune it.")
                     continue
                 try:
-                    open_tab(self.session, selected, self.client)
+                    entry = selected
+                    self.busy("Opening…", lambda: open_tab(self.session, entry, self.client))
                     return
                 except (RuntimeError, OSError) as error:
                     self.say(str(error))
 
+    def summary(self):
+        counts = [(len(self.entries), "worktree"),
+                  (sum(e.get("dirty") is True for e in self.entries), "uncommitted"),
+                  (sum(REMOTE_DELETED in (e.get("track") or []) for e in self.entries), "remote deleted"),
+                  (sum(missing(e) for e in self.entries), "folder missing")]
+        parts = [f"{counts[0][0]} worktree{'s' if counts[0][0] != 1 else ''}"]
+        parts += [f"{n} {label}" for n, label in counts[1:] if n]
+        return " · ".join(parts)
+
     def preview(self, entry):
         if entry is None:
             return [[]] * 7
-        rows = [[("─── ", style("dim")), (ICONS["folder"] + " " + tilde(entry["worktree"]), style("dim"))]]
         path = entry["worktree"]
         if path not in self.commits:
-            self.commits[path] = recent_commits(path)
-        commits = self.commits[path]
+            self.commits[path] = recent_commits(path, base=self.default)
+        description, commits = self.commits[path]
+        rows = [[("─── ", style("dim")), (ICONS["folder"] + " " + tilde(path), style("dim")),
+                 (("  ·  " + description) if description else "", style("dim"))]]
         if missing(entry):
             rows.append([(ICONS["missing"] + " Folder missing", style("red"))])
         elif not commits:
             rows.append([("No commits", style("dim"))])
-        for sha, subject, when in commits[:5]:
-            rows.append([(sha, style("yellow")), ("  " + subject, 0), ("  " + when, style("dim"))])
+        author_width = min(16, max([len(c[2]) for c in commits] + [6]))
+        for sha, subject, author, stamp in commits[:5]:
+            rows.append([(sha, style("yellow")), ("  " + short_age(stamp).rjust(3), style("dim")),
+                         ("  " + author[:author_width].ljust(author_width), style("blue")), ("  " + subject, 0)])
         return rows + [[]] * (7 - len(rows))
 
     def remove(self, entry):
@@ -998,8 +1236,8 @@ class Manager:
             return False
         delete_branch = "delete_branch" in checked
         try:
-            remove_worktree(self.repo, self.session, entry, windows, force="force" in checked,
-                            delete_branch=delete_branch)
+            self.busy(f"Removing {entry['name']}…", lambda: remove_worktree(
+                self.repo, self.session, entry, windows, force="force" in checked, delete_branch=delete_branch))
         except (RuntimeError, OSError) as error:
             self.say(str(error))
         else:
@@ -1073,7 +1311,7 @@ class Manager:
         if confirm(self.stdscr, f"Prune {len(stale)} missing worktree{'s' if len(stale) != 1 else ''}?",
                    lines, {"\n": lambda: True}, [("enter", "prune")]):
             try:
-                prune_worktrees(self.repo)
+                self.busy("Pruning…", lambda: prune_worktrees(self.repo))
                 self.say(f"Pruned {len(stale)} missing worktree{'s' if len(stale) != 1 else ''}.", "green")
             except (RuntimeError, OSError) as error:
                 self.say(str(error))
@@ -1084,7 +1322,8 @@ class Manager:
         stdscr = self.stdscr
         set_timeout(stdscr, -1)
         cwd = self.cwd
-        branches = load_branches(cwd, self.entries)
+        branches = self.busy("Loading branches…", lambda: load_branches(cwd, self.entries))
+        set_timeout(stdscr, -1)
         suggestions = branches["suggestions"]
         text, tpos, index, top, message, filtering, pending = "", 0, 0, 0, None, False, None
         while True:
@@ -1252,12 +1491,13 @@ class Manager:
     def create_and_open(self, cwd, plan):
         """Create the worktree, then open its tab. Raises RuntimeError on failure."""
         try:
-            create_worktree(cwd, plan)
+            self.busy(f"Creating worktree for {plan['branch']}…", lambda: create_worktree(cwd, plan))
         except OSError as error:
             raise RuntimeError(str(error)) from error
         try:
-            open_tab(self.session, {"worktree": str(plan["path"]), "branch": plan["branch"]},
-                     self.client, setup_command(cwd))
+            self.busy("Opening tab…", lambda: open_tab(
+                self.session, {"worktree": str(plan["path"]), "branch": plan["branch"]}, self.client,
+                setup_command(cwd)))
         except (RuntimeError, OSError) as error:
             raise RuntimeError(f"Worktree created at {plan['path']}, but opening its tab failed: {error}") from error
 
@@ -1285,7 +1525,7 @@ def fuzzy_all(query, text):
     return total
 
 
-def main(stdscr, mode, cwd, session, client=""):
+def main(stdscr, mode, cwd, session, client="", origin=""):
     if hasattr(curses, "set_escdelay"):
         curses.set_escdelay(25)
     init_colors()
@@ -1296,7 +1536,7 @@ def main(stdscr, mode, cwd, session, client=""):
     sys.stdout.flush()
     render(stdscr, [[], [("Loading worktrees…", style("dim"))]])
     try:
-        manager = Manager(stdscr, cwd, session, client)
+        manager = Manager(stdscr, cwd, session, client, origin)
         if mode == "new":
             manager.new_screen()
         else:
@@ -1340,9 +1580,13 @@ if __name__ == "__main__":
     client = sys.argv[4] if len(sys.argv) > 4 else ""
     origin = sys.argv[5] if len(sys.argv) > 5 else ""
     os.environ.setdefault("ESCDELAY", "25")
+    # Rex starts the picker without a login shell, so add the usual tool locations, such as for gh.
+    path = os.environ.get("PATH", "").split(os.pathsep)
+    extra = [d for d in ("/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.local/bin")) if d not in path]
+    os.environ["PATH"] = os.pathsep.join(path + extra)
     setup_locale()
     try:
-        curses.wrapper(main, mode, cwd, session, client)
+        curses.wrapper(main, mode, cwd, session, client, origin)
     except KeyboardInterrupt:
         pass
     finally:

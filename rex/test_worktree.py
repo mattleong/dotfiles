@@ -109,8 +109,39 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(tracks["refs/heads/deleted"], ["remote deleted"])
         entry = {"worktree": str(self.repo), "main": True, "open": True, "dirty": True, "track": ["1 ahead", "2 behind"]}
         labels = [t for t, _ in worktree.badges(entry)]
-        self.assertEqual([t[2:] for t in labels], ["main checkout", "tab open", "uncommitted", "1 ahead", "2 behind"])
+        self.assertEqual([t[2:] for t in labels], ["1 ahead", "2 behind", "main checkout", "tab open", "uncommitted"])
         self.assertEqual(worktree.badges_width(entry), len(" · ".join(labels)))
+
+    def test_columns_align_and_hide_empty_ones(self):
+        entries = [{"name": "main", "worktree": "/w/repo", "main": True, "open": True, "dirty": False, "track": []},
+                   {"name": "a-very-long-branch-name-that-goes-past-forty-characters", "worktree": "/w/x",
+                    "open": False, "dirty": True, "track": ["2 behind"]}]
+        widths = worktree.column_widths(entries)
+        self.assertEqual(widths["PR"], 0)
+        self.assertEqual(widths["BRANCH"], 40)
+        self.assertEqual(widths["SYNC"], len("x 2 behind"))
+        rows = [worktree.entry_row(e, False, widths) for e in entries]
+        text = ["".join(t for t, _ in row) for row in rows]
+        header = "".join(t for t, _ in worktree.header_row(widths))
+        self.assertNotIn("PR", header)
+        self.assertTrue(text[1][4:].startswith("a-very-long-branch-name-that-goes-past-…"))
+        # Every column starts at the same position in each row and in the header.
+        for label in ("SYNC", "STATE"):
+            self.assertIn(label, header)
+        self.assertEqual(text[0].index(worktree.ICONS["main"]), text[1].index(worktree.ICONS["dirty"]))
+        self.assertEqual(header.index("STATE"), text[0].index(worktree.ICONS["main"]))
+
+    def test_default_branch_follows_the_remote(self):
+        cwd = str(self.repo)
+        self.assertEqual(worktree.default_branch(cwd), "main")
+        git(self.repo, "remote", "add", "upstream", "https://example.invalid/repo.git")
+        git(self.repo, "update-ref", "refs/remotes/upstream/trunk", "HEAD")
+        git(self.repo, "symbolic-ref", "refs/remotes/upstream/HEAD", "refs/remotes/upstream/trunk")
+        self.assertEqual(worktree.default_branch(cwd), "upstream/trunk")
+        git(self.repo, "remote", "add", "origin", "https://example.invalid/repo.git")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
+        git(self.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+        self.assertEqual(worktree.default_branch(cwd), "origin/develop")
 
     def test_source_label(self):
         self.assertEqual(worktree.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
@@ -255,11 +286,54 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(len(worktree.worktrees(str(self.repo))), 1)
         git(self.repo, "rev-parse", "--verify", "refs/heads/gone")
 
-    def test_recent_commits(self):
-        commits = worktree.recent_commits(str(self.repo))
-        self.assertEqual(len(commits), 1)
-        self.assertEqual(commits[0][1], "initial")
-        self.assertEqual(worktree.recent_commits(str(self.repo / "missing")), [])
+    def test_recent_commits_prefers_commits_not_in_base(self):
+        description, commits = worktree.recent_commits(str(self.repo))
+        self.assertEqual((description, [c[1] for c in commits]), ("Recent commits", ["initial"]))
+        self.assertEqual(commits[0][2], "Test")
+        other = self.add("feature", "feature")
+        for message in ("one", "two"):
+            git(other, "-c", "user.name=Dev", "-c", "user.email=d@e", "commit", "-q", "--allow-empty", "-m", message)
+        description, commits = worktree.recent_commits(str(other), base="main")
+        self.assertEqual(description, "2 commits not in main")
+        self.assertEqual([(c[1], c[2]) for c in commits], [("two", "Dev"), ("one", "Dev")])
+        self.assertEqual(worktree.recent_commits(str(self.repo / "missing")), ("", []))
+
+    def test_ages(self):
+        now = 1_000_000_000
+        cases = {now: "now", now - 120: "2m", now - 3 * 3600: "3h", now - 2 * 86400: "2d", now - 15 * 86400: "2w",
+                 now - 70 * 86400: "2mo", now - 400 * 86400: "1y", None: ""}
+        for stamp, expected in cases.items():
+            self.assertEqual(worktree.short_age(stamp, now), expected)
+        head = git(self.repo, "rev-parse", "HEAD").stdout.decode().strip()
+        self.assertIn(head, worktree.commit_times(str(self.repo), [head]))
+        self.assertEqual(worktree.base_entries(str(self.repo))[0]["time"], worktree.commit_times(str(self.repo), [head])[head])
+
+    def test_pull_requests_keep_newest_per_branch(self):
+        mine = b'[{"number": 5, "state": "MERGED", "headRefName": "a", "isDraft": false}]'
+        everyone = b'[{"number": 9, "state": "OPEN", "headRefName": "a", "isDraft": true}, {"number": 7, "state": "CLOSED", "headRefName": "b", "isDraft": false}]'
+        with patch.object(worktree, "run", side_effect=[mine, everyone]):
+            prs = worktree.pull_requests("/repo")
+        self.assertEqual({k: v["number"] for k, v in prs.items()}, {"a": 9, "b": 7})
+        labels = [t for t, _ in worktree.badges({"worktree": "/nonexistent-but-ok", "pr": prs["a"], "dirty": False, "open": False})]
+        self.assertIn(worktree.ICONS["pr"] + " #9 draft", labels)
+        with patch.object(worktree, "run", side_effect=RuntimeError("not a GitHub repo")):
+            self.assertEqual(worktree.pull_requests("/repo"), {})
+
+    def test_open_in_background_and_split(self):
+        with patch.object(worktree, "windows_for_path", return_value=[]), patch.object(worktree, "repo_name", return_value="repo"), \
+                patch.object(worktree, "run", return_value=b'{"window_id": "window:bg"}') as run, patch.dict(worktree.STATE, {"navigated": False}):
+            self.assertEqual(worktree.open_tab("session:1", {"worktree": "/w/t", "branch": "refs/heads/t"}, focus=False), "window:bg")
+            run.assert_called_once_with("rex", "window", "new", "-s", "session:1", "repo - t", "-c", "/w/t", "--focus=false", "--json")
+            self.assertFalse(worktree.STATE["navigated"])
+        with patch.object(worktree, "windows_for_path", return_value=[{"window_id": "window:1"}]), patch.object(worktree, "run") as run:
+            self.assertIsNone(worktree.open_tab("session:1", {"worktree": "/w/t"}, focus=False))
+            run.assert_not_called()
+        with patch.object(worktree, "run") as run, patch.dict(worktree.STATE, {"navigated": False}):
+            worktree.open_split("session:1", {"worktree": "/w/t", "branch": "refs/heads/t"}, "block:origin")
+            run.assert_called_once_with("rex", "split", "-s", "session:1", "-b", "block:origin", "--split=right", "-c", "/w/t", "--label", "t")
+            self.assertTrue(worktree.STATE["navigated"])
+        with self.assertRaises(RuntimeError):
+            worktree.open_split("session:1", {"worktree": "/w/t"}, "")
 
     def test_fuzzy_filter_ranks_and_highlights(self):
         entries = [{"name": "fix/login-bug", "worktree": "/w/a"}, {"name": "feature/login", "worktree": "/w/b"},
@@ -285,8 +359,8 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "feature work")
         cwd = str(self.repo)
         branches = worktree.load_branches(cwd, worktree.worktrees(cwd))
-        self.assertEqual([b["label"] for b in branches["bases"]], ["feature", "main"])
-        plan = worktree.plan_branch(cwd, branches, "from main", None, branches["bases"][1])
+        self.assertEqual([b["label"] for b in branches["bases"]], ["main", "feature"])
+        plan = worktree.plan_branch(cwd, branches, "from main", None, branches["bases"][0])
         self.assertEqual(plan["action"], "create new branch from-main from main")
         worktree.create_worktree(cwd, plan)
         self.assertEqual(git(cwd, "rev-parse", "from-main").stdout, git(cwd, "rev-parse", "main").stdout)
