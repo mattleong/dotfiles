@@ -332,6 +332,82 @@ def recent_commits(path, count=5, base=None):
     return "Recent commits", commits
 
 
+def cache_path(repo, name):
+    root = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return Path(root) / "rex" / name / (worktree_root_key(repo) + ".json")
+
+
+def load_cached_prs(repo):
+    try:
+        with open(cache_path(repo, "worktree-prs")) as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, RuntimeError):
+        return {}
+
+
+def save_cached_prs(repo, prs):
+    try:
+        path = cache_path(repo, "worktree-prs")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(prs))
+        temporary.replace(path)
+    except (OSError, RuntimeError):
+        pass
+
+
+def copy_to_clipboard(text):
+    """Copy with pbcopy, wl-copy, or xclip, whichever exists."""
+    for command in (["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"]):
+        if shutil.which(command[0]):
+            subprocess.run(command, input=text.encode(), check=True)
+            return
+    raise RuntimeError("No clipboard command found (pbcopy, wl-copy, or xclip).")
+
+
+def open_editor(session, entry, client=None):
+    """Open the worktree in a new tab, typing your editor command into its interactive shell, where
+    $VISUAL or $EDITOR are set."""
+    args = {"window_label": tab_label(entry), "layout": {"block": {
+        "flavor": TERMINAL + ".shell",
+        "options": {"cwd": entry["worktree"], "initial_input": 'eval "${VISUAL:-${EDITOR:-vi}}" .\n'}}}}
+    created = run("rex", "api", "call", "-s", session, "session.new_window", json.dumps(args))
+    window_id = json.loads(created)["window_id"]
+    STATE["navigated"] = True
+    if client:
+        run("rex", "-C", client, "do", "session.select", f"session_id={session}", f"window_id={window_id}")
+
+
+def open_pull_request(repo, number):
+    run("gh", "pr", "view", str(number), "--web", cwd=repo)
+
+
+SORTS = ["git", "recent", "state"]
+
+
+def sort_entries(entries, mode):
+    """Order worktrees by Git's order, most recent commit first, or grouped by state."""
+    if mode == "recent":
+        return sorted(entries, key=lambda e: -(e.get("time") or 0))
+
+    def group(entry):
+        pr = (entry.get("pr") or {}).get("state")
+        if entry.get("main"):
+            return 0
+        if entry.get("dirty") is True:
+            return 1
+        if pr == "OPEN":
+            return 2
+        if cleanup_reason(entry):
+            return 4
+        return 3
+
+    if mode == "state":
+        return sorted(entries, key=group)
+    return list(entries)
+
+
 def pull_requests_enabled(repo):
     if not shutil.which("gh"):
         return False
@@ -461,11 +537,47 @@ def remove_worktree(repo, session, entry, windows, force=False, delete_branch=Fa
         except RuntimeError as error:
             problems.append(f"branch not deleted: {error}")
     try:
-        close_worktree_tabs(session, windows)
+        if windows:
+            close_worktree_tabs(session, windows)
     except (RuntimeError, OSError) as error:
         problems.append(f"a tab could not be closed: {error}")
     if problems:
         raise RuntimeError("Worktree removed, but " + "; ".join(problems))
+
+
+def cleanup_reason(entry):
+    """Why a worktree looks finished: its pull request merged or its remote branch was deleted."""
+    if entry.get("main") or "locked" in entry or missing(entry):
+        return None
+    pr = entry.get("pr")
+    if pr and pr.get("state") == "MERGED":
+        return f"#{pr['number']} merged"
+    if REMOTE_DELETED in (entry.get("track") or []):
+        return REMOTE_DELETED
+    return None
+
+
+def remove_many(repo, session, items):
+    """Remove several worktrees, closing their tabs at the end so the picker's own tab closes last.
+    items holds (entry, delete_branch) pairs. Returns (removed names, failure messages)."""
+    removed, failures, windows = [], [], {}
+    for entry, delete_branch in items:
+        try:
+            for window in windows_for_path(session, entry["worktree"]):
+                windows[window["window_id"]] = window
+            remove_worktree(repo, session, entry, [], delete_branch=delete_branch)
+            removed.append(entry["name"])
+        except (RuntimeError, OSError) as error:
+            if os.path.isdir(entry["worktree"]):
+                failures.append(f"{entry['name']}: {error}")
+            else:
+                removed.append(entry["name"])
+                failures.append(f"{entry['name']}: {error}")
+    try:
+        close_worktree_tabs(session, list(windows.values()))
+    except (RuntimeError, OSError) as error:
+        failures.append(f"a tab could not be closed: {error}")
+    return removed, failures
 
 
 def prune_worktrees(repo):
@@ -971,8 +1083,10 @@ class Manager:
         self.default = default_branch(self.repo)
         self.message, self.message_style = None, "red"
         self.commits = {}
-        self.prs, self.prs_loading = {}, False
+        self.prs, self.prs_loading, self.sort = {}, False, "git"
         self.show_prs = pull_requests_enabled(self.repo)
+        if self.show_prs:
+            self.prs = load_cached_prs(self.repo)  # Shown at once, then refreshed in the background.
         self.reload()
         if self.show_prs:
             self.load_prs()
@@ -981,8 +1095,11 @@ class Manager:
         """Fetch pull requests on a daemon thread; badges appear when they arrive."""
         def work():
             try:
-                self.prs = pull_requests(self.repo)
-                self.apply_prs()
+                prs = pull_requests(self.repo)
+                if prs:  # Keep the cached ones if gh failed, such as when offline.
+                    self.prs = prs
+                    self.apply_prs()
+                    save_cached_prs(self.repo, prs)
             finally:
                 self.prs_loading = False
         self.prs_loading = True
@@ -1046,7 +1163,7 @@ class Manager:
         while True:
             loading = self.prs_loading or any(PENDING in (e["dirty"], e["open"]) for e in self.entries)
             set_timeout(stdscr, 150 if loading else -1)
-            shown = filter_entries(self.entries, query)
+            shown = filter_entries(sort_entries(self.entries, self.sort), query)
             if selected not in shown:
                 selected = shown[0] if shown else None
             height, _ = stdscr.getmaxyx()
@@ -1057,8 +1174,9 @@ class Manager:
             widths = column_widths(self.entries)
 
             if not pending_input(stdscr):
+                sort_note = "" if self.sort == "git" else f" · sorted by {self.sort}"
                 rows = [[], [("Worktrees", style("bold")), ("  " + repo_name(self.repo), style("dim")),
-                             ("   " + self.summary(), style("dim"))],
+                             ("   " + self.summary() + sort_note, style("dim"))],
                         search_row(query, filtering, "/ to filter"), [], header_row(widths)]
                 for e in shown[top:top + capacity]:
                     rows.append(entry_row(e, e is selected, widths,
@@ -1076,7 +1194,9 @@ class Manager:
                 if filtering:
                     rows.append(help_row(("enter", "done"), ("esc", "clear")))
                 else:
+                    finished = sum(1 for e in self.entries if cleanup_reason(e))
                     rows.append(help_row(("enter", "open"), ("s", "split"), ("n", "new"), ("dd", "remove"),
+                                         *([("c", f"clean up ({finished})")] if finished else []),
                                          ("?", "help"), ("esc", "clear filter") if query else ("q", "quit")))
                 render(stdscr, rows, cursor=(2, 1 + qpos) if filtering else None)
 
@@ -1107,6 +1227,10 @@ class Manager:
                 else:
                     pending = "d"
                 continue
+            if pending == "g" and key == "p":
+                pending = None
+                self.open_pr(selected)
+                continue
             new_index, pending = motion(key, index, len(shown), capacity, pending)
             if new_index is not None:
                 selected = shown[new_index]
@@ -1119,7 +1243,12 @@ class Manager:
                     ("o", "open its tab in the background and stay here"),
                     ("n", "new worktree"),
                     ("dd", "remove the worktree"),
+                    ("c", "clean up worktrees with merged PRs or deleted remote branches"),
                     ("p", "prune missing worktrees"),
+                    ("e", "open the worktree in your editor, in a new tab"),
+                    ("gp", "open its pull request in the browser"),
+                    ("y / Y", "copy its path / branch name"),
+                    ("S", "sort: Git order, most recent, or by state"),
                     ("r", "refresh"),
                     ("/", "filter (fuzzy)"),
                     ("esc", "clear the filter, or quit"),
@@ -1147,6 +1276,30 @@ class Manager:
             elif key == "p":
                 self.prune()
                 selected, query = None, ""
+            elif key == "c":
+                if self.cleanup():
+                    return
+                selected, query = None, ""
+            elif key == "S":
+                self.sort = SORTS[(SORTS.index(self.sort) + 1) % len(SORTS)]
+                self.say(f"Sorted by {self.sort}" + (" order" if self.sort == "git" else ""), "dim")
+            elif key in ("y", "Y") and selected:
+                value = selected["worktree"] if key == "y" else selected["name"]
+                try:
+                    copy_to_clipboard(value)
+                    self.say("Copied " + ("path" if key == "y" else "branch") + ": " + value, "green")
+                except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+                    self.say(str(error))
+            elif key == "e" and selected:
+                if missing(selected):
+                    self.say("This worktree's directory is missing; press p to prune it.")
+                    continue
+                try:
+                    entry = selected
+                    self.busy("Opening editor…", lambda: open_editor(self.session, entry, self.client))
+                    return
+                except (RuntimeError, OSError) as error:
+                    self.say(str(error))
             elif key == "r":
                 path = selected["worktree"] if selected else None
                 self.reload()
@@ -1181,6 +1334,83 @@ class Manager:
                     return
                 except (RuntimeError, OSError) as error:
                     self.say(str(error))
+
+    def open_pr(self, entry):
+        pr = (entry or {}).get("pr")
+        if not pr:
+            self.say("No pull request found for this worktree." if self.show_prs
+                     else "Pull requests need the gh command.", "dim")
+            return
+        try:
+            self.busy(f"Opening #{pr['number']}…", lambda: open_pull_request(self.repo, pr["number"]))
+            self.say(f"Opened #{pr['number']} in the browser.", "green")
+        except (RuntimeError, OSError) as error:
+            self.say(str(error))
+
+    def cleanup(self):
+        """Offer to remove every finished worktree at once. Returns True if the picker should exit."""
+        candidates = [e for e in self.entries if cleanup_reason(e)]
+        if not candidates:
+            note = " (pull requests are still loading)" if self.prs_loading else ""
+            self.say("No worktrees with merged pull requests or deleted remote branches" + note + ".", "dim")
+            return False
+        stdscr, cursor = self.stdscr, 0
+        # Worktrees with uncommitted changes start unchecked, and are never force-removed here.
+        items = [{"entry": e, "checked": e.get("dirty") is not True} for e in candidates]
+        delete_branches = {"checked": False}
+        set_timeout(stdscr, -1)
+        name_width = min(40, max(len(e["name"]) for e in candidates))
+        while True:
+            rows = [[], [(f"Clean up {len(candidates)} finished worktree{'s' if len(candidates) != 1 else ''}",
+                          style("bold"))], [("Merged pull requests or deleted remote branches.", style("dim"))], []]
+            for i, item in enumerate(items):
+                entry = item["entry"]
+                name = entry["name"] if len(entry["name"]) <= name_width else entry["name"][:name_width - 1] + "…"
+                row = [pointer(i == cursor), ("[x] " if item["checked"] else "[ ] ", style("cyan")),
+                       (name.ljust(name_width), style("bold") if i == cursor else 0),
+                       ("  " + cleanup_reason(entry), style("magenta") if "merged" in cleanup_reason(entry) else style("red"))]
+                if entry.get("dirty") is True:
+                    row.append(("  " + ICONS["dirty"] + " uncommitted, can't be cleaned up", style("yellow")))
+                elif entry.get("open") is True:
+                    row.append(("  " + ICONS["tab"] + " its tab will close", style("dim")))
+                rows.append(Selected(row) if i == cursor else row)
+            rows.append([])
+            index = len(items)
+            branch_row = [pointer(cursor == index), ("[x] " if delete_branches["checked"] else "[ ] ", style("cyan")),
+                          ("Also delete their branches", 0), ("   (only ones with no unmerged commits)", style("dim"))]
+            rows.append(Selected(branch_row) if cursor == index else branch_row)
+            count = sum(i["checked"] for i in items)
+            rows += [[], help_row(("space", "toggle"), ("j/k", "move"), ("enter", f"remove {count}"), ("esc", "cancel"))]
+            render(stdscr, rows)
+            key = read_key(stdscr)
+            if key == ESCAPE:
+                return False
+            if key in ("j", curses.KEY_DOWN, "\x0e"):
+                cursor = min(len(items), cursor + 1)
+            elif key in ("k", curses.KEY_UP, "\x10"):
+                cursor = max(0, cursor - 1)
+            elif key == " ":
+                if cursor == len(items):
+                    delete_branches["checked"] = not delete_branches["checked"]
+                elif items[cursor]["entry"].get("dirty") is not True:
+                    items[cursor]["checked"] = not items[cursor]["checked"]
+            elif key in ENTER:
+                chosen = [i["entry"] for i in items if i["checked"]]
+                if not chosen:
+                    return False
+                break
+
+        def work():
+            pairs = [(e, delete_branches["checked"] and bool(merged_into(self.repo, e))) for e in chosen]
+            return remove_many(self.repo, self.session, pairs)
+
+        removed, failures = self.busy(f"Removing {len(chosen)} worktree{'s' if len(chosen) != 1 else ''}…", work)
+        if failures:
+            self.say(f"Removed {len(removed)}; " + "; ".join(failures))
+        else:
+            self.say(f"Removed {len(removed)} worktree{'s' if len(removed) != 1 else ''}.", "green")
+        self.reload()
+        return False
 
     def summary(self):
         counts = [(len(self.entries), "worktree"),

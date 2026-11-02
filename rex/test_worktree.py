@@ -143,6 +143,59 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
         self.assertEqual(worktree.default_branch(cwd), "origin/develop")
 
+    def test_cleanup_reason(self):
+        base = {"worktree": str(self.repo), "track": []}
+        self.assertEqual(worktree.cleanup_reason({**base, "pr": {"number": 3, "state": "MERGED"}}), "#3 merged")
+        self.assertEqual(worktree.cleanup_reason({**base, "track": ["remote deleted"]}), "remote deleted")
+        self.assertIsNone(worktree.cleanup_reason({**base, "pr": {"number": 3, "state": "OPEN"}}))
+        self.assertIsNone(worktree.cleanup_reason({**base, "main": True, "track": ["remote deleted"]}))
+        self.assertIsNone(worktree.cleanup_reason({**base, "locked": "", "track": ["remote deleted"]}))
+
+    def test_remove_many_closes_tabs_once_at_the_end(self):
+        one, two = self.add("one", "one"), self.add("two", "two")
+        entries = {e.get("branch"): {**e, "name": e["branch"][11:]} for e in worktree.worktrees(str(self.repo))[1:]}
+        window = {"window_id": "window:shared"}
+        with patch.object(worktree, "windows_for_path", return_value=[window]), \
+                patch.object(worktree, "close_worktree_tabs") as close:
+            removed, failures = worktree.remove_many(str(self.repo), "session:1",
+                                                     [(entries["refs/heads/one"], True), (entries["refs/heads/two"], False)])
+        self.assertEqual((sorted(removed), failures), (["one", "two"], []))
+        close.assert_called_once_with("session:1", [window])
+        self.assertFalse(one.exists() or two.exists())
+        self.assertNotEqual(subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--verify", "--quiet", "refs/heads/one"]).returncode, 0)
+        git(self.repo, "rev-parse", "--verify", "refs/heads/two")
+
+    def test_sort_modes(self):
+        entries = [{"name": "main", "main": True, "time": 1, "worktree": "/a"},
+                   {"name": "old", "time": 2, "worktree": "/b", "pr": {"state": "MERGED", "number": 1}},
+                   {"name": "dirty", "time": 3, "dirty": True, "worktree": "/c"},
+                   {"name": "open", "time": 4, "worktree": "/d", "pr": {"state": "OPEN", "number": 2}}]
+        names = lambda mode: [e["name"] for e in worktree.sort_entries(entries, mode)]
+        self.assertEqual(names("git"), ["main", "old", "dirty", "open"])
+        self.assertEqual(names("recent"), ["open", "dirty", "old", "main"])
+        with patch.object(worktree, "missing", return_value=False):
+            self.assertEqual(names("state"), ["main", "dirty", "open", "old"])
+
+    def test_pull_request_cache_round_trip(self):
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": str(Path(self.tmp.name) / "cache")}):
+            self.assertEqual(worktree.load_cached_prs(str(self.repo)), {})
+            worktree.save_cached_prs(str(self.repo), {"a": {"number": 1, "state": "OPEN"}})
+            self.assertEqual(worktree.load_cached_prs(str(self.repo)), {"a": {"number": 1, "state": "OPEN"}})
+
+    def test_copy_and_editor(self):
+        with patch.object(worktree.shutil, "which", side_effect=lambda name: name == "pbcopy"), \
+                patch.object(worktree.subprocess, "run") as run:
+            worktree.copy_to_clipboard("/w/path")
+            run.assert_called_once_with(["pbcopy"], input=b"/w/path", check=True)
+        with patch.object(worktree.shutil, "which", return_value=None), self.assertRaises(RuntimeError):
+            worktree.copy_to_clipboard("x")
+        with patch.object(worktree, "repo_name", return_value="repo"), \
+                patch.object(worktree, "run", return_value=b'{"window_id": "window:e"}') as run, patch.dict(worktree.STATE, {"navigated": False}):
+            worktree.open_editor("session:1", {"worktree": "/w/t", "branch": "refs/heads/t"})
+            options = json.loads(run.call_args_list[0][0][6])["layout"]["block"]["options"]
+            self.assertEqual(options["initial_input"], 'eval "${VISUAL:-${EDITOR:-vi}}" .\n')
+            self.assertTrue(worktree.STATE["navigated"])
+
     def test_source_label(self):
         self.assertEqual(worktree.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
         self.assertEqual(worktree.source_label({"kind": "remote", "name": "feat/a", "ref": "origin/feat/a"}), "remote")
