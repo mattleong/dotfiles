@@ -160,7 +160,8 @@ def show_tab(client, session_id, window_id):
 
 
 def tab_label(entry):
-    return f"{worktrees.repo_name(entry['worktree'])} - {worktrees.branch_name(entry)}"[:128]
+    """Just the branch: worktree tabs live in their repository's session, which names the repository."""
+    return worktrees.branch_name(entry)[:128]
 
 
 def open_tab(session, entry, client=None, setup=None, focus=True, terminals=None):

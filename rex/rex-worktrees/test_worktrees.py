@@ -439,7 +439,7 @@ class WorktreeTests(unittest.TestCase):
                 patch.object(util, "run", rex), patch.dict(util.STATE, {"navigated": False, "repo_sessions": []}):
             self.assertEqual(tabs.open_tab("session:1", {"worktree": "/w/t", "branch": "refs/heads/t"}, focus=False), "window:new")
             args, request = rex.request("session.new_window")
-            self.assertEqual((args[4], request["focus"], request["window_label"]), ("session:repo", False, "repo - t"))
+            self.assertEqual((args[4], request["focus"], request["window_label"]), ("session:repo", False, "t"))
             self.assertFalse(util.STATE["navigated"])
         with patch.object(tabs, "windows_for_path", return_value=[{"window_id": "window:1"}]), patch.object(util, "run") as run:
             self.assertIsNone(tabs.open_tab("session:1", {"worktree": "/w/t"}, focus=False))
@@ -531,7 +531,7 @@ class WorktreeTests(unittest.TestCase):
             tabs.open_tab("session:1", {"worktree": "/tmp/test", "branch": "refs/heads/topic"}, "client:app")
             # No session for the repository yet, so one is created, named after it.
             _, request = rex.request("session.create")
-            self.assertEqual((request["label"], request["initial_windows"][0]["window_label"]), ("dotfiles", "dotfiles - topic"))
+            self.assertEqual((request["label"], request["initial_windows"][0]["window_label"]), ("dotfiles", "topic"))
             self.assertEqual(rex.calls[-1], ("rex", "-C", "client:app", "do", "session.select",
                                              "session_id=session:repo", "window_id=window:first"))
             self.assertIn("session:repo", util.STATE["repo_sessions"])
@@ -573,7 +573,7 @@ class WorktreeTests(unittest.TestCase):
     def test_repo_name_comes_from_main_worktree(self):
         other = self.add("elsewhere", "topic")
         self.assertEqual(worktrees.repo_name(str(other)), "repo with spaces")
-        self.assertEqual(tabs.tab_label({"worktree": str(other), "branch": "refs/heads/topic"}), "repo with spaces - topic")
+        self.assertEqual(tabs.tab_label({"worktree": str(other), "branch": "refs/heads/topic"}), "topic")
 
 
 if __name__ == "__main__":
