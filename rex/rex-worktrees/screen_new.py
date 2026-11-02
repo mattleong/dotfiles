@@ -82,7 +82,9 @@ class NewScreens:
                 if filtering:
                     rows.append(ui.help_row(*ui.TYPING_FOOTER))
                 else:
-                    rows.append(ui.footer(enter="select", move=True, slash="filter", clear_filter=bool(text)))
+                    has_pr = index and self.prs.get(items[index]["name"])
+                    rows.append(ui.footer(enter="select", move=True, slash="filter", clear_filter=bool(text),
+                                          actions=[("gp", "open PR")] if has_pr else []))
                 ui.render(stdscr, rows, cursor=(2, tpos) if filtering else None)
             key = keyboard.read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:
@@ -105,6 +107,12 @@ class NewScreens:
                         # Keep the first match selected while typing.
                         text, index = new_text, 1 if new_text.strip() else 0
                 continue
+            if pending == "g" and key == "p":
+                pending = None
+                if index:
+                    self.open_pr({"pr": self.prs.get(items[index]["name"])}, flash)
+                keyboard.set_timeout(stdscr, flash.wait(-1))
+                continue
             new_index, pending = keyboard.motion(key, index, len(items), capacity, pending)
             if new_index is not None:
                 index = new_index
@@ -115,6 +123,7 @@ class NewScreens:
                     ("enter / l", "create a worktree for the selected branch"),
                     ("", "or, on the first row, create a new branch"),
                     ("/", "filter existing branches"),
+                    ("gp", "open the branch's pull request in the browser"),
                     ("esc", "clear the filter, or go back"),
                     ("q", "go back"),
                 ])])

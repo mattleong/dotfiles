@@ -56,6 +56,7 @@ class ListScreen:
                     finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e))
                     rows.append(ui.footer(enter="open", move=True, slash="filter", back="quit", clear_filter=bool(query),
                                           actions=[("s", "split"), ("n", "new"), ("dd", "remove")]
+                                          + ([("gp", "open PR")] if (selected or {}).get("pr") else [])
                                           + ([("c", f"clean up ({finished})")] if finished else [])))
                 ui.render(stdscr, rows, cursor=(2, qpos) if filtering else None)
 
@@ -197,17 +198,19 @@ class ListScreen:
                 except (RuntimeError, OSError) as error:
                     self.say(str(error))
 
-    def open_pr(self, entry):
+    def open_pr(self, entry, flash=None):
+        """Open the pull request for a worktree or branch in the browser."""
+        flash = flash or self.flash
         pr = (entry or {}).get("pr")
         if not pr:
-            self.say("No pull request found for this worktree." if self.show_prs
-                     else "Pull requests need the gh command.", "dim")
+            flash.set("No pull request found for this branch." if self.show_prs
+                      else "Pull requests need the gh command.", "dim")
             return
         try:
             self.busy(f"Opening #{pr['number']}…", lambda: github.open_pull_request(self.repo, pr["number"]))
-            self.say(f"Opened #{pr['number']} in the browser.", "green")
+            flash.set(f"Opened #{pr['number']} in the browser.", "green")
         except (RuntimeError, OSError) as error:
-            self.say(str(error))
+            flash.set(str(error))
 
     def summary(self):
         counts = [(len(self.entries), "worktree"),
