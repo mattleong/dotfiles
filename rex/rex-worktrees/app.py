@@ -1,6 +1,7 @@
 """The picker's state and background loading, shared by every screen."""
 import os
 import threading
+import time
 
 import actions
 import branching
@@ -15,6 +16,7 @@ import util
 import worktrees
 
 
+MESSAGE_SECONDS = 4
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -27,11 +29,12 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
         raw = worktrees.worktrees(cwd)
         self.repo = raw[0]["worktree"]
         self.label = worktrees.repo_label(self.repo)
+        util.STATE["label"] = self.label  # For screens drawn outside the Manager, such as help.
         self.default = None  # Filled in by a background thread; previews use it once it's known.
         self.terminals = None  # The latest scan of open tabs; None means scan again when needed.
         self.session_known = False
         threading.Thread(target=self.load_default, daemon=True).start()
-        self.message, self.message_style = None, "red"
+        self.message, self.message_style, self.message_time = None, "red", 0.0
         self.commits = {}
         self.prs, self.prs_loading, self.sort = {}, False, "git"
         self.show_prs = github.pull_requests_enabled(self.repo)
@@ -170,4 +173,14 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
         return tabs.windows_for_path(self.session, entry["worktree"], self.terminals)
 
     def say(self, text, tone="red"):
-        self.message, self.message_style = text, tone
+        self.message, self.message_style, self.message_time = text, tone, time.monotonic()
+
+    def message_left(self):
+        """Seconds until the message fades: errors stay a little longer. Clears it once expired."""
+        if not self.message:
+            return None
+        left = (MESSAGE_SECONDS * (2 if self.message_style == "red" else 1)) - (time.monotonic() - self.message_time)
+        if left <= 0:
+            self.message = None
+            return None
+        return left

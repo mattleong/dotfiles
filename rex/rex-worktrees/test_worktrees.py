@@ -73,7 +73,12 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual([os.path.realpath(e["worktree"]) for e in entries], [os.path.realpath(self.repo), os.path.realpath(other)])
         self.assertEqual(entries[1]["branch"], "refs/heads/feature/test")
         self.assertEqual(branching.new_path(str(self.repo), "another/test"), branching.new_path(str(other), "another/test"))
-        self.assertNotEqual(branching.new_path(str(self.repo), "a/b"), branching.new_path(str(self.repo), "a-b"))
+        # Folders are named after the branch; a hash is added only when that folder is taken.
+        first = branching.new_path(str(self.repo), "a/b")
+        self.assertEqual(first.name, "a-b")
+        first.mkdir(parents=True)
+        second = branching.new_path(str(self.repo), "a-b")
+        self.assertTrue(second.name.startswith("a-b-") and len(second.name) == len("a-b-") + 8)
 
     def test_entries_have_status_and_current_worktree(self):
         other = self.add("other", "other")
@@ -340,7 +345,11 @@ class WorktreeTests(unittest.TestCase):
                 self.assertEqual(head, plan["branch"])
         upstream = git(self.repo, "rev-parse", "--abbrev-ref", "remote-only@{upstream}").stdout.decode().strip()
         self.assertEqual(upstream, "origin/remote-only")
-        self.assertIn("Destination already exists", branching.plan_branch(cwd, {**branches, "checked_out": {}, "local": set()}, "new branch")["error"])
+        retry = branching.plan_branch(cwd, {**branches, "checked_out": {}, "local": set()}, "new branch")
+        self.assertNotEqual(retry["path"], plans[0]["path"])  # The plain name is taken, so it gets a hash.
+        retry["path"].mkdir(parents=True)
+        self.assertIn("Destination already exists",
+                      branching.plan_branch(cwd, {**branches, "checked_out": {}, "local": set()}, "new branch")["error"])
 
     def test_removal_problems_and_changed_files(self):
         dirty = self.add("dirty", "dirty")

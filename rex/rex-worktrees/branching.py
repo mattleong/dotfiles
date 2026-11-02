@@ -34,10 +34,14 @@ def worktree_root_key(cwd):
 
 
 def new_path(cwd, branch):
-    repo_key = worktree_root_key(cwd)
+    """Where a new worktree goes: a folder named after the branch, or, when that folder already
+    exists (for example a/b and a-b both make a-b), the name plus a short hash of the branch."""
+    folder = Path.home() / ".local/share/rex/worktrees" / worktree_root_key(cwd)
     slug = branch.replace("/", "-")[:100]
-    suffix = hashlib.sha256(branch.encode()).hexdigest()[:8]
-    return Path.home() / ".local/share/rex/worktrees" / repo_key / (slug + "-" + suffix)
+    path = folder / slug
+    if path.exists():
+        path = folder / (slug + "-" + hashlib.sha256(branch.encode()).hexdigest()[:8])
+    return path
 
 
 RECENT_DAYS = 30
@@ -57,11 +61,11 @@ def load_branches(cwd, entries, now=None):
     remotes = sorted(util.git_text(cwd, "remote").splitlines(), key=len, reverse=True)
     remote = {}
     remote_refs = []
-    for ref, _ in refs("refs/remotes"):
+    for ref, stamp in refs("refs/remotes"):
         for name in remotes:
             if ref.startswith(name + "/") and ref != name + "/HEAD":
                 remote.setdefault(ref[len(name) + 1:], []).append(ref)
-                remote_refs.append((ref[len(name) + 1:], ref))
+                remote_refs.append((ref[len(name) + 1:], ref, stamp))
                 break
     head = util.git_text(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     if head == "HEAD":
@@ -73,10 +77,10 @@ def load_branches(cwd, entries, now=None):
         bases.insert(0, {"ref": default, "label": default})
     cutoff = (time.time() if now is None else now) - RECENT_DAYS * 86400
     available = [(name, stamp) for name, stamp in local if name not in checked_out]
-    suggestions = [{"name": n, "ref": n, "kind": "local"} for n, stamp in available if stamp >= cutoff]
-    suggestions += [{"name": name, "ref": ref, "kind": "remote"} for name, ref in remote_refs
+    suggestions = [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in available if stamp >= cutoff]
+    suggestions += [{"name": name, "ref": ref, "kind": "remote", "time": stamp} for name, ref, stamp in remote_refs
                     if name not in local_names and name not in checked_out]
-    suggestions += [{"name": n, "ref": n, "kind": "local"} for n, stamp in available if stamp < cutoff]
+    suggestions += [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in available if stamp < cutoff]
     return {"local": local_names, "remote": remote, "checked_out": checked_out,
             "suggestions": suggestions, "head": head, "bases": bases}
 

@@ -21,13 +21,17 @@ class ListScreen:
         while True:
             loading = self.prs_loading or self.details_loading or any(
                 util.PENDING in (e["dirty"], e["open"]) for e in self.entries)
-            keyboard.set_timeout(stdscr, 150 if loading else -1)
+            wait = 150 if loading else -1
+            left = self.message_left()
+            if left is not None:  # Wake up to fade the message.
+                wait = int(left * 1000) + 50 if wait < 0 else min(wait, int(left * 1000) + 50)
+            keyboard.set_timeout(stdscr, wait)
             shown = matching.filter_entries(matching.sort_entries(self.entries, self.sort), query)
             if selected not in shown:
                 selected = shown[0] if shown else None
             height, _ = stdscr.getmaxyx()
             preview_rows = 7 if height >= 22 else 0
-            capacity = max(1, height - 8 - preview_rows)
+            capacity = max(1, height - 8 - preview_rows - (1 if preview_rows else 0))
             index = shown.index(selected) if selected in shown else 0
             top = min(max(top, index - capacity + 1), index, max(0, len(shown) - capacity))
             widths = ui.column_widths(self.entries)
@@ -41,9 +45,10 @@ class ListScreen:
                                           matching.match_entry(e, query) if query.strip() else None))
                 if not shown:
                     rows.append([("No matching worktrees", ui.style("dim"))])
-                rows += [[]] * max(0, height - len(rows) - 3 - preview_rows)
                 if preview_rows:
-                    rows += self.preview(selected)
+                    # The preview sits right under the list, not at the bottom of the pane.
+                    rows += [[]] + self.preview(selected)
+                rows += [[]] * max(0, height - len(rows) - 2)
                 if self.message:
                     icon = {"green": "ok", "red": "error"}.get(self.message_style, "info")
                     rows.append([(util.ICONS[icon] + " " + self.message, ui.style(self.message_style))])

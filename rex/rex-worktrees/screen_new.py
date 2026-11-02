@@ -31,7 +31,7 @@ class NewScreens:
             plan = branching.plan_branch(cwd, branches, "", items[index]) if index else None
 
             height, _ = stdscr.getmaxyx()
-            capacity = max(1, height - 11)
+            capacity = max(1, height - 12)
             list_index = max(0, index - 1)
             top = min(max(top, list_index - capacity + 1), list_index, max(0, len(existing) - capacity))
 
@@ -39,18 +39,32 @@ class NewScreens:
                 rows = [[], ui.header("New worktree", self.label),
                         ui.search_row(text, filtering, "/ to filter"), [],
                         (ui.Selected if index == 0 else list)([ui.pointer(index == 0), ("+ Create a new branch…", ui.style("green") | (ui.style("bold") if index == 0 else 0))]),
-                        [], [(f"EXISTING BRANCHES ({len(existing)})", ui.style("dim") | ui.style("bold"))]]
-                ref_width = min(60, max([len(s["name"]) for s in existing[top:top + capacity]] + [10]))
-                for i, item in enumerate(existing[top:top + capacity], top + 1):
+                        []]
+                # The same columns as the worktree list: branch, age, pull request, then where it is.
+                visible = existing[top:top + capacity]
+                ref_width = min(40, max([len(s["name"]) for s in visible] + [10]))
+                prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}) for s in visible]
+                pr_width = max([ui.cell_width(c) for c in prs] + [0])
+                pr_width = max(pr_width, 2) if pr_width else 0
+                dim = ui.style("dim") | ui.style("bold")
+                rows.append([(f"EXISTING BRANCHES ({len(existing)})", dim)])
+                rows.append([("  " + "BRANCH".ljust(ref_width + 2), dim), ("AGE  ", dim)]
+                            + ([("PR".ljust(pr_width + 3), dim)] if pr_width else []) + [("FROM", dim)])
+                for i, (item, pr) in enumerate(zip(visible, prs), top + 1):
                     hits = set()
                     for token in text.lower().split():
                         hits.update((matching.fuzzy(token, item["name"]) or (0, []))[1])
-                    ref = item["name"][:ref_width]
+                    name = item["name"] if len(item["name"]) <= ref_width else item["name"][:ref_width - 1] + "…"
                     row = [ui.pointer(i == index)]
-                    row += ui.highlighted(ref, hits, ui.style("bold") if i == index else 0)
-                    row += [(" " * (ref_width - len(ref) + 3), 0),
-                            (util.ICONS[item["kind"]] + " " + branching.source_label(item),
-                             ui.style("blue") if item["kind"] == "remote" else ui.style("dim"))]
+                    row += ui.highlighted(name, {h for h in hits if h < len(name)}, ui.style("bold") if i == index else 0)
+                    row += [(" " * (ref_width - len(name) + 2), 0),
+                            (ui.short_age(item.get("time")).rjust(3) + "  ", ui.style("dim"))]
+                    if pr_width:
+                        for j, (label, attr) in enumerate(pr):
+                            row += ([(" · ", ui.style("dim"))] if j else []) + [(label, attr)]
+                        row.append((" " * (pr_width - ui.cell_width(pr) + 3), 0))
+                    row.append((util.ICONS[item["kind"]] + " " + branching.source_label(item),
+                                ui.style("blue") if item["kind"] == "remote" else ui.style("dim")))
                     rows.append(ui.Selected(row) if i == index else row)
                 if not existing:
                     rows.append([("  No matching branches" if text.strip() else "  No other branches", ui.style("dim"))])

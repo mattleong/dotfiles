@@ -246,15 +246,31 @@ CLOSE_HELP = ("q / esc", "go back, or cancel")
 
 
 def show_help(stdscr, title, sections):
-    rows = [[], [(title + " — keys", style("bold"))]]
+    rows = [[], header(title + " — keys", util.STATE.get("label", ""))]
     for heading, items in sections:
         rows += [[], [(heading, style("dim"))]]
         width = max(len(k) for k, _ in items)
         rows += [[(k.ljust(width), style("bold")), ("   " + label, 0)] for k, label in items]
-    rows += [[], [("Press any key to go back.", style("dim"))]]
+    rows += [[], help_row(("q", "back"))]
+    wait_to_close(stdscr, rows)
+
+
+def show_error(stdscr, message):
+    rows = [[], header("Worktree operation failed", util.STATE.get("label", "")), [],
+            [(util.ICONS["error"] + " " + message, style("red"))], [], help_row(("q", "close"))]
+    wait_to_close(stdscr, rows)
+
+
+def wait_to_close(stdscr, rows):
+    """Show rows until q, esc, enter, or ? is pressed, like closing any other screen."""
     keyboard.set_timeout(stdscr, -1)
     render(stdscr, rows)
-    keyboard.read_key(stdscr)
+    while True:
+        key = keyboard.read_key(stdscr)
+        if key == curses.KEY_RESIZE:
+            render(stdscr, rows)
+        elif key in keyboard.CLOSE or key in keyboard.ENTER or key == "?":
+            return
 
 
 def confirm(stdscr, title, repo, lines, keys, enter, help_items):

@@ -30,11 +30,8 @@ def main(stdscr, mode, cwd, session, client="", origin=""):
     except keyboard.FocusLost:
         util.STATE["navigated"] = True  # Focus already moved where the user wanted it.
     except (RuntimeError, OSError, UnicodeError, ValueError) as error:
-        keyboard.set_timeout(stdscr, -1)
-        ui.render(stdscr, [[], [("Worktree operation failed", ui.style("red") | ui.style("bold"))], [],
-                        [(str(error), 0)], [], [("Press any key to close.", ui.style("dim"))]])
         try:
-            keyboard.read_key(stdscr)
+            ui.show_error(stdscr, str(error))
         except keyboard.FocusLost:
             util.STATE["navigated"] = True
 
