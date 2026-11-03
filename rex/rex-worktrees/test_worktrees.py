@@ -128,6 +128,10 @@ class WorktreeTests(unittest.TestCase):
             screen = Screen(["\x1b", "[", "O"])
             with patch.object(tabs, "picker_focused", return_value=False), self.assertRaises(keyboard.FocusLost):
                 keyboard.read_key(screen)
+        with patch.dict(util.STATE, {"session": "session:1", "phone": True}):
+            screen = Screen(["\x1b", "[", "O"])
+            with patch.object(tabs, "picker_focused", return_value=False):
+                self.assertIsNone(keyboard.read_key(screen))  # Swiping past other panes on a phone.
             screen = Screen(["\x1b"])
             self.assertEqual(keyboard.read_key(screen), "\x1b")
             screen = Screen(["\x1b", "x"])

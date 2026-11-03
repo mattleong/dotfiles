@@ -202,6 +202,15 @@ def open_editor(session, entry, client=None):
     show_tab(client, session_id, window_id)
 
 
+def swipes_between_panes(client):
+    """Whether the client shows one pane at a time, as Rex's iPhone app does. There the picker
+    isn't a floating pane but one more pane to swipe to, past the others."""
+    if not client:
+        return False
+    found = json.loads(util.run("rex", "api", "call", "client.inspect", json.dumps({"client_id": client})))
+    return (found.get("client") or {}).get("info", {}).get("platform") == "ios"
+
+
 def picker_focused(session):
     """Whether this picker's pane is still the session's focused pane."""
     picker = os.environ.get("REX_BLOCK")

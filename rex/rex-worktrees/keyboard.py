@@ -95,7 +95,8 @@ def read_key(stdscr):
     """Return the next key, or None when the input timeout passes first or after a focus event.
 
     The terminal reports focus changes as ESC [ I and ESC [ O. Losing focus to another pane raises
-    FocusLost; losing it because the whole app went to the background doesn't."""
+    FocusLost; losing it because the whole app went to the background doesn't, and neither does
+    swiping past other panes on a phone to reach the picker."""
     try:
         key = stdscr.get_wch()
     except curses.error:
@@ -113,7 +114,9 @@ def read_key(stdscr):
         if follow[:1] == ["["] and follow[1:] in (["I"], ["O"]):
             if follow[1] == "O" and util.STATE.get("session"):
                 try:
-                    focused = tabs.picker_focused(util.STATE["session"])
+                    if "phone" not in util.STATE:
+                        util.STATE["phone"] = tabs.swipes_between_panes(util.STATE.get("client"))
+                    focused = util.STATE["phone"] or tabs.picker_focused(util.STATE["session"])
                 except (RuntimeError, ValueError, OSError):
                     focused = True
                 if not focused:

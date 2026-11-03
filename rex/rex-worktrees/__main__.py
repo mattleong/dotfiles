@@ -17,6 +17,7 @@ def main(stdscr, mode, cwd, session, client="", origin=""):
     ui.init_colors()
     stdscr.keypad(True)
     util.STATE["session"] = session
+    util.STATE["client"] = client
     # Ask the terminal to report focus changes, so the picker closes when another pane is focused.
     sys.stdout.write("\x1b[?1004h")
     sys.stdout.flush()
