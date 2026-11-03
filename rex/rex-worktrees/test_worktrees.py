@@ -170,6 +170,38 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(text[0].index(util.ICONS["main"]), text[1].index(util.ICONS["dirty"]))
         self.assertEqual(header.index("STATE"), text[0].index(util.ICONS["main"]))
 
+    def test_narrow_panes_narrow_the_branch_then_turn_compact(self):
+        path = str(self.repo)
+        entries = [{"name": "main", "worktree": path, "main": True, "open": False, "dirty": True, "track": []},
+                   {"name": "feature/a-long-branch-name", "worktree": path, "open": False, "dirty": False,
+                    "track": ["2 ahead"], "pr": {"number": 12, "state": "OPEN"}}]
+        full = ui.column_widths(entries)
+        self.assertFalse(full["compact"])
+        narrowed = ui.column_widths(entries, 92)
+        self.assertFalse(narrowed["compact"])
+        self.assertLess(narrowed["BRANCH"], full["BRANCH"])
+        compact = ui.column_widths(entries, 40)
+        self.assertTrue(compact["compact"])
+        for widths, space in ((narrowed, 92), (compact, 40)):
+            for entry in entries:
+                row = ui.entry_row(entry, False, widths)
+                self.assertLessEqual(len("".join(t for t, _ in row[:-1]).rstrip()), space)
+        text = "".join(t for t, _ in ui.entry_row(entries[1], False, compact))
+        self.assertTrue(text.rstrip().endswith(f"{util.ICONS['pr']}#12 {util.ICONS['ahead']}2"))
+
+    def test_rows_fit_the_pane(self):
+        hints = ui.footer(enter="open", move=True, slash="filter", actions=[("s", "split"), ("n", "new")])
+        keys = lambda width: [t for t, _ in ui.fit(hints, width)][::2]
+        self.assertEqual(keys(200), ["j/k", "/", "enter", "s", "n", "?", "q"])
+        self.assertEqual(keys(49), ["/", "enter", "s", "?", "q"])
+        self.assertEqual(keys(30), ["/", "enter", "?"])
+        header = ui.header("Worktrees", "repo", "4 worktrees")
+        self.assertEqual([t for t, _ in ui.fit(header, 16)], ["Worktrees", "  repo"])
+        # Cutting through text adds an ellipsis; cutting through padding doesn't.
+        self.assertEqual(ui.fit([("branch-name", 0), ("  ", 0), ("3d", 0)], 8), [("branch-…", 0)])
+        self.assertEqual(ui.fit([("branch", 0), ("     ", 0), ("3d", 0)], 8), [("branch", 0), ("  ", 0)])
+        self.assertEqual(ui.wrap("one two three", 8), ["one two", "three"])
+
     def test_default_branch_follows_the_remote(self):
         cwd = str(self.repo)
         self.assertEqual(worktrees.default_branch(cwd), "main")

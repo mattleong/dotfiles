@@ -27,7 +27,7 @@ class RemovalScreens:
         if merged:
             options.append({"id": "delete_branch", "checked": False,
                             "label": [("Also delete branch ", 0), (entry["name"], ui.style("bold")),
-                                      ("   (no unmerged commits)", ui.style("dim"))]})
+                                      ("   (no unmerged commits)", ui.style("dim"), 1)]})
         checked = self.removal_options(entry, files, windows, merged, options)
         if checked is None:
             return False
@@ -70,7 +70,8 @@ class RemovalScreens:
             if flash.row():
                 rows.append(flash.row())
             elif files and "force" not in checked:
-                rows.append([("check “Discard uncommitted changes” to remove", ui.style("dim"))])
+                rows += [[(line, ui.style("dim"))] for line in
+                         ui.wrap("check “Discard uncommitted changes” to remove", ui.space(stdscr))]
             rows.append(ui.footer(enter="remove", move=len(options) > 1, toggle=bool(options), back="cancel"))
             ui.render(stdscr, rows)
             key = keyboard.read_key(stdscr)
@@ -109,8 +110,10 @@ class RemovalScreens:
         items = [{"entry": e, "checked": e.get("dirty") is not True} for e in candidates]
         delete_branches = {"checked": False}
         keyboard.set_timeout(stdscr, -1)
-        name_width = min(40, max(len(e["name"]) for e in candidates))
         while True:
+            # Leave room for the reason beside each name; the notes after it drop out in a narrow pane.
+            reasons = max(len(worktrees.cleanup_reason(e)) for e in candidates)
+            name_width = max(6, min(40, max(len(e["name"]) for e in candidates), ui.space(stdscr) - 8 - reasons))
             title = f"Clean up {len(candidates)} finished worktree{'s' if len(candidates) != 1 else ''}"
             rows = [[], ui.header(title, self.label),
                     [("Merged pull requests or deleted remote branches.", ui.style("dim"))], []]
@@ -121,14 +124,14 @@ class RemovalScreens:
                        (name.ljust(name_width), ui.style("bold") if i == cursor else 0),
                        ("  " + worktrees.cleanup_reason(entry), ui.style("magenta") if "merged" in worktrees.cleanup_reason(entry) else ui.style("red"))]
                 if entry.get("dirty") is True:
-                    row.append(("  " + util.ICONS["dirty"] + " uncommitted, can't be cleaned up", ui.style("yellow")))
+                    row.append(("  " + util.ICONS["dirty"] + " uncommitted, can't be cleaned up", ui.style("yellow"), 1))
                 elif entry.get("open") is True:
-                    row.append(("  " + util.ICONS["tab"] + " its tab will close", ui.style("dim")))
+                    row.append(("  " + util.ICONS["tab"] + " its tab will close", ui.style("dim"), 1))
                 rows.append(ui.Selected(row) if i == cursor else row)
             rows.append([])
             index = len(items)
             branch_row = [ui.pointer(cursor == index), ("[x] " if delete_branches["checked"] else "[ ] ", ui.style("cyan")),
-                          ("Also delete their branches", 0), ("   (only ones with no unmerged commits)", ui.style("dim"))]
+                          ("Also delete their branches", 0), ("   (only ones with no unmerged commits)", ui.style("dim"), 1)]
             rows.append(ui.Selected(branch_row) if cursor == index else branch_row)
             count = sum(i["checked"] for i in items)
             rows += [[], ui.footer(enter=f"remove {count}", move=True, toggle=True, back="cancel")]

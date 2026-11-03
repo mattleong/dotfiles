@@ -33,7 +33,14 @@ class NewScreens:
             plan = branching.plan_branch(cwd, branches, "", items[index]) if index else None
 
             height, _ = stdscr.getmaxyx()
-            capacity = max(1, height - 12)
+            space = ui.space(stdscr)
+            # What enter does, wrapped in a narrow pane; the list gets the rows that are left.
+            if plan is not None and plan.get("error"):
+                action = [[(line, ui.style("red"))] for line in ui.wrap(util.ICONS["error"] + " " + plan["error"], space)]
+            else:
+                lines = ui.wrap("create a new branch" if plan is None else plan["action"], space - 7)
+                action = [[("enter: " if i == 0 else "       ", ui.style("dim")), (line, 0)] for i, line in enumerate(lines)]
+            capacity = max(1, height - 11 - len(action))
             list_index = max(0, index - 1)
             top = min(max(top, list_index - capacity + 1), list_index, max(0, len(existing) - capacity))
 
@@ -43,16 +50,32 @@ class NewScreens:
                         (ui.Selected if index == 0 else list)([ui.pointer(index == 0), ("+ Create a new branch…", ui.style("green") | (ui.style("bold") if index == 0 else 0))]),
                         []]
                 # The same columns as the worktree list: branch, age, pull request, then where it is.
+                # In a narrow pane, the branch column narrows, then rows turn compact: the pull
+                # request's number and the source's icon.
                 visible = existing[top:top + capacity]
-                ref_width = min(40, max([len(s["name"]) for s in visible] + [10]))
+                longest = max([len(s["name"]) for s in visible] + [10])
+                ref_width = min(40, longest)
                 prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}) for s in visible]
+                sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s) for s in visible]
                 pr_width = max([ui.cell_width(c) for c in prs] + [0])
                 pr_width = max(pr_width, 2) if pr_width else 0
+                rest = 2 + 2 + 5 + (pr_width + 3 if pr_width else 0) + max([len(s) for s in sources] + [4])
+                compact = rest + ref_width > space and space - rest < min(ui.MIN_BRANCH, longest)
+                if compact:
+                    prs = [ui.short_cell(c) for c in prs]
+                    sources = [s[:1] for s in sources]
+                    pr_width = max([ui.cell_width(c, 1) for c in prs] + [0])
+                    ref_width = max(6, min(longest, space - 2 - 2 - 5 - (pr_width + 2 if pr_width else 0) - 1))
+                elif rest + ref_width > space:
+                    ref_width = space - rest
+                gap = 2 if compact else 3
                 dim = ui.style("dim") | ui.style("bold")
                 rows.append(ui.section(f"Existing branches ({len(existing)})"))
-                rows.append([("  " + "BRANCH".ljust(ref_width + 2), dim), ("AGE  ", dim)]
-                            + ([("PR".ljust(pr_width + 3), dim)] if pr_width else []) + [("FROM", dim)])
-                for i, (item, pr) in enumerate(zip(visible, prs), top + 1):
+                header = [("  " + "BRANCH".ljust(ref_width + 2), dim), ("AGE  ", dim)]
+                if not compact:
+                    header += ([("PR".ljust(pr_width + 3), dim)] if pr_width else []) + [("FROM", dim)]
+                rows.append(header)
+                for i, (item, pr, source) in enumerate(zip(visible, prs, sources), top + 1):
                     hits = set()
                     for token in text.lower().split():
                         hits.update((matching.fuzzy(token, item["name"]) or (0, []))[1])
@@ -62,22 +85,15 @@ class NewScreens:
                     row += [(" " * (ref_width - len(name) + 2), 0),
                             (ui.short_age(item.get("time")).rjust(3) + "  ", ui.style("dim"))]
                     if pr_width:
-                        for j, (label, attr) in enumerate(pr):
-                            row += ([(" · ", ui.style("dim"))] if j else []) + [(label, attr)]
-                        row.append((" " * (pr_width - ui.cell_width(pr) + 3), 0))
-                    row.append((util.ICONS[item["kind"]] + " " + branching.source_label(item),
-                                ui.style("blue") if item["kind"] == "remote" else ui.style("dim")))
+                        row += ui.joined(pr, " " if compact else " · ")
+                        row.append((" " * (pr_width - ui.cell_width(pr, 1 if compact else 3) + gap), 0))
+                    row.append((source, ui.style("blue") if item["kind"] == "remote" else ui.style("dim")))
                     rows.append(ui.Selected(row) if i == index else row)
                 if not existing:
                     rows.append([("  No matching branches" if text.strip() else "  No other branches", ui.style("dim"))])
-                rows += [[]] * max(0, height - len(rows) - 4)
+                rows += [[]] * max(0, height - len(rows) - 3 - len(action))
                 rows.append([])
-                if plan is None:
-                    rows.append([("enter: ", ui.style("dim")), ("create a new branch", 0)])
-                elif plan.get("error"):
-                    rows.append([(util.ICONS["error"] + " " + plan["error"], ui.style("red"))])
-                else:
-                    rows.append([("enter: ", ui.style("dim")), (plan["action"], 0)])
+                rows += action
                 rows.append(flash.row())
                 if filtering:
                     rows.append(ui.help_row(*ui.TYPING_FOOTER))

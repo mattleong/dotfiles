@@ -30,7 +30,8 @@ class ListScreen:
             capacity = max(1, height - 8 - preview_rows)
             index = shown.index(selected) if selected in shown else 0
             top = min(max(top, index - capacity + 1), index, max(0, len(shown) - capacity))
-            widths = ui.column_widths(self.entries)
+            space = ui.space(stdscr)
+            widths = ui.column_widths(self.entries, space)
 
             if not keyboard.pending_input(stdscr):
                 sort_note = "" if self.sort == "git" else f" · sorted by {self.sort}"
@@ -43,7 +44,7 @@ class ListScreen:
                     rows.append([("No matching worktrees", ui.style("dim"))])
                 rows += [[]] * max(0, height - len(rows) - 3 - preview_rows)
                 if preview_rows:
-                    rows += self.preview(selected)  # Pinned to the bottom of the pane.
+                    rows += self.preview(selected, space, widths["compact"])  # Pinned to the bottom of the pane.
                 if self.flash.row():
                     rows.append(self.flash.row())
                 elif query.strip():
@@ -221,7 +222,9 @@ class ListScreen:
         parts += [f"{n} {label}" for n, label in counts[1:] if n]
         return " · ".join(parts)
 
-    def preview(self, entry):
+    def preview(self, entry, space, compact=False):
+        """The selected worktree's commits. Compact rows leave out the labels' words, so the
+        preview starts with them in full."""
         if entry is None:
             return [[]] * 7
         path, key = entry["worktree"], (entry["worktree"], self.default)
@@ -233,12 +236,16 @@ class ListScreen:
             rows = [ui.section("Commits", description + " · " + util.tilde(path))]
         else:
             rows = [ui.section("Recent commits", util.tilde(path))]
+        if compact and ui.badges(entry):
+            rows.insert(0, ui.joined(ui.badges(entry)))
         if worktrees.missing(entry):
             rows.append([(util.ICONS["missing"] + " Folder missing", ui.style("red"))])
         elif not commits:
             rows.append([("No commits", ui.style("dim"))])
-        author_width = min(16, max([len(c[2]) for c in commits] + [6]))
-        for sha, subject, author, stamp in commits[:5]:
-            rows.append([(sha, ui.style("yellow")), ("  " + ui.short_age(stamp).rjust(3), ui.style("dim")),
-                         ("  " + author[:author_width].ljust(author_width), ui.style("blue")), ("  " + subject, 0)])
+        # Authors only when there's room for them and a readable subject.
+        author_width = min(16, max([len(c[2]) for c in commits] + [6])) if space >= 72 else 0
+        for sha, subject, author, stamp in commits[:6 - len(rows)]:
+            rows.append([(sha, ui.style("yellow")), ("  " + ui.short_age(stamp).rjust(3), ui.style("dim"))]
+                        + ([("  " + author[:author_width].ljust(author_width), ui.style("blue"))] if author_width else [])
+                        + [("  " + subject, 0)])
         return rows + [[]] * (7 - len(rows))
