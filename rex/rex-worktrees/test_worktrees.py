@@ -7,16 +7,20 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import call, patch
 
 # The modules live next to this file, the way Rex runs them.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import actions  # noqa: E402
+import app  # noqa: E402
 import branching  # noqa: E402
 import github  # noqa: E402
 import keyboard  # noqa: E402
 import matching  # noqa: E402
+import screen_list  # noqa: E402
+import screen_remove  # noqa: E402
 import tabs  # noqa: E402
 import ui  # noqa: E402
 import util  # noqa: E402
@@ -85,7 +89,7 @@ class WorktreeTests(unittest.TestCase):
         (other / "untracked").write_text("changes")
         nested = other / "nested"
         nested.mkdir()
-        with patch.object(tabs, "terminal_cwds", return_value=[({"window_id": "w"}, str(other))]):
+        with patch.object(tabs, "terminal_cwds", return_value=[({"window_id": "w"}, str(other), "block:1")]):
             entries = actions.load_entries(str(nested), "session:1")
         main, current = entries
         self.assertTrue(main["main"])
@@ -161,13 +165,14 @@ class WorktreeTests(unittest.TestCase):
                     "open": False, "dirty": True, "track": ["2 behind"]}]
         widths = ui.column_widths(entries)
         self.assertEqual(widths["PR"], 0)
-        self.assertEqual(widths["BRANCH"], 40)
+        self.assertEqual(widths["BRANCH"], len(entries[1]["name"]))  # The full name, given the room.
         self.assertEqual(widths["SYNC"], len("x 2 behind"))
         rows = [ui.entry_row(e, False, widths) for e in entries]
         text = ["".join(t for t, _ in row) for row in rows]
         header = "".join(t for t, _ in ui.header_row(widths))
         self.assertNotIn("PR", header)
-        self.assertTrue(text[1][4:].startswith("a-very-long-branch-name-that-goes-past-…"))
+        self.assertTrue(text[1][4:].startswith(entries[1]["name"] + "  "))
+        self.assertTrue(header.rstrip().endswith("FOLDER"))
         # Every column starts at the same position in each row and in the header.
         for label in ("SYNC", "STATE"):
             self.assertIn(label, header)
@@ -226,16 +231,22 @@ class WorktreeTests(unittest.TestCase):
         self.assertIsNone(worktrees.cleanup_reason({**base, "main": True, "track": ["remote deleted"]}))
         self.assertIsNone(worktrees.cleanup_reason({**base, "locked": "", "track": ["remote deleted"]}))
 
-    def test_remove_many_closes_tabs_once_at_the_end(self):
+    def test_remove_many_closes_panes_once_at_the_end(self):
         one, two = self.add("one", "one"), self.add("two", "two")
         entries = {e.get("branch"): {**e, "name": e["branch"][11:]} for e in worktrees.worktrees(str(self.repo))[1:]}
-        window = {"window_id": "window:shared"}
-        with patch.object(tabs, "windows_for_path", return_value=[window]), \
-                patch.object(tabs, "close_worktree_tabs") as close:
+        # A tab with a pane in each removed worktree closes as a whole; one with a pane elsewhere doesn't.
+        shared = {"window_id": "window:shared", "layers": [{"blocks": [{"block_id": "block:1"}, {"block_id": "block:2"}]}]}
+        mixed = {"window_id": "window:mixed", "layers": [{"blocks": [{"block_id": "block:3"}, {"block_id": "block:4"}]}]}
+        terminals = [(shared, str(one), "block:1"), (shared, str(two / "src"), "block:2"),
+                     (mixed, str(one), "block:3"), (mixed, str(self.repo), "block:4")]
+        with patch.object(tabs, "close_panes") as close:
             removed, failures = actions.remove_many(str(self.repo), "session:1",
-                                                     [(entries["refs/heads/one"], True), (entries["refs/heads/two"], False)])
+                                                     [(entries["refs/heads/one"], True), (entries["refs/heads/two"], False)],
+                                                     terminals)
         self.assertEqual((sorted(removed), failures), (["one", "two"], []))
-        close.assert_called_once_with("session:1", [window])
+        close.assert_called_once()
+        groups = {g["window"]["window_id"]: (g["panes"], g["whole"]) for g in close.call_args[0][1]}
+        self.assertEqual(groups, {"window:shared": (["block:1", "block:2"], True), "window:mixed": (["block:3"], False)})
         self.assertFalse(one.exists() or two.exists())
         self.assertNotEqual(subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--verify", "--quiet", "refs/heads/one"]).returncode, 0)
         git(self.repo, "rev-parse", "--verify", "refs/heads/two")
@@ -274,13 +285,14 @@ class WorktreeTests(unittest.TestCase):
             self.assertTrue(util.STATE["navigated"])
 
     def test_terminal_scan_uses_one_rex_call(self):
-        found = [{"session_id": "session:1", "window": {"window_id": "window:a"}, "cwds": ["/w/a", "/w/a/src"]},
+        found = [{"session_id": "session:1", "window": {"window_id": "window:a"},
+                  "cwds": [{"block_id": "block:1", "cwd": "/w/a"}, {"block_id": "block:2", "cwd": "/w/a/src"}]},
                  {"session_id": "session:repo", "window": {"window_id": "window:b"}, "cwds": {}}]
         with patch.object(util, "run", return_value=json.dumps({"windows": found}).encode()) as run, \
                 patch.dict(util.STATE, {"repo_sessions": ["session:repo"]}), patch.dict(os.environ, {"REX_BLOCK": "block:picker"}):
             pairs = tabs.terminal_cwds("session:1")
-        self.assertEqual([(w["window_id"], w["session_id"], cwd) for w, cwd in pairs],
-                         [("window:a", "session:1", "/w/a"), ("window:a", "session:1", "/w/a/src")])
+        self.assertEqual([(w["window_id"], w["session_id"], cwd, block) for w, cwd, block in pairs],
+                         [("window:a", "session:1", "/w/a", "block:1"), ("window:a", "session:1", "/w/a/src", "block:2")])
         args = run.call_args[0]
         self.assertEqual(args[:3], ("rex", "do", "-e"))
         self.assertEqual(json.loads(args[5]), {"sessions": ["session:1", "session:repo"], "skip": "block:picker"})
@@ -298,21 +310,24 @@ class WorktreeTests(unittest.TestCase):
         worktrees.fill_details(str(self.repo), quick)
         self.assertIsNotNone(quick[0]["time"])
 
-    def test_flash_messages_fade(self):
+    def test_flash_messages_fade_and_wrap(self):
         flash = ui.Flash()
-        self.assertEqual((flash.row(), flash.wait(-1), flash.wait(150)), ([], -1, 150))
+        self.assertEqual((flash.rows(40), flash.wait(-1), flash.wait(150)), ([], -1, 150))
         with patch.object(ui.time, "monotonic", return_value=100.0):
             flash.set("Saved", "green")
         with patch.object(ui.time, "monotonic", return_value=101.0):
             self.assertEqual(flash.wait(-1), 3050)  # Wakes up when the message fades.
             self.assertEqual(flash.wait(150), 150)
-            self.assertIn("Saved", flash.row()[0][0])
+            self.assertIn("Saved", flash.rows(40)[0][0][0])
         with patch.object(ui.time, "monotonic", return_value=106.0):
-            self.assertEqual(flash.row(), [])
+            self.assertEqual(flash.rows(40), [])
         with patch.object(ui.time, "monotonic", return_value=100.0):
-            flash.set("Failed")
-        with patch.object(ui.time, "monotonic", return_value=106.0):
-            self.assertIn("Failed", flash.row()[0][0])  # Errors stay longer.
+            flash.set("Failed: " + "word " * 40)
+        with patch.object(ui.time, "monotonic", return_value=1000.0):
+            rows = flash.rows(40)  # Errors stay until the next key, wrapped to at most three rows.
+            self.assertEqual(len(rows), 3)
+            self.assertTrue(rows[-1][0][0].endswith("…") and all(len(r[0][0]) <= 40 for r in rows))
+            self.assertEqual(flash.wait(-1), -1)
 
     def test_source_label(self):
         self.assertEqual(branching.source_label({"kind": "local", "name": "a", "ref": "a"}), "local")
@@ -359,12 +374,12 @@ class WorktreeTests(unittest.TestCase):
     def test_plan_new_and_existing_branches(self):
         cwd, branches = self.setup_branches()
         new = branching.plan_branch(cwd, branches, "test branch")
-        self.assertEqual((new["branch"], new["action"]), ("test-branch", "create new branch test-branch from main"))
+        self.assertEqual((new["branch"], new["action"]), ("test-branch", "create branch test-branch from main"))
         self.assertNotIn("error", new)
         local = branching.plan_branch(cwd, branches, "", self.suggestion(branches, "existing"))
         self.assertEqual(local["action"], "check out existing branch existing")
         remote = branching.plan_branch(cwd, branches, "", self.suggestion(branches, "origin/remote-only"))
-        self.assertEqual(remote["action"], "check out origin/remote-only as local branch remote-only, tracking it")
+        self.assertEqual(remote["action"], "create local branch remote-only, tracking origin")
         # A typed name only ever creates a new branch; existing ones are picked from the list.
         self.assertIn("Already checked out", branching.plan_branch(cwd, branches, "main")["error"])
         self.assertIn("select it under Existing branches", branching.plan_branch(cwd, branches, "existing")["error"])
@@ -421,19 +436,19 @@ class WorktreeTests(unittest.TestCase):
     def test_remove_worktree_then_close_tabs(self):
         other = self.add("clean", "clean")
         entry = worktrees.worktrees(str(self.repo))[1]
-        windows = [{"window_id": "window:1"}]
-        with patch.object(tabs, "close_worktree_tabs") as close:
-            actions.remove_worktree(str(self.repo), "session:1", entry, windows)
+        closing = [{"window": {"window_id": "window:1"}, "panes": ["block:1"], "whole": True, "here": False}]
+        with patch.object(tabs, "close_panes") as close:
+            actions.remove_worktree(str(self.repo), "session:1", entry, closing)
         self.assertFalse(other.exists())
-        close.assert_called_once_with("session:1", windows)
+        close.assert_called_once_with("session:1", closing)
         git(self.repo, "rev-parse", "--verify", "refs/heads/clean")
 
     def test_failed_git_removal_leaves_tabs_open(self):
         other = self.add("dirty", "dirty")
         (other / "untracked").write_text("changes")
         entry = worktrees.worktrees(str(self.repo))[1]
-        with patch.object(tabs, "close_worktree_tabs") as close, self.assertRaises(RuntimeError):
-            actions.remove_worktree(str(self.repo), "session:1", entry, [{"window_id": "window:1"}])
+        with patch.object(tabs, "close_panes") as close, self.assertRaises(RuntimeError):
+            actions.remove_worktree(str(self.repo), "session:1", entry, [{"window": {"window_id": "window:1"}}])
         close.assert_not_called()
 
     def test_force_remove_and_delete_merged_branch(self):
@@ -441,7 +456,7 @@ class WorktreeTests(unittest.TestCase):
         (other / "untracked").write_text("changes")
         entry = {**worktrees.worktrees(str(self.repo))[1], "name": "merged"}
         self.assertEqual(worktrees.merged_into(str(self.repo), entry), "main")
-        with patch.object(tabs, "close_worktree_tabs"):
+        with patch.object(tabs, "close_panes"):
             actions.remove_worktree(str(self.repo), "session:1", entry, [], force=True, delete_branch=True)
         self.assertFalse(other.exists())
         self.assertFalse(subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--verify", "--quiet", "refs/heads/merged"]).returncode == 0)
@@ -538,7 +553,7 @@ class WorktreeTests(unittest.TestCase):
         branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
         self.assertEqual([b["label"] for b in branches["bases"]], ["main", "feature"])
         plan = branching.plan_branch(cwd, branches, "from main", None, branches["bases"][0])
-        self.assertEqual(plan["action"], "create new branch from-main from main")
+        self.assertEqual(plan["action"], "create branch from-main from main")
         branching.create_worktree(cwd, plan)
         self.assertEqual(git(cwd, "rev-parse", "from-main").stdout, git(cwd, "rev-parse", "main").stdout)
         upstream = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "from-main@{upstream}"], capture_output=True)
@@ -554,19 +569,30 @@ class WorktreeTests(unittest.TestCase):
         _, request = rex.request("session.new_window")
         self.assertEqual(request["layout"]["block"]["options"], {"cwd": "/tmp/test", "initial_input": "make setup\n"})
 
-    def test_close_picker_window_last(self):
-        own = {"window_id": "window:own", "layers": [{"blocks": [{"block_id": "block:picker"}]}]}
-        other = {"window_id": "window:other", "layers": []}
-        with patch.dict(os.environ, {"REX_BLOCK": "block:picker"}), patch.object(util, "run") as run:
-            tabs.close_worktree_tabs("session:1", [own, other])
+    def test_close_only_panes_inside_and_the_picker_tab_last(self):
+        own = {"window_id": "window:own", "label": "Shell", "layers": [
+            {"blocks": [{"block_id": "block:origin"}]}, {"blocks": [{"block_id": "block:picker"}]}]}
+        split = {"window_id": "window:split", "label": "Work", "layers": [
+            {"blocks": [{"block_id": "block:a"}, {"block_id": "block:b"}, {"block_id": "block:c"}]}]}
+        terminals = [(own, "/w/tree", "block:origin"), (split, "/w/tree/src", "block:a"),
+                     (split, "/w/other", "block:b"), (split, "/w/tree", "block:c")]
+        with patch.dict(os.environ, {"REX_BLOCK": "block:picker"}):
+            groups = tabs.panes_to_close(terminals, ["/w/tree"])
+            # The picker's floating pane doesn't keep its tab open; another pane does.
+            self.assertEqual([(g["window"]["window_id"], g["panes"], g["whole"], g["here"]) for g in groups],
+                             [("window:own", ["block:origin"], True, True), ("window:split", ["block:a", "block:c"], False, False)])
+            self.assertEqual([tabs.describe_closing(g) for g in groups],
+                             [("Shell", "the whole tab"), ("Work", "2 of 3 panes; the tab stays")])
+            with patch.object(util, "run") as run:
+                tabs.close_panes("session:1", groups)
             self.assertEqual(run.call_args_list, [
-                call("rex", "window", "close", "-s", "session:1", "window:other"),
+                call("rex", "block", "close", "-s", "session:1", "block:a", "block:c"),
                 call("rex", "window", "close", "-s", "session:1", "window:own"),
             ])
 
     def test_windows_for_path_matches_nested_paths_once(self):
         window, other = {"window_id": "window:1"}, {"window_id": "window:2"}
-        terminals = [(window, "/w/repo/src"), (window, "/w/repo"), (other, "/w/repository")]
+        terminals = [(window, "/w/repo/src", "b1"), (window, "/w/repo", "b2"), (other, "/w/repository", "b3")]
         self.assertEqual(tabs.windows_for_path("session:1", "/w/repo", terminals), [window])
 
     def test_restore_focus_only_when_no_tab_was_opened(self):
@@ -619,7 +645,7 @@ class WorktreeTests(unittest.TestCase):
         with patch.object(util, "run", side_effect=fake_run) as run, patch.dict(util.STATE, {"repo_sessions": ["session:repo"]}):
             windows = tabs.windows_for_path("session:1", "/w/b")
             self.assertEqual([(w["window_id"], w["session_id"]) for w in windows], [("window:b", "session:repo")])
-            tabs.close_worktree_tabs("session:1", windows)
+            tabs.close_panes("session:1", tabs.panes_to_close(tabs.terminal_cwds("session:1"), ["/w/b"]))
             self.assertEqual(run.call_args_list[-1], call("rex", "window", "close", "-s", "session:repo", "window:b"))
 
     def test_open_reports_app_switch_failure(self):
@@ -636,6 +662,114 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(worktrees.repo_name(str(other)), "repo with spaces")
         self.assertEqual(tabs.tab_label({"worktree": str(other), "branch": "refs/heads/topic"}), "topic")
 
+
+    def test_fit_parts_keeps_fixed_rows_and_shortens_lists(self):
+        text = lambda rows: ["".join(t for t, _ in row) for row in rows]
+        files = ui.items([[(f"  file{i}", 0)] for i in range(10)])
+        panes = ui.items([[("  pane", 0)]])
+        parts = [ui.fixed([("name", 0)]), ui.extra([("path", 0)]), ui.GAP, ui.fixed([("FILES", 0)]), files,
+                 ui.GAP, ui.fixed([("PANES", 0)]), panes, ui.GAP, ui.fixed([("[ ] option", 0)])]
+        self.assertEqual(len(ui.fit_parts(parts, 40)), 19)  # Everything fits.
+        # Lists shorten to a few rows before the gaps go.
+        rows = text(ui.fit_parts(parts, 12))
+        self.assertEqual(len(rows), 12)
+        self.assertEqual(rows[rows.index("FILES") + 1:rows.index("FILES") + 5], ["  file0", "  file1", "  file2", "  …and 7 more"])
+        self.assertIn("", rows)
+        # Then the gaps, then the lists shorten further, and the option row always stays.
+        rows = text(ui.fit_parts(parts, 8))
+        self.assertEqual(rows, ["name", "path", "FILES", "  file0", "  …and 9 more", "PANES", "  pane", "[ ] option"])
+        rows = text(ui.fit_parts(parts, 6))
+        self.assertEqual(rows, ["name", "path", "FILES", "PANES", "  pane", "[ ] option"])  # The heading keeps the count.
+        self.assertNotIn("path", text(ui.fit_parts(parts, 4)))  # Extra rows go only when nothing else can.
+
+    def test_compose_pins_the_bottom_rows(self):
+        rows = ui.compose(24, [[("title", 0)]], [[("body", 0)]] * 50, [[("status", 0)], [("keys", 0)]])
+        self.assertEqual((len(rows), rows[0], rows[1], rows[-2:]), (24, [], [("title", 0)], [[("status", 0)], [("keys", 0)]]))
+        rows = ui.compose(10, [[("title", 0)]], [], [[("keys", 0)]])
+        self.assertEqual((len(rows), rows[0], rows[-1]), (10, [("title", 0)], [("keys", 0)]))  # No top margin when short.
+
+    def test_inputs_scroll_to_keep_the_cursor_in_view(self):
+        self.assertEqual(ui.input_view("short", 5, 20), ("short", 5))
+        text = "abcdefghijklmnopqrstuvwxyz"
+        visible, column = ui.input_view(text, len(text), 10)
+        self.assertEqual((visible, column), ("…stuvwxyz", 9))
+        visible, column = ui.input_view(text, 0, 10)
+        self.assertEqual((visible, column), ("abcdefghi…", 0))
+        visible, column = ui.input_view(text, 13, 10)
+        self.assertTrue(visible.startswith("…") and visible.endswith("…") and visible[column] == text[13])
+        row, column = ui.search_row("", 0, False, 40)
+        self.assertEqual(([t for t, _ in row], column), (["/ to filter"], None))
+        row, column = ui.search_row("", 0, True, 40)
+        self.assertEqual(([t for t, _ in row], column), (["/ ", "type to filter"], 2))
+
+    def test_paths_wrap_at_slashes(self):
+        self.assertEqual(ui.wrap_path("in ~/.local/share/rex/worktrees/app-1234/feature", 34),
+                         ["in ~/.local/share/rex/worktrees/", "app-1234/feature"])
+        self.assertTrue(all(len(line) <= 8 for line in ui.wrap_path("/averyveryverylongfolder/x", 8)))
+
+    def test_list_and_preview_share_the_rows(self):
+        self.assertEqual(screen_list.list_layout(15, 5), (5, 9))  # A short list leaves the preview its full size.
+        self.assertEqual(screen_list.list_layout(15, 17), (8, 7))
+        self.assertEqual(screen_list.list_layout(10, 17), (5, 5))  # A short pane still shows some commits.
+        self.assertEqual(screen_list.list_layout(6, 17), (6, 0))  # Too short for both: just the list.
+        top = ui.scroll_top(0, 9, 17, 5)
+        self.assertEqual(top, 5)
+        self.assertEqual(ui.scroll_top(top, 2, 17, 5), 2)
+        row = ui.with_position([("/ to filter", 0)], 7, 17, 5, 30)
+        self.assertEqual("".join(t for t, _ in row), "/ to filter" + " " * 15 + "8/17")
+        self.assertEqual(ui.with_position([("x", 0)], 0, 3, 5, 30), [("x", 0)])  # Only when the list scrolls.
+
+    def test_folder_column_hides_before_the_branch_shortens(self):
+        entries = [{"name": "experiment/a-long-branch-name-that-is-distinctive", "worktree": str(self.repo),
+                    "open": False, "dirty": False, "track": []}]
+        wide = ui.column_widths(entries, 120)
+        self.assertEqual((wide["BRANCH"], wide["FOLDER"]), (len(entries[0]["name"]), len("repo with spaces")))
+        squeezed = ui.column_widths(entries, len(entries[0]["name"]) + 11 + 5)
+        self.assertEqual((squeezed["BRANCH"], squeezed["FOLDER"]), (len(entries[0]["name"]), 0))
+        self.assertNotIn("FOLDER", "".join(t for t, _ in ui.header_row(squeezed)))
+        narrow = ui.column_widths(entries, 40)
+        self.assertEqual((narrow["BRANCH"], narrow["FOLDER"], narrow["compact"]), (40 - 11, 0, False))
+
+    def test_selection_moves_to_the_next_row_after_removal(self):
+        entries = [{"worktree": p} for p in ("/a", "/c", "/d")]
+        picker = SimpleNamespace(entries=entries)
+        reselect = lambda paths, index: screen_list.ListScreen.reselect(picker, paths, index)
+        self.assertIs(reselect(["/a", "/b", "/c", "/d"], 1), entries[1])  # /b is gone: the next one.
+        self.assertIs(reselect(["/a", "/c", "/d", "/e"], 3), entries[2])  # The last row is gone: the one before.
+        self.assertIs(reselect(["/a", "/c"], 1), entries[1])  # Cancelled: the same worktree.
+
+    def test_long_errors_get_their_own_screen(self):
+        screen = SimpleNamespace(getmaxyx=lambda: (16, 50))
+        picker = SimpleNamespace(stdscr=screen, flash=ui.Flash())
+        with patch.object(ui, "show_error") as show:
+            app.Manager.say(picker, "short failure")
+            show.assert_not_called()
+            self.assertEqual(picker.flash.text, "short failure")
+            app.Manager.say(picker, "fatal: " + "a long git error " * 12)
+            show.assert_called_once()
+            app.Manager.say(picker, "a long note " * 12, "dim")  # Only errors.
+            show.assert_called_once()
+
+    def test_cleanup_rows_keep_their_notes_in_a_narrow_pane(self):
+        dirty = {"entry": {"name": "feature/finished-work", "worktree": "/w/a", "dirty": True,
+                           "track": ["remote deleted"]}, "checked": False}
+        open_ = {"entry": {"name": "fix/done", "worktree": "/w/b", "track": ["remote deleted"]}, "checked": True}
+        closes = {"/w/b": [{"window": {"window_id": "w", "label": "Shell"}, "panes": ["b1"], "total": 2,
+                            "whole": False, "here": True}]}
+        items = [dirty, open_]
+        with patch.object(worktrees, "missing", return_value=False):
+            row = lambda item, width: "".join(t for t, _ in screen_remove.RemovalScreens.cleanup_row(item, False, items, closes, width))
+            self.assertTrue(row(dirty, 100).endswith(util.ICONS["dirty"] + " uncommitted, can't be cleaned up"))
+            self.assertTrue(row(dirty, 47).rstrip().endswith(util.ICONS["dirty"]))
+            self.assertTrue(row(open_, 100).rstrip().endswith(util.ICONS["tab"] + " closes 1 pane"))
+            for item in items:
+                self.assertLessEqual(len(row(item, 47).rstrip()), 47)
+            detail = screen_remove.RemovalScreens.cleanup_detail(items, 1, closes, 100)
+            self.assertEqual(detail[0][0][0], "fix/done: remote deleted. Closes 1 of 2 panes in Shell (this tab).")
+
+    def test_help_puts_wide_keys_above_their_descriptions(self):
+        body = ui.help_body([("Labels", [("herdr, t3, claude, rex", "the tool"), ("3d", "age")])], 47)
+        self.assertEqual(["".join(t for t, _ in row) for row in body[2:]], ["herdr, t3, claude, rex", "    the tool", "3d", "    age"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -136,7 +136,7 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
             except (RuntimeError, ValueError, OSError):
                 terminals = []
             for entry in entries:
-                entry["open"] = any(util.inside(path, entry["worktree"]) for _, path in terminals)
+                entry["open"] = tabs.open_in(terminals, entry["worktree"])
             if self.entries is entries:
                 self.terminals = terminals
 
@@ -166,9 +166,16 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
             raise holder["error"]
         return holder["value"]
 
-    def windows_for(self, entry):
-        """Tabs open in the worktree, from the latest scan when there is one."""
-        return tabs.windows_for_path(self.session, entry["worktree"], self.terminals)
+    def terminals_now(self):
+        """Every terminal's working directory, from the latest scan, or from a new one when there
+        isn't one yet."""
+        if self.terminals is None:
+            self.terminals = self.busy("Checking open panes…", lambda: tabs.terminal_cwds(self.session))
+        return self.terminals
 
-    def say(self, text, tone="red"):
-        self.flash.set(text, tone)
+    def say(self, text, tone="red", flash=None):
+        """Show a status message. An error too long for the status line gets its own screen."""
+        if tone == "red" and len(ui.wrap(util.ICONS["error"] + " " + text, ui.space(self.stdscr))) > ui.Flash.LINES:
+            ui.show_error(self.stdscr, text)
+            return
+        (flash or self.flash).set(text, tone)

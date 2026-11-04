@@ -38,7 +38,7 @@ for _, sid in ipairs(rex.args.sessions or {}) do
         if block.creator_name == "com.superlogical.terminal" and block.block_id ~= rex.args.skip then
           local p = rex.call("com.superlogical.terminal.process", { session_id = sid, block_id = block.block_id })
           local cwd = p and ((p.foreground and p.foreground.cwd) or (p.child and p.child.cwd))
-          if cwd then table.insert(found.cwds, cwd) end
+          if cwd then table.insert(found.cwds, { block_id = block.block_id, cwd = cwd }) end
         end
       end
     end
@@ -50,8 +50,8 @@ return { windows = result }
 
 
 def terminal_cwds(session):
-    """Return (window, cwd) for each terminal in the picker's and the repository's sessions,
-    except this picker. Each window records its session under "session_id"."""
+    """Return (window, cwd, block ID) for each terminal in the picker's and the repository's
+    sessions, except this picker. Each window records its session under "session_id"."""
     args = {"sessions": related_sessions(session), "skip": os.environ.get("REX_BLOCK") or ""}
     try:
         found = json.loads(util.run("rex", "do", "-e", SCAN_SCRIPT, "--args", json.dumps(args), "--json"))
@@ -63,7 +63,8 @@ def terminal_cwds(session):
     windows = found["windows"]
     for item in windows if isinstance(windows, list) else []:
         window = dict(item.get("window") or {}, session_id=item.get("session_id"))
-        pairs += [(window, cwd) for cwd in (item.get("cwds") or []) if isinstance(cwd, str)]
+        pairs += [(window, pane["cwd"], pane.get("block_id")) for pane in (item.get("cwds") or [])
+                  if isinstance(pane, dict) and isinstance(pane.get("cwd"), str)]
     return pairs
 
 
@@ -92,29 +93,72 @@ def terminal_cwds_slowly(session):
         return (process.get("foreground") or {}).get("cwd") or (process.get("child") or {}).get("cwd")
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        return [(window, path) for (window, _), path in zip(blocks, pool.map(cwd, blocks)) if path]
+        return [(window, path, block) for (window, block), path in zip(blocks, pool.map(cwd, blocks)) if path]
+
+
+def open_in(terminals, path):
+    """Whether any terminal is at or below path."""
+    return any(util.inside(cwd, path) for _, cwd, _ in terminals)
 
 
 def windows_for_path(session, path, terminals=None):
     """Find tabs with a terminal process currently at or below the worktree."""
     matches, seen = [], set()
-    for window, cwd in terminal_cwds(session) if terminals is None else terminals:
+    for window, cwd, _ in terminal_cwds(session) if terminals is None else terminals:
         if window["window_id"] not in seen and util.inside(cwd, path):
             seen.add(window["window_id"])
             matches.append(window)
     return matches
 
 
-def close_worktree_tabs(session, windows):
-    """Close the picker's own window last, since doing so terminates this process."""
+def window_blocks(window):
+    return [block.get("block_id") for layer in window.get("layers") or [] for block in layer.get("blocks") or []]
+
+
+def contains_picker(window):
+    return os.environ.get("REX_BLOCK") in window_blocks(window)
+
+
+def panes_to_close(terminals, paths):
+    """What removing the worktrees at paths closes: the panes whose terminals are inside them,
+    grouped by tab. A tab closes as a whole only when every pane in it, other than this picker,
+    is inside. Returns one dict per tab: its window, the panes' block IDs, the tab's pane count,
+    whether the whole tab closes, and whether it's the tab the picker was opened in."""
+    groups = {}
+    for window, cwd, block in terminals:
+        if block and any(util.inside(cwd, path) for path in paths):
+            group = groups.setdefault(window["window_id"], {"window": window, "panes": []})
+            if block not in group["panes"]:
+                group["panes"].append(block)
     picker = os.environ.get("REX_BLOCK")
+    for group in groups.values():
+        others = [b for b in window_blocks(group["window"]) if b != picker]
+        group["total"] = max(len(others), len(group["panes"]))
+        group["whole"] = bool(others) and set(others) <= set(group["panes"])
+        group["here"] = contains_picker(group["window"])
+    return list(groups.values())
 
-    def contains_picker(window):
-        return any(block.get("block_id") == picker for layer in window.get("layers", [])
-                   for block in layer.get("blocks", []))
 
-    for window in sorted(windows, key=contains_picker):
-        util.run("rex", "window", "close", "-s", window.get("session_id", session), window["window_id"])
+def describe_closing(group):
+    """The tab's name and what closes in it, such as "2 of 3 panes; the tab stays"."""
+    count, total = len(group["panes"]), group["total"]
+    if group["whole"]:
+        detail = "the whole tab" if total == 1 else f"all {total} panes, so the tab closes"
+    else:
+        detail = f"{count} of {total} panes; the tab stays"
+    return group["window"].get("label") or group["window"]["window_id"], detail
+
+
+def close_panes(session, groups):
+    """Close the panes, or their whole tab when every pane in it goes. The picker's own tab is
+    closed last, since closing it ends this process."""
+    for group in sorted(groups, key=lambda g: g["here"]):
+        window = group["window"]
+        session_id = window.get("session_id", session)
+        if group["whole"]:
+            util.run("rex", "window", "close", "-s", session_id, window["window_id"])
+        else:
+            util.run("rex", "block", "close", "-s", session_id, *group["panes"])
 
 
 def find_session(label):

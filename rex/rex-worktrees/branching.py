@@ -93,7 +93,8 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
         if suggestion["kind"] == "local":
             plan = {"branch": name, "action": f"check out existing branch {name}", "args": [name]}
         else:
-            plan = {"branch": name, "action": f"check out {ref} as local branch {name}, tracking it",
+            remote = ref[:-len(name) - 1]
+            plan = {"branch": name, "action": f"create local branch {name}, tracking {remote}",
                     "args": ["--track", "-b", name, None, ref]}
     else:
         name = normalize_branch(text)
@@ -108,7 +109,7 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
         if branches["remote"].get(name):
             return {"branch": name, "error": f"{branches['remote'][name][0]} exists; select it under Existing branches."}
         # --no-track keeps a branch started from origin/main from pushing to or tracking main.
-        plan = {"branch": name, "action": f"create new branch {name} from {base['label']}",
+        plan = {"branch": name, "action": f"create branch {name} from {base['label']}",
                 "args": ["--no-track", "-b", name, None, base["ref"]]}
     path = new_path(cwd, plan["branch"])
     if path.exists():

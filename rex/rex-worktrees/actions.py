@@ -18,7 +18,7 @@ def fill_status(entries, session):
             entry["dirty"] = state
     terminals = tabs.terminal_cwds(session)
     for entry in entries:
-        entry["open"] = any(util.inside(path, entry["worktree"]) for _, path in terminals)
+        entry["open"] = tabs.open_in(terminals, entry["worktree"])
 
 
 def load_entries(cwd, session):
@@ -48,7 +48,7 @@ def load_status_async(entries, session, scan=True):
         except (RuntimeError, ValueError, OSError):
             terminals = []
         for entry in entries:
-            entry["open"] = any(util.inside(path, entry["worktree"]) for _, path in terminals)
+            entry["open"] = tabs.open_in(terminals, entry["worktree"])
 
     for target in [dirty_worker] * min(6, max(1, len(entries))) + ([open_worker] if scan else []):
         threading.Thread(target=target, daemon=True).start()
@@ -63,8 +63,9 @@ def copy_to_clipboard(text):
     raise RuntimeError("No clipboard command found (pbcopy, wl-copy, or xclip).")
 
 
-def remove_worktree(repo, session, entry, windows, force=False, delete_branch=False):
-    """Remove a worktree from the main worktree's repository, then close its tabs."""
+def remove_worktree(repo, session, entry, closing, force=False, delete_branch=False):
+    """Remove a worktree from the main worktree's repository, then close the panes inside it
+    (closing, from tabs.panes_to_close)."""
     util.git(repo, "worktree", "remove", *(["--force"] if force else []), "--", entry["worktree"])
     problems = []
     if delete_branch:
@@ -74,32 +75,35 @@ def remove_worktree(repo, session, entry, windows, force=False, delete_branch=Fa
         except RuntimeError as error:
             problems.append(f"branch not deleted: {error}")
     try:
-        if windows:
-            tabs.close_worktree_tabs(session, windows)
+        if closing:
+            tabs.close_panes(session, closing)
     except (RuntimeError, OSError) as error:
-        problems.append(f"a tab could not be closed: {error}")
+        problems.append(f"a pane could not be closed: {error}")
     if problems:
         raise RuntimeError("Worktree removed, but " + "; ".join(problems))
 
 
 def remove_many(repo, session, items, terminals=None):
-    """Remove several worktrees, closing their tabs at the end so the picker's own tab closes last.
-    items holds (entry, delete_branch) pairs. Returns (removed names, failure messages)."""
-    removed, failures, windows = [], [], {}
+    """Remove several worktrees, closing their panes at the end so the picker's own tab closes
+    last. items holds (entry, delete_branch) pairs. Returns (removed names, failure messages)."""
+    removed, failures, paths = [], [], []
+    if terminals is None:
+        try:
+            terminals = tabs.terminal_cwds(session)
+        except (RuntimeError, ValueError, OSError):
+            terminals = []
     for entry, delete_branch in items:
         try:
-            for window in tabs.windows_for_path(session, entry["worktree"], terminals):
-                windows[window["window_id"]] = window
             remove_worktree(repo, session, entry, [], delete_branch=delete_branch)
             removed.append(entry["name"])
+            paths.append(entry["worktree"])
         except (RuntimeError, OSError) as error:
-            if os.path.isdir(entry["worktree"]):
-                failures.append(f"{entry['name']}: {error}")
-            else:
+            if not os.path.isdir(entry["worktree"]):
                 removed.append(entry["name"])
-                failures.append(f"{entry['name']}: {error}")
+                paths.append(entry["worktree"])
+            failures.append(f"{entry['name']}: {error}")
     try:
-        tabs.close_worktree_tabs(session, list(windows.values()))
+        tabs.close_panes(session, tabs.panes_to_close(terminals, paths))
     except (RuntimeError, OSError) as error:
-        failures.append(f"a tab could not be closed: {error}")
+        failures.append(f"a pane could not be closed: {error}")
     return removed, failures

@@ -151,7 +151,7 @@ def removal_problem(entry):
     if "locked" in entry:
         return "This worktree is locked."
     if missing(entry):
-        return "This worktree's directory is missing; press p to prune it."
+        return "This worktree's folder is missing; press p to prune it."
     return None
 
 

@@ -1,6 +1,7 @@
 """Drawing: colors, rows, columns, and shared screens such as help and confirmation."""
 import curses
 import os
+import re
 import textwrap
 import time
 
@@ -93,6 +94,136 @@ def fit(row, width):
 def wrap(text, width):
     """Lines of text no wider than width, at least one."""
     return textwrap.wrap(text, max(1, width)) or [""]
+
+
+def wrap_path(text, width):
+    """Like wrap, but breaking a long path after a slash rather than inside a folder's name."""
+    width = max(1, width)
+    lines, line = [], ""
+    for part in (p for p in re.split(r"(?<=[/ -])", text) if p):
+        if line and len(line) + len(part.rstrip()) > width:
+            lines.append(line.rstrip())
+            line = ""
+        while len(part) > width:
+            lines.append(part[:width])
+            part = part[width:]
+        line += part
+    return lines + [line.rstrip()] if line.strip() or not lines else lines
+
+
+SHORT = 20  # Panes shorter than this drop the blank row above each screen's title.
+
+
+def margin(height):
+    return 0 if height < SHORT else 1
+
+
+def compose(height, top, body, bottom):
+    """A whole screen: the top rows, the body cut to the rows left, and the bottom rows (status
+    and key hints) pinned to the bottom of the pane, so they never scroll off."""
+    pad = margin(height)
+    room = max(0, height - pad - len(top) - len(bottom))
+    body = list(body[:room]) + [[]] * (room - len(body))
+    return [[]] * pad + list(top) + body + list(bottom)
+
+
+GAP = ("gap", [[]])
+
+
+def fixed(*rows):
+    """Rows that always show."""
+    return ("fixed", list(rows))
+
+
+def extra(*rows):
+    """Rows that drop out when nothing else is left to shrink."""
+    return ("extra", list(rows))
+
+
+def items(rows, indent="  "):
+    """A list that shortens to its first rows and a line such as "…and 12 more"."""
+    return ("items", list(rows), indent)
+
+
+LIST_COMFORT = 4  # Lists shorten to this many rows before the blank gaps between parts drop out.
+
+
+def fit_parts(parts, room):
+    """Fit a screen's body parts in room rows. Lists shorten first, to LIST_COMFORT rows each;
+    then the blank gaps drop out; then lists shorten further, each keeping at least two rows when
+    it keeps any (the heading above it still gives the count). Extra rows drop out only when the
+    lists can't make enough room. Returns the rows."""
+    parts = list(parts)
+    lists = [p for p in parts if p[0] == "items"]
+
+    def others():
+        return sum(len(p[1]) for p in parts if p[0] != "items")
+
+    comfort = sum(min(len(p[1]), LIST_COMFORT) for p in lists)
+    while others() + comfort > room and GAP in parts:
+        parts.remove(GAP)
+    while others() > room and any(p[0] == "extra" for p in parts):
+        parts.remove(next(p for p in reversed(parts) if p[0] == "extra"))
+    budget = room - others()
+    if budget >= sum(len(p[1]) for p in lists):
+        return [row for part in parts for row in part[1]]
+    # Share the rows out a little at a time, so every list keeps some.
+    given = {id(p): 0 for p in lists}
+    progress = True
+    while progress:
+        progress = False
+        for p in lists:
+            count = len(p[1])
+            step = min(count, 2) if given[id(p)] == 0 else 1
+            if given[id(p)] < count and 0 < step <= budget:
+                given[id(p)] += step
+                budget -= step
+                progress = True
+    out = []
+    for part in parts:
+        rows = part[1]
+        if part[0] == "items" and given[id(part)] < len(rows):
+            shown = max(0, given[id(part)] - 1)
+            more = [[(f"{part[2]}…and {len(rows) - shown} more", style("dim"))]] if given[id(part)] else []
+            rows = rows[:shown] + more
+        out += rows
+    return out
+
+
+def scroll_top(top, index, count, capacity):
+    """The first visible row of a list, moved only as far as needed to keep index in view."""
+    return max(0, min(max(top, index - capacity + 1), index, max(0, count - capacity)))
+
+
+def with_position(row, index, count, capacity, width):
+    """Add the selected row's position, such as 8/17, at the right of row when the list scrolls."""
+    if count <= capacity:
+        return row
+    mark = f"{index + 1}/{count}"
+    row = list(row)
+    while row and not row[-1][0].strip():
+        row.pop()
+    if row:
+        row[-1] = (row[-1][0].rstrip(),) + tuple(row[-1][1:])
+    used = len("".join(s[0] for s in row))
+    if used + 2 + len(mark) > width:
+        return row
+    return row + [(" " * (width - used - len(mark)), 0), (mark, style("dim"))]
+
+
+def input_view(text, pos, width):
+    """The part of a line of input to show in width columns, scrolled to keep the cursor in view,
+    with an ellipsis where text is hidden. Returns (visible text, cursor column)."""
+    width = max(3, width)
+    if len(text) < width:
+        return text, pos
+    start = max(0, min(pos - (width - 2), len(text) + 1 - width))
+    visible = text[start:start + width]
+    if start:
+        visible = "…" + visible[1:]
+    if start + width < len(text):
+        visible = visible[:-1] + "…"
+    return visible, pos - start
 
 
 def render(stdscr, rows, cursor=None):
@@ -209,27 +340,33 @@ def joined(cell, gap=" · "):
 
 CELLS = [("PR", pr_cell), ("SYNC", sync_cell), ("STATE", state_cell)]
 MIN_BRANCH = 20  # Narrower than this, the list switches to compact rows.
+MIN_FOLDER = 8  # Narrower than this, the folder column is hidden.
 
 
 def column_widths(entries, space=None):
     """Widths for the list's columns, sized to every worktree so they don't shift while filtering.
     A column that's empty for every worktree gets width 0 and is hidden. Given the space available,
-    the branch column narrows to fit; when even that isn't enough, rows turn compact: the branch,
-    its age, and the labels' icons."""
+    the branch column gets all it needs and the folder column, which comes last, gets what's left,
+    or is hidden when that's under MIN_FOLDER. Then the branch narrows; when even that isn't
+    enough, rows turn compact: the branch, its age, and the labels' icons."""
     longest = max([len(e["name"]) for e in entries] + [6])
-    widths = {"BRANCH": min(40, longest), "compact": False}
+    widths = {"BRANCH": longest, "compact": False}
     for title, cell in CELLS:
         width = max([cell_width(cell(e)) for e in entries] + [0])
         widths[title] = max(width, len(title)) if width else 0
     widths["SOURCE"] = max([len(worktrees.worktree_source(e)) for e in entries] + [0])
+    folder = max([len(os.path.basename(e["worktree"])) for e in entries] + [0])
+    widths["FOLDER"] = max(len("FOLDER"), (widths["SOURCE"] + 1 if widths["SOURCE"] else 0) + folder)
     if space is None:
         return widths
-    # Everything but the branch and the folder, which comes last and can be cut off.
-    rest = 4 + 2 + 5 + sum(widths[t] + 3 for t, _ in CELLS if widths[t]) + (widths["SOURCE"] + 2 if widths["SOURCE"] else 0)
-    if rest + widths["BRANCH"] <= space:
+    rest = 4 + 2 + 5 + sum(widths[t] + 3 for t, _ in CELLS if widths[t])
+    left = space - rest - longest
+    if left >= MIN_FOLDER:
+        widths["FOLDER"] = min(widths["FOLDER"], left)
         return widths
+    widths["FOLDER"] = 0
     if space - rest >= min(MIN_BRANCH, longest):
-        widths["BRANCH"] = space - rest
+        widths["BRANCH"] = min(longest, space - rest)
         return widths
     icons = max([cell_width(short_cell(badges(e)), 1) for e in entries] + [0])
     widths.update(compact=True, BADGES=icons,
@@ -245,7 +382,8 @@ def header_row(widths):
     for title, _ in CELLS:
         if widths[title]:
             row.append((title.ljust(widths[title] + 3), dim))
-    row.append(("FROM", dim))
+    if widths["FOLDER"]:
+        row.append(("FOLDER", dim))
     return row
 
 
@@ -267,16 +405,19 @@ def entry_row(entry, selected, widths, match=None):
         cell = cell_for(entry)
         row += joined(cell)
         row.append((" " * (widths[title] - cell_width(cell) + 3), 0))
-    if widths["SOURCE"]:
-        row.append((worktrees.worktree_source(entry).ljust(widths["SOURCE"]) + "  ", style("blue")))
-    row += highlighted(os.path.basename(entry["worktree"]), folder_hits, style("dim"))
+    if widths["FOLDER"]:
+        # The tool that created the worktree, if any, then its folder.
+        if widths["SOURCE"]:
+            row.append((worktrees.worktree_source(entry).ljust(widths["SOURCE"]) + " ", style("blue")))
+        row += highlighted(os.path.basename(entry["worktree"]), folder_hits, style("dim"))
     return Selected(row) if selected else row
 
 
 class Flash:
-    """A status message that fades: after 4 seconds, or 8 for errors."""
+    """A status message. Errors stay until the next key; others fade after 4 seconds."""
     SECONDS = 4
     ICONS = {"green": "ok", "red": "error"}
+    LINES = 3  # A longer message is cut; Manager.say shows long errors on their own screen.
 
     def __init__(self):
         self.text, self.tone, self.at = None, "red", 0.0
@@ -291,7 +432,9 @@ class Flash:
         """Seconds until it fades, or None when there's no message. Clears an expired one."""
         if not self.text:
             return None
-        left = self.SECONDS * (2 if self.tone == "red" else 1) - (time.monotonic() - self.at)
+        if self.tone == "red":
+            return float("inf")
+        left = self.SECONDS - (time.monotonic() - self.at)
         if left <= 0:
             self.text = None
             return None
@@ -300,16 +443,21 @@ class Flash:
     def wait(self, wait):
         """The input timeout to use, shortened so the screen redraws when the message fades."""
         left = self.left()
-        if left is None:
+        if left is None or left == float("inf"):
             return wait
         ms = int(left * 1000) + 50
         return ms if wait < 0 else min(wait, ms)
 
-    def row(self):
+    def rows(self, width):
+        """The message wrapped to width, in up to LINES rows; none when there's no message."""
         if self.left() is None:
             return []
         icon = util.ICONS[self.ICONS.get(self.tone, "info")]
-        return [(icon + " " + self.text, style(self.tone))]
+        lines = wrap(icon + " " + self.text, width)
+        if len(lines) > self.LINES:
+            lines = lines[:self.LINES]
+            lines[-1] = lines[-1][:width - 1] + "…"
+        return [[(line, style(self.tone))] for line in lines]
 
 
 def section(title, extra="", tone="dim"):
@@ -343,7 +491,9 @@ def footer(enter=None, move=False, slash=None, toggle=False, actions=(), back="b
     return help_row(*items)
 
 
-TYPING_FOOTER = [("enter", "done"), ("esc", "clear")]
+def typing_footer(enter):
+    """The key hints while typing in a filter: enter acts on the selected row at once."""
+    return help_row(("enter", enter), ("↑/↓", "move", 2), ("tab", "done", 1), ("esc", "clear"))
 
 
 def help_row(*items):
@@ -354,12 +504,15 @@ def help_row(*items):
     return row
 
 
-def search_row(text, filtering, placeholder):
-    """An input: the placeholder while it's empty and inactive, otherwise just its text. The
-    cursor shows while typing."""
-    if filtering or text:
-        return [(text, 0)]
-    return [(placeholder, style("dim"))]
+def search_row(text, pos, filtering, width):
+    """A filter input, scrolled to keep the cursor in view. Returns (row, cursor column or None)."""
+    if not filtering and not text:
+        return [("/ to filter", style("dim"))], None
+    prompt = ("/ ", style("cyan") | style("bold") if filtering else style("dim"))
+    if not text:
+        return [prompt, ("type to filter", style("dim"))], 2
+    visible, column = input_view(text, pos, width - 2)
+    return [prompt, (visible, 0)], (2 + column if filtering else None)
 
 
 NAVIGATION_HELP = [
@@ -377,13 +530,16 @@ def show_help(stdscr, title, sections):
     keyboard.set_timeout(stdscr, -1)
     while True:
         body = help_body(sections, space(stdscr))
+        if margin(stdscr.getmaxyx()[0]) == 0 and body[:1] == [[]]:
+            body = body[1:]
         height, _ = stdscr.getmaxyx()
-        visible = max(1, height - 4)
+        visible = max(1, height - margin(height) - 2)
         scrolls = len(body) > visible
         top = min(top, max(0, len(body) - visible))
-        rows = [[], header(title + " — keys", util.STATE.get("label", ""))] + body[top:top + visible]
-        rows += [[]] * max(0, height - len(rows) - 1)
-        rows.append(help_row(*([("j/k", "scroll")] if scrolls else []), ("q", "back")))
+        title_row = with_position(header(title + " — keys", util.STATE.get("label", "")),
+                                  top + visible - 1, len(body), visible, space(stdscr))
+        rows = compose(height, [title_row], body[top:top + visible],
+                       [help_row(*([("j/k", "scroll")] if scrolls else []), ("q", "back"))])
         render(stdscr, rows)
         key = keyboard.read_key(stdscr)
         if key in keyboard.CLOSE or key in keyboard.ENTER or key == "?":
@@ -400,17 +556,25 @@ def help_body(sections, width):
     for heading, items in sections:
         body += [[], section(heading)]
         keys = max(len(k) for k, _ in items)
+        if keys > width // 3:
+            # Wide keys, such as the labels' samples, go above their descriptions.
+            for key, label in items:
+                body += ([[(key, style("bold"))]] if key else [])
+                body += [[("    " + line, 0)] for line in wrap(label, width - 4)]
+            continue
         for key, label in items:
             for i, line in enumerate(wrap(label, width - keys - 3)):
                 body.append([((key if i == 0 else "").ljust(keys), style("bold")), ("   " + line, 0)])
     return body
 
 
-def show_error(stdscr, message):
+def show_error(stdscr, message, title="Something went wrong", hint=""):
+    """Show a message too long for the status line, wrapped, until it's closed."""
     def rows():
-        lines = wrap(util.ICONS["error"] + " " + message, space(stdscr))
-        return ([[], header("Worktree operation failed", util.STATE.get("label", "")), []]
-                + [[(line, style("red"))] for line in lines] + [[], help_row(("q", "close"))])
+        width, height = space(stdscr), stdscr.getmaxyx()[0]
+        lines = [[(line, style("red"))] for line in wrap(util.ICONS["error"] + " " + message, width)]
+        lines += [[]] + [[(line, style("dim"))] for line in wrap(hint, width)] if hint else []
+        return compose(height, [header(title, util.STATE.get("label", "")), []], lines, [help_row(("q", "close"))])
     wait_to_close(stdscr, rows)
 
 
@@ -427,14 +591,15 @@ def wait_to_close(stdscr, rows):
             return
 
 
-def confirm(stdscr, title, repo, lines, keys, enter, help_items):
-    """Show lines and wait for one of keys (a dict of key -> result). q and esc cancel."""
+def confirm(stdscr, title, repo, parts, keys, enter, help_items):
+    """Show body parts (see fit_parts), given by a function of the pane's width, and wait for one
+    of keys (a dict of key -> result). q and esc cancel."""
     keyboard.set_timeout(stdscr, -1)
     while True:
-        rows = [[], header(title, repo), []]
-        rows += [line if isinstance(line, list) else [line] for line in lines()]
-        rows += [[], footer(enter=enter, back="cancel")]
-        render(stdscr, rows)
+        height = stdscr.getmaxyx()[0]
+        top, bottom = [header(title, repo), []], [[], footer(enter=enter, back="cancel")]
+        body = fit_parts(parts(space(stdscr)), height - margin(height) - len(top) - len(bottom))
+        render(stdscr, compose(height, top, body, bottom))
         key = keyboard.read_key(stdscr)
         if key in keyboard.CLOSE:
             return None

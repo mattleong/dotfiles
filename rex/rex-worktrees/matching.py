@@ -9,7 +9,8 @@ SORTS = ["git", "recent", "state"]
 
 
 def sort_entries(entries, mode):
-    """Order worktrees by Git's order, most recent commit first, or grouped by state."""
+    """Order worktrees by Git's order, most recent commit first, or grouped by state: the main
+    checkout, uncommitted changes, open pull requests, the rest, finished ones, then missing ones."""
     if mode == "recent":
         return sorted(entries, key=lambda e: -(e.get("time") or 0))
 
@@ -17,6 +18,8 @@ def sort_entries(entries, mode):
         pr = (entry.get("pr") or {}).get("state")
         if entry.get("main"):
             return 0
+        if worktrees.missing(entry):
+            return 5
         if entry.get("dirty") is True:
             return 1
         if pr == "OPEN":

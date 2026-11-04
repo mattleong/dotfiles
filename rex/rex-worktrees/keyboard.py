@@ -9,9 +9,8 @@ import util
 ENTER = ("\n", "\r", curses.KEY_ENTER)
 BACKSPACE = ("\x7f", "\b", curses.KEY_BACKSPACE)
 ESCAPE = "\x1b"
-# Every screen: q or esc closes or cancels, and enter or l selects the row under the cursor.
+# Every screen: q or esc closes or cancels, and enter selects the row under the cursor.
 CLOSE = (ESCAPE, "q")
-SELECT = ENTER + ("l",)
 
 
 def edit_text(text, pos, key):

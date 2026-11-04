@@ -25,14 +25,18 @@ def main(stdscr, mode, cwd, session, client="", origin=""):
     try:
         manager = app.Manager(stdscr, cwd, session, client, origin)
         if mode == "new":
-            manager.new_screen()
+            manager.new_screen(root=True)
         else:
             manager.list_screen()
     except keyboard.FocusLost:
         util.STATE["navigated"] = True  # Focus already moved where the user wanted it.
     except (RuntimeError, OSError, UnicodeError, ValueError) as error:
         try:
-            ui.show_error(stdscr, str(error))
+            if "not a git repository" in str(error).lower():
+                ui.show_error(stdscr, f"{util.tilde(cwd)} isn't in a Git repository.", "Not a Git repository",
+                              "Open the picker from a pane whose folder is inside a repository or one of its worktrees.")
+            else:
+                ui.show_error(stdscr, str(error))
         except keyboard.FocusLost:
             util.STATE["navigated"] = True
 

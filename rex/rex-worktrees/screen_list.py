@@ -12,6 +12,27 @@ import util
 import worktrees
 
 
+PREVIEW_ROWS, PREVIEW_MIN = 9, 4  # The commit preview's rows, including the blank row above it.
+# Keys the list acts on; any other letter starts the filter with it, so typing a name is safe.
+LIST_KEYS = set("jkgGdnspcoeyYSrq?/")
+
+
+def list_layout(room, count):
+    """Split room rows between the list and the preview below it. The preview gets about half,
+    up to PREVIEW_ROWS, and whatever a short list leaves; it's left out when fewer than
+    PREVIEW_MIN rows would be left for it, or when the list would show fewer than 3 rows."""
+    count = max(1, count)
+    preview = min(PREVIEW_ROWS, max(PREVIEW_MIN, room // 2))
+    rows = min(count, room - preview)
+    preview = min(PREVIEW_ROWS, room - rows)
+    if preview < PREVIEW_MIN or rows < min(count, 3):
+        return max(1, room), 0
+    return rows, preview
+
+
+MISSING = "This worktree's folder is missing; press p to prune it."
+
+
 class ListScreen:
     def list_screen(self):
         stdscr = self.stdscr
@@ -26,40 +47,47 @@ class ListScreen:
             if selected not in shown:
                 selected = shown[0] if shown else None
             height, _ = stdscr.getmaxyx()
-            preview_rows = 7 if height >= 22 else 0
-            capacity = max(1, height - 8 - preview_rows)
-            index = shown.index(selected) if selected in shown else 0
-            top = min(max(top, index - capacity + 1), index, max(0, len(shown) - capacity))
             space = ui.space(stdscr)
             widths = ui.column_widths(self.entries, space)
+            index = shown.index(selected) if selected in shown else 0
+
+            # The status line: a message, the second key a half-typed dd, gg, or gp needs, or matches.
+            if pending == "d" and selected:
+                note = "d… press d again to remove " + selected["name"]
+            elif pending == "g":
+                note = "g… then g for the first row, or p to open the pull request"
+            else:
+                note = f"{len(shown)} of {len(self.entries)} match" if query.strip() else ""
+            status = self.flash.rows(space) or [[(note, ui.style("dim"))] if note else []]
+            if filtering:
+                footer = ui.typing_footer("open")
+            else:
+                finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e))
+                stale = sum(1 for e in self.entries if "prunable" in e)
+                footer = ui.footer(enter="open", move=True, slash="filter", back="quit", clear_filter=bool(query),
+                                   actions=[("s", "split"), ("n", "new"), ("dd", "remove")]
+                                   + ([("c", f"clean up ({finished})")] if finished else [])
+                                   + ([("p", f"prune ({stale})")] if stale else []))
+            search, column = ui.search_row(query, qpos, filtering, space)
+            heading = [ui.header("Worktrees", self.label, self.summary()
+                                 + ("" if self.sort == "git" else f" · sorted by {self.sort}")), search, []]
+            bottom = status + [footer]
+            room = height - ui.margin(height) - len(heading) - 1 - len(bottom)  # Below the column headings.
+            capacity, preview_rows = list_layout(room, len(shown))
+            top = ui.scroll_top(top, index, len(shown), capacity)
 
             if not keyboard.pending_input(stdscr):
-                sort_note = "" if self.sort == "git" else f" · sorted by {self.sort}"
-                rows = [[], ui.header("Worktrees", self.label, self.summary() + sort_note),
-                        ui.search_row(query, filtering, "/ to filter"), [], ui.header_row(widths)]
-                for e in shown[top:top + capacity]:
-                    rows.append(ui.entry_row(e, e is selected, widths,
-                                          matching.match_entry(e, query) if query.strip() else None))
+                heading[1] = ui.with_position(search, index, len(shown), capacity, space)
+                heading.append(ui.header_row(widths))
+                body = [ui.entry_row(e, e is selected, widths, matching.match_entry(e, query) if query.strip() else None)
+                        for e in shown[top:top + capacity]]
                 if not shown:
-                    rows.append([("No matching worktrees", ui.style("dim"))])
-                rows += [[]] * max(0, height - len(rows) - 3 - preview_rows)
-                if preview_rows:
-                    rows += self.preview(selected, space, widths["compact"])  # Pinned to the bottom of the pane.
-                if self.flash.row():
-                    rows.append(self.flash.row())
-                elif query.strip():
-                    rows.append([(f"{len(shown)} of {len(self.entries)} match", ui.style("dim"))])
-                else:
-                    rows.append([])
-                if filtering:
-                    rows.append(ui.help_row(*ui.TYPING_FOOTER))
-                else:
-                    finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e))
-                    rows.append(ui.footer(enter="open", move=True, slash="filter", back="quit", clear_filter=bool(query),
-                                          actions=[("s", "split"), ("n", "new"), ("dd", "remove")]
-                                          + ([("gp", "open PR")] if (selected or {}).get("pr") else [])
-                                          + ([("c", f"clean up ({finished})")] if finished else [])))
-                ui.render(stdscr, rows, cursor=(2, qpos) if filtering else None)
+                    body.append([("No matching worktrees", ui.style("dim"))])
+                if preview_rows:  # Pinned to the bottom, above the status line.
+                    preview = self.preview(selected, space, widths["compact"], preview_rows)
+                    body += [[]] * (room - len(body) - len(preview)) + preview
+                cursor = (ui.margin(height) + 1, column) if column is not None else None
+                ui.render(stdscr, ui.compose(height, heading, body, bottom), cursor=cursor)
 
             key = keyboard.read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:
@@ -67,24 +95,37 @@ class ListScreen:
             self.flash.clear()
             if filtering:
                 if key in keyboard.ENTER:
+                    filtering = False  # And open the selected worktree, below.
+                elif key == "\t":
                     filtering = False
+                    continue
                 elif key == keyboard.ESCAPE:
-                    filtering, query = False, ""
+                    filtering, query, qpos = False, "", 0
+                    continue
                 elif key in keyboard.BACKSPACE and not query:
                     filtering = False
+                    continue
                 elif key in (curses.KEY_DOWN, "\x0e", curses.KEY_UP, "\x10"):
                     new_index, _ = keyboard.motion(key, index, len(shown), capacity, None)
                     if new_index is not None:
                         selected = shown[new_index]
+                    continue
                 else:
-                    query, qpos = keyboard.edit_text(query, qpos, key)
+                    new_query, qpos = keyboard.edit_text(query, qpos, key)
+                    if new_query != query:
+                        query, selected = new_query, None  # The best match, so enter opens it.
+                    continue
+            # Where the selection goes after an action: the same worktree, or the next one if it's gone.
+            paths = [e["worktree"] for e in shown]
+            if pending and key not in (pending, "p" if pending == "g" else pending):
+                pending = None  # An unfinished dd, gg, or gp: the next key only cancels it.
                 continue
             if key == "d":
                 if pending == "d":
                     pending = None
                     if selected and self.remove(selected):
                         return
-                    selected, query = None, ""
+                    selected = self.reselect(paths, index)
                 else:
                     pending = "d"
                 continue
@@ -98,36 +139,9 @@ class ListScreen:
             elif key == "/":
                 filtering, qpos = True, len(query)
             elif key == "?":
-                ui.show_help(stdscr, "Worktrees", [("Move", ui.NAVIGATION_HELP), ("Actions", [
-                    ("enter / l", "open the worktree's tab"),
-                    ("s", "open the worktree in a split beside your pane"),
-                    ("o", "open its tab in the background and stay here"),
-                    ("n", "new worktree"),
-                    ("dd", "remove the worktree"),
-                    ("c", "clean up worktrees with merged PRs or deleted remote branches"),
-                    ("p", "prune missing worktrees"),
-                    ("e", "open the worktree in your editor, in a new tab"),
-                    ("gp", "open its pull request in the browser"),
-                    ("y / Y", "copy its path / branch name"),
-                    ("S", "sort: Git order, most recent, or by state"),
-                    ("r", "refresh"),
-                    ("/", "filter (fuzzy)"),
-                    ("esc", "clear the filter, or quit"),
-                    ("q", "quit"),
-                ]), ("Labels", [
-                    ("●", "the worktree you opened this from"),
-                    ("3d", "time since the worktree's last commit"),
-                    (util.ICONS["main"] + " main checkout", "the original checkout; it can't be removed"),
-                    (util.ICONS["tab"] + " tab open", "a Rex tab is in this worktree"),
-                    (util.ICONS["dirty"] + " uncommitted", "has uncommitted changes"),
-                    (util.ICONS["ahead"] + " ahead / " + util.ICONS["behind"] + " behind", "commits not yet pushed / pulled"),
-                    (util.ICONS["deleted"] + " remote deleted", "its remote branch is gone, often after merging"),
-                    (util.ICONS["missing"] + " folder missing", "the folder is gone; press p to prune"),
-                    (util.ICONS["pr"] + " #12 open", "its pull request: open, draft, merged, or closed"),
-                    ("herdr, t3, claude, rex", "the tool that created the worktree"),
-                ])])
+                self.list_help()
             elif key == keyboard.ESCAPE and query:
-                query = ""
+                query, qpos = "", 0
             elif key in keyboard.CLOSE:
                 return
             elif key == "n":
@@ -136,14 +150,14 @@ class ListScreen:
                 keyboard.set_timeout(stdscr, -1)
             elif key == "p":
                 self.prune()
-                selected, query = None, ""
+                selected = self.reselect(paths, index)
             elif key == "c":
                 if self.cleanup():
                     return
-                selected, query = None, ""
+                selected = self.reselect(paths, index)
             elif key == "S":
                 self.sort = matching.SORTS[(matching.SORTS.index(self.sort) + 1) % len(matching.SORTS)]
-                self.say(f"Sorted by {self.sort}" + (" order" if self.sort == "git" else ""), "dim")
+                self.say(f"Sorted by {self.sort}" + (" order" if self.sort == "git" else "") + ".", "dim")
             elif key in ("y", "Y") and selected:
                 value = selected["worktree"] if key == "y" else selected["name"]
                 try:
@@ -153,7 +167,7 @@ class ListScreen:
                     self.say(str(error))
             elif key == "e" and selected:
                 if worktrees.missing(selected):
-                    self.say("This worktree's directory is missing; press p to prune it.")
+                    self.say(MISSING, "yellow")
                     continue
                 try:
                     entry = selected
@@ -170,7 +184,7 @@ class ListScreen:
                 self.say("Refreshed.", "dim")
             elif key in ("s", "o") and selected:
                 if worktrees.missing(selected):
-                    self.say("This worktree's directory is missing; press p to prune it.")
+                    self.say(MISSING, "yellow")
                     continue
                 try:
                     if key == "s":
@@ -181,15 +195,15 @@ class ListScreen:
                                                                        terminals=self.terminals))
                     entry["open"] = True
                     self.terminals = None  # A tab was added; scan again next time.
-                    self.say(f"Opened {tabs.tab_label(entry)} in the background." if opened
-                             else f"{entry['name']} already has a tab open.", "green" if opened else "dim")
+                    self.say(f"Opened {tabs.tab_label(entry)} in a background tab in the {self.label} session."
+                             if opened else f"{entry['name']} already has a tab open.", "green" if opened else "dim")
                 except (RuntimeError, OSError) as error:
                     self.say(str(error))
-            elif key in keyboard.SELECT:
+            elif key in keyboard.ENTER:
                 if selected is None:
                     continue
                 if worktrees.missing(selected):
-                    self.say("This worktree's directory is missing; press p to prune it.")
+                    self.say(MISSING, "yellow")
                     continue
                 try:
                     entry = selected
@@ -198,6 +212,49 @@ class ListScreen:
                     return
                 except (RuntimeError, OSError) as error:
                     self.say(str(error))
+            elif isinstance(key, str) and key.isprintable() and not key.isspace() and key not in LIST_KEYS:
+                filtering, selected = True, None
+                query, qpos = keyboard.edit_text(query, len(query), key)
+
+    def reselect(self, paths, index):
+        """The worktree at paths[index] after an action, or when it's gone, the next one still
+        listed, else the one before it."""
+        by_path = {e["worktree"]: e for e in self.entries}
+        return next((by_path[p] for p in paths[index:] + paths[:index][::-1] if p in by_path), None)
+
+    def list_help(self):
+        ui.show_help(self.stdscr, "Worktrees", [("Move", ui.NAVIGATION_HELP), ("Actions", [
+            ("enter", "open the worktree's tab"),
+            ("s", "open the worktree in a split beside your pane"),
+            ("o", "open its tab in the background and stay here"),
+            ("n", "new worktree"),
+            ("dd", "remove the worktree, and close the panes inside it"),
+            ("c", "clean up worktrees with merged PRs or deleted remote branches"),
+            ("p", "prune missing worktrees"),
+            ("e", "open the worktree in your editor, in a new tab"),
+            ("gp", "open its pull request in the browser"),
+            ("y / Y", "copy its path / branch name"),
+            ("S", "sort: Git order, most recent, or by state"),
+            ("r", "refresh"),
+            ("q", "quit"),
+        ]), ("Filter", [
+            ("/", "filter (fuzzy); typing a letter no key uses starts it too"),
+            ("enter", "open the selected worktree"),
+            ("↑ / ↓", "move while typing"),
+            ("tab", "stop typing and keep the filter, to use the keys above"),
+            ("esc", "clear the filter; with no filter, quit"),
+        ]), ("Labels", [
+            ("●", "the worktree you opened this from"),
+            ("3d", "time since the worktree's last commit"),
+            (util.ICONS["main"] + " main checkout", "the original checkout; it can't be removed"),
+            (util.ICONS["tab"] + " tab open", "a Rex pane is open in this worktree"),
+            (util.ICONS["dirty"] + " uncommitted", "has uncommitted changes"),
+            (util.ICONS["ahead"] + " ahead / " + util.ICONS["behind"] + " behind", "commits not yet pushed / pulled"),
+            (util.ICONS["deleted"] + " remote deleted", "its remote branch is gone, often after merging"),
+            (util.ICONS["missing"] + " folder missing", "the folder is gone; press p to prune"),
+            (util.ICONS["pr"] + " #12 open", "its pull request: open, draft, merged, or closed"),
+            ("herdr, t3, claude, rex", "before the folder: the tool that created the worktree"),
+        ])])
 
     def open_pr(self, entry, flash=None):
         """Open the pull request for a worktree or branch in the browser."""
@@ -222,30 +279,41 @@ class ListScreen:
         parts += [f"{n} {label}" for n, label in counts[1:] if n]
         return " · ".join(parts)
 
-    def preview(self, entry, space, compact=False):
-        """The selected worktree's commits. Compact rows leave out the labels' words, so the
-        preview starts with them in full."""
+    def preview(self, entry, space, compact, size):
+        """The selected worktree in size rows: a blank row, its full branch and path (wrapped when
+        there's room), then as many of its commits as fit. Compact rows leave out the labels'
+        words, so the preview starts with them in full."""
         if entry is None:
-            return [[]] * 7
-        path, key = entry["worktree"], (entry["worktree"], self.default)
+            return []
+        rows = [[]]
+        bold, dim = ui.style("bold"), ui.style("dim")
+        if compact:
+            labels = [c for c in ui.badges(entry) if not c[0].endswith("folder missing")]  # Said below.
+            rows += [ui.joined(labels)] if labels else []
+        name, path = entry["name"], util.tilde(entry["worktree"])
+        identity = [[(name, bold), ("  " + path, dim)]]
+        if len(name) + 2 + len(path) > space:
+            wrapped = [[(line, bold)] for line in ui.wrap(name, space)] + [[(line, dim)] for line in ui.wrap_path(path, space)]
+            identity = wrapped if len(rows) + len(wrapped) + 2 <= size else identity
+        rows += identity
+        if worktrees.missing(entry):
+            rows.append([(util.ICONS["missing"] + " " + MISSING, ui.style("yellow"))])
+            return rows[:size]
+        key = (entry["worktree"], self.default)
         if key not in self.commits:
-            self.commits[key] = worktrees.recent_commits(path, base=self.default)
+            self.commits[key] = worktrees.recent_commits(entry["worktree"], PREVIEW_ROWS, self.default)
         description, commits = self.commits[key]
         # "Recent commits", or "Commits" with how many aren't in the default branch yet.
         if description and description != "Recent commits":
-            rows = [ui.section("Commits", description + " · " + util.tilde(path))]
+            rows.append(ui.section("Commits", description))
         else:
-            rows = [ui.section("Recent commits", util.tilde(path))]
-        if compact and ui.badges(entry):
-            rows.insert(0, ui.joined(ui.badges(entry)))
-        if worktrees.missing(entry):
-            rows.append([(util.ICONS["missing"] + " Folder missing", ui.style("red"))])
-        elif not commits:
-            rows.append([("No commits", ui.style("dim"))])
+            rows.append(ui.section("Recent commits"))
+        if not commits:
+            rows.append([("No commits", dim)])
         # Authors only when there's room for them and a readable subject.
         author_width = min(16, max([len(c[2]) for c in commits] + [6])) if space >= 72 else 0
-        for sha, subject, author, stamp in commits[:6 - len(rows)]:
-            rows.append([(sha, ui.style("yellow")), ("  " + ui.short_age(stamp).rjust(3), ui.style("dim"))]
+        for sha, subject, author, stamp in commits[:max(0, size - len(rows))]:
+            rows.append([(sha, ui.style("yellow")), ("  " + ui.short_age(stamp).rjust(3), dim)]
                         + ([("  " + author[:author_width].ljust(author_width), ui.style("blue"))] if author_width else [])
                         + [("  " + subject, 0)])
-        return rows + [[]] * (7 - len(rows))
+        return rows[:size]
