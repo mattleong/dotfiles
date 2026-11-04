@@ -33,23 +33,69 @@ def sort_entries(entries, mode):
     return list(entries)
 
 
+SEPARATORS = "/-_. "
+
+
 def fuzzy(token, text):
-    """Match token as a subsequence of text. Returns (score, positions) or None."""
-    lower, positions, start = text.lower(), [], 0
-    for char in token:
-        found = lower.find(char, start)
-        if found < 0:
-            return None
-        positions.append(found)
-        start = found + 1
-    score = 0
-    for i, pos in enumerate(positions):
-        score += 1
-        if i and positions[i - 1] == pos - 1:
-            score += 3
-        if pos == 0 or text[pos - 1] in "/-_. ":
-            score += 2
+    """Match token as a subsequence of text, scoring the best of every way it matches: each
+    letter scores 1, plus 3 when it follows the letter before it and 2 at the start of a word, and
+    a match with no gaps scores 2 more. So "old" finds the word in chore/old-thing rather than the
+    o in chore. Returns (score, positions) or None."""
+    lower, size = text.lower(), len(text)
+    if not token:
+        return 0, []
+    starts = [p == 0 or text[p - 1] in SEPARATORS for p in range(size)]
+    # best[i][p]: the best (score, previous position) with token[i] matched at position p.
+    previous = [(1 + 2 * starts[p], -1) if lower[p] == token[0] else None for p in range(size)]
+    best = [previous]
+    for char in token[1:]:
+        row, before, at = [None] * size, None, -1  # The best match of the letters so far, ending before p - 1.
+        for p in range(size):
+            if p >= 2 and previous[p - 2] and (before is None or previous[p - 2][0] > before):
+                before, at = previous[p - 2][0], p - 2
+            if lower[p] != char:
+                continue
+            gain = 1 + 2 * starts[p]
+            if before is not None:
+                row[p] = (before + gain, at)
+            if p and previous[p - 1] and (row[p] is None or previous[p - 1][0] + gain + 3 >= row[p][0]):
+                row[p] = (previous[p - 1][0] + gain + 3, p - 1)
+        best.append(row)
+        previous = row
+    ends = [p for p in range(size) if previous[p]]
+    if not ends:
+        return None
+    pos = max(ends, key=lambda p: previous[p][0])
+    score, positions = previous[pos][0], []
+    for row in reversed(best):
+        positions.append(pos)
+        pos = row[pos][1]
+    positions.reverse()
+    if positions[-1] - positions[0] == len(positions) - 1 > 0:
+        score += 2
     return score, positions
+
+
+def strong(typed, name):
+    """Whether a typed name surely means an existing branch: it's the branch's name, or it
+    appears unbroken in it from the start of a word (so main doesn't mean domain), at least two
+    characters long. Slashes, dashes, underscores, and spaces count as the same."""
+    def plain(text):
+        return "".join("-" if c in "/_ " else c for c in text.lower())
+
+    typed, name = plain(typed.strip()), plain(name)
+    if not typed:
+        return False
+    if typed == name:
+        return True
+    if len(typed) < 2:
+        return False
+    found = name.find(typed)
+    while found >= 0:
+        if found == 0 or name[found - 1] in SEPARATORS:
+            return True
+        found = name.find(typed, found + 1)
+    return False
 
 
 def match_entry(entry, query):

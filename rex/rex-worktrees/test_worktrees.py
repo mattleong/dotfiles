@@ -441,9 +441,9 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual((new["branch"], new["action"]), ("test-branch", "create the branch from main"))
         self.assertNotIn("error", new)
         local = branching.plan_branch(cwd, branches, "", self.suggestion(branches, "existing"))
-        self.assertEqual(local["action"], "check out the existing branch")
+        self.assertEqual(local["action"], "check out the existing branch existing")  # Named in full.
         remote = branching.plan_branch(cwd, branches, "", self.suggestion(branches, "origin/remote-only"))
-        self.assertEqual(remote["action"], "create a local branch tracking origin")
+        self.assertEqual(remote["action"], "create a local branch tracking origin/remote-only")
         # A typed name only ever creates a new branch; existing ones are picked from the list.
         self.assertIn("Already checked out", branching.plan_branch(cwd, branches, "main")["error"])
         self.assertIn("select it under Existing branches", branching.plan_branch(cwd, branches, "existing")["error"])
@@ -729,22 +729,26 @@ class WorktreeTests(unittest.TestCase):
 
     def test_fit_parts_keeps_fixed_rows_and_shortens_lists(self):
         text = lambda rows: ["".join(t for t, _ in row) for row in rows]
-        files = ui.items([[(f"  file{i}", 0)] for i in range(10)])
-        panes = ui.items([[("  pane", 0)]])
-        parts = [ui.fixed([("name", 0)]), ui.extra([("path", 0)]), ui.GAP, ui.fixed([("FILES", 0)]), files,
-                 ui.GAP, ui.fixed([("PANES", 0)]), panes, ui.GAP, ui.fixed([("[ ] option", 0)])]
-        self.assertEqual(len(ui.fit_parts(parts, 40)), 19)  # Everything fits.
+        files = ui.items([[(f"  file{i}", 0)] for i in range(10)], heading=[("FILES", 0)], summary=[("10 files", 0)])
+        panes = ui.items([[("  pane", 0)]] * 3, heading=[("PANES", 0)], summary=[("3 panes", 0)])
+        parts = [ui.fixed([("name", 0)]), ui.extra([("path", 0)]), ui.GAP, files, ui.GAP, panes, ui.GAP,
+                 ui.fixed([("[ ] option", 0)])]
+        self.assertEqual(len(ui.fit_parts(parts, 40)), 21)  # Everything fits.
+        self.assertFalse(ui.cut(parts, 21))
         # Lists shorten to a few rows before the gaps go.
-        rows = text(ui.fit_parts(parts, 12))
-        self.assertEqual(len(rows), 12)
-        self.assertEqual(rows[rows.index("FILES") + 1:rows.index("FILES") + 5], ["  file0", "  file1", "  file2", "  …and 7 more"])
-        self.assertIn("", rows)
-        # Then the gaps, then the lists shorten further, and the option row always stays.
-        rows = text(ui.fit_parts(parts, 8))
-        self.assertEqual(rows, ["name", "path", "FILES", "  file0", "  …and 9 more", "PANES", "  pane", "[ ] option"])
-        rows = text(ui.fit_parts(parts, 6))
-        self.assertEqual(rows, ["name", "path", "FILES", "PANES", "  pane", "[ ] option"])  # The heading keeps the count.
-        self.assertNotIn("path", text(ui.fit_parts(parts, 4)))  # Extra rows go only when nothing else can.
+        rows = text(ui.fit_parts(parts, 16))
+        self.assertEqual(len(rows), 16)
+        self.assertTrue(ui.cut(parts, 16))
+        self.assertEqual(rows[rows.index("FILES") + 1:rows.index("PANES")],
+                         ["  file0", "  file1", "  file2", "  file3", "  …and 6 more", ""])
+        # Then the gaps and the extra rows; a list that fits whole gets the rows first.
+        rows = text(ui.fit_parts(parts, 9))
+        self.assertEqual(rows, ["name", "FILES", "  file0", "  …and 9 more", "PANES", "  pane", "  pane", "  pane",
+                                "[ ] option"])
+        # Short of rows, each list keeps its summary rather than a heading on its own.
+        self.assertEqual(text(ui.fit_parts(parts, 6)), ["name", "FILES", "  file0", "  …and 9 more", "3 panes", "[ ] option"])
+        self.assertEqual(text(ui.fit_parts(parts, 4)), ["name", "10 files", "3 panes", "[ ] option"])
+        self.assertEqual(len(ui.all_rows(parts)), 21)
 
     def test_compose_pins_the_bottom_rows(self):
         rows = ui.compose(24, [[("title", 0)]], [[("body", 0)]] * 50, [[("status", 0)], [("keys", 0)]])
@@ -951,6 +955,10 @@ class WorktreeTests(unittest.TestCase):
         row = "".join(t for t, _ in screen_remove.closing_rows([group], 47, "session:picker", "repo")[0])
         self.assertLessEqual(len(row), 47)
         self.assertTrue(row.endswith("(repo session)  the whole tab"))
+        # A longer session name: what closes goes on its own row, and nothing overflows.
+        rows = ["".join(t for t, _ in r) for r in screen_remove.closing_rows([group], 47, "session:picker", "reviewopusr3")]
+        self.assertEqual(rows[1], "    the whole tab")
+        self.assertTrue(rows[0].endswith("(reviewopusr3 session)") and len(rows[0]) <= 47)
         self.assertEqual(screen_remove.closing_summary([dict(group, here=True)], "session:picker", "repo"),
                          "Closes the tab experiment/very-long-branch-name-to-test-truncation (this tab).")
 
@@ -971,6 +979,170 @@ class WorktreeTests(unittest.TestCase):
     def test_help_puts_wide_keys_above_their_descriptions(self):
         body = ui.help_body([("Labels", [("herdr, t3, claude, rex", "the tool"), ("3d", "age")])], 47)
         self.assertEqual(["".join(t for t, _ in row) for row in body[2:]], ["herdr, t3, claude, rex", "    the tool", "3d", "    age"])
+
+    def test_fuzzy_prefers_whole_words_to_scattered_letters(self):
+        names = ["feature/payments-refactor-with-a-long-descriptive-name", "chore/old-thing", "fix/odd-log"]
+        entries = [{"name": n, "worktree": "/w/" + str(i)} for i, n in enumerate(names)]
+        self.assertEqual(matching.filter_entries(entries, "old")[0]["name"], "chore/old-thing")
+        self.assertEqual(matching.fuzzy("old", "chore/old-thing")[1], [6, 7, 8])  # Not the o in chore.
+        self.assertGreater(matching.fuzzy_all("old", names[1]), matching.fuzzy_all("old", names[0]))
+        self.assertEqual(matching.fuzzy("flog", "fix/login-bug")[1], [0, 4, 5, 6])
+        self.assertIsNone(matching.fuzzy("zz", "fix/login"))
+        self.assertTrue(matching.strong("login", "feature/login-redirect"))
+        self.assertTrue(matching.strong("fix login", "fix/login-redirect"))
+        self.assertFalse(matching.strong("main", "experiment/domain-names"))  # Not from the start of a word.
+        self.assertFalse(matching.strong("remote-pr", "feature/remote-only-pr"))
+        self.assertFalse(matching.strong("l", "login"))
+
+    def new_worktree_frames(self, keys, branches, size=(16, 50), setup=""):
+        screen = FakeScreen(keys, size)
+        picker = self.picker(screen)
+        picker.branches = lambda: branches
+        picker.new_branch_screen = lambda *args: self.fail("enter went on to name a branch")
+        with patch.object(worktrees, "setup_command", return_value=setup):
+            drive(screen, lambda: picker.new_screen(root=True))
+        return [screen.text(i) for i in range(len(screen.frames))]
+
+    def test_new_worktree_keeps_the_create_row_for_weak_matches(self):
+        long_name = "experiment/very-long-branch-name-to-test-truncation-behaviour"
+        for name in (long_name, "feature/remote-only-pr", "release/login-redirect"):
+            git(self.repo, "branch", name)
+        cwd, branches = self.setup_branches()
+        for typed in ("main", "remote-pr"):
+            frames = self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches)
+            rows = next(f for f in frames if any(line.startswith("/ " + typed) for line in f))
+            self.assertIn(f"› + Create branch “{typed}”…", rows, typed)
+        # A word the branch starts with, or its whole name, selects it, and the plan names it.
+        frames = self.new_worktree_frames(list("login") + ["\x1b", "\x1b"], branches, (24, 60))
+        rows = next(f for f in frames if any(line.startswith("/ login") for line in f))
+        self.assertTrue(any(line.startswith("› release/login-redirect") for line in rows))
+        plan = "".join(line[7:] for line in rows[next(i for i, line in enumerate(rows) if line.startswith("enter:")):])
+        self.assertIn("check out the existing branch release/login-redirect", plan)
+
+    def test_already_checked_out_shows_whichever_row_is_selected(self):
+        git(self.repo, "branch", "main-old")
+        cwd, branches = self.setup_branches()
+        frames = self.new_worktree_frames(list("main") + ["\x1b", "\x1b"], branches, (24, 60))
+        rows = next(f for f in frames if any(line.startswith("/ main") for line in f))
+        self.assertTrue(any(line.startswith("› main-old") for line in rows))
+        create = next(i for i, line in enumerate(rows) if "Create branch “main”" in line)
+        self.assertIn("Already checked out", rows[create + 1])  # Right below the create row.
+
+    def test_new_worktree_plan_keeps_the_branch_tail_and_setup(self):
+        names = ["experiment/very-long-branch-name-to-test-truncation-behaviour-" + "x" * 40 + "-available-" + tail
+                 for tail in ("alpha", "beta")]
+        for name in names:
+            git(self.repo, "branch", name)
+        cwd, branches = self.setup_branches()
+        setup = 'printf "sandbox setup complete\\n"'
+        frames = self.new_worktree_frames(list("available") + [curses.KEY_DOWN, "\t", "q", "\x1b", "\x1b"],
+                                          branches, (16, 50), setup)
+        rows = next(f for f in frames if any(line.startswith("/ available") for line in f))
+        plan = rows[next(i for i, line in enumerate(rows) if line.startswith("enter:")):]
+        self.assertTrue(any(line.rstrip().endswith("available-alpha") for line in plan), plan)  # The selected branch.
+        self.assertTrue(any("then runs printf" in line for line in plan))
+        self.assertIn("tab details", rows[-1])
+        details = next(f for f in frames if f[0].startswith("New worktree — details"))
+        self.assertIn(names[1], "".join(line[7:].strip() for line in details))  # ↓ chose beta; in full.
+        # Long destinations keep their distinguishing ends.
+        paths = [branching.new_path(cwd, name).name for name in names]
+        self.assertEqual([len(p) for p in paths], [100, 100])
+        self.assertTrue(paths[0].endswith("available-alpha") and paths[1].endswith("available-beta"))
+
+    def test_new_branch_name_cant_clash_with_a_branch_folder(self):
+        git(self.repo, "branch", "docs/readme")
+        git(self.repo, "branch", "spike")
+        cwd, branches = self.setup_branches()
+        self.assertIn("docs/readme", branching.plan_branch(cwd, branches, "docs")["error"])
+        self.assertEqual(branching.plan_branch(cwd, branches, "spike/two")["error"], "spike/two can't be a branch while spike exists.")
+        self.assertNotIn("error", branching.plan_branch(cwd, branches, "docs-two"))
+
+    def test_remove_dialog_keeps_a_line_for_every_list_in_a_small_pane(self):
+        name = "experiment/very-long-branch-name-to-test-truncation-behaviour-with-another-distinctive-final-suffix"
+        entry = {"name": name, "worktree": str(self.repo), "branch": "refs/heads/" + name}
+        files = [f"?? file{i}.txt" for i in range(16)]
+        closing = [{"window": {"window_id": "w1", "label": "Shell", "session_id": "s"}, "panes": ["a", "b"],
+                    "total": 4, "whole": False, "here": True},
+                   {"window": {"window_id": "w2", "label": name, "session_id": "other"}, "panes": ["c"],
+                    "total": 1, "whole": True, "here": False}]
+        options = [{"id": "force", "checked": False, "label": [("Discard uncommitted changes", 0)]}]
+
+        def show(size, keys):
+            screen = FakeScreen(keys, size)
+            picker = self.picker(screen)
+            picker.session = "s"
+            self.assertIsNone(drive(screen, lambda: picker.removal_options(entry, files, closing, None, options)))
+            return screen
+
+        screen = show((16, 50), ["\t", "G", "q", "q"])
+        rows = screen.text(0)
+        self.assertIn("  …and 14 more (tab lists all)", rows)
+        self.assertIn("  Shell (this tab)  2 of 4 panes; the tab stays", rows)  # The short list whole.
+        self.assertIn("The branch will be kept.", rows)
+        self.assertEqual(sum("final-suffix" in line for line in rows), 1)  # The name, once.
+        footer = "".join(t for t, _ in ui.fit(screen.frames[0][-1], 47))
+        self.assertTrue(footer.rstrip().endswith("q cancel"))
+        details = [screen.text(i) for i in range(len(screen.frames)) if screen.text(i)[0].startswith("Remove worktree — details")]
+        self.assertTrue(details and any("file15.txt" in line for line in details[-1]))  # Scrolled to the end.
+        rows = show((12, 50), ["q"]).text(0)
+        self.assertIn("  16 uncommitted files  (tab lists them)", rows)  # A line for each list, at least.
+        self.assertTrue(any("PANES THAT WILL CLOSE" in line or "3 panes will close" in line for line in rows), rows)
+
+    def test_destructive_footers_keep_cancel_over_help(self):
+        row = "".join(t for t, _ in ui.fit(ui.footer(enter="remove 2", move=True, toggle=True, back="cancel"), 47))
+        self.assertEqual(row.split(), ["space", "toggle", "enter", "remove", "2", "q", "cancel"])
+        row = "".join(t for t, _ in ui.fit(ui.footer(enter="open", move=True, back="quit"), 30))
+        self.assertIn("? help", row)
+
+    def test_status_messages_keep_their_line_breaks(self):
+        flash = ui.Flash()
+        flash.set("please run:\n  gh auth login\nAlternatively, set GH_TOKEN.")
+        rows = ["".join(t for t, _ in row) for row in flash.rows(60)]
+        self.assertEqual(rows[1:], ["  gh auth login", "Alternatively, set GH_TOKEN."])
+
+    def test_folder_column_leaves_out_the_shared_prefix(self):
+        entries = [{"name": "main", "worktree": "/w/myrepo", "main": True, "track": []},
+                   {"name": "b", "worktree": "/w/myrepo-login", "track": []}]
+        widths = ui.column_widths(entries, 120)
+        rows = ["".join(t for t, _ in ui.entry_row(e, False, widths)).rstrip() for e in entries]
+        self.assertTrue(rows[0].endswith(" myrepo") and rows[1].endswith(" login"))
+        hits = matching.match_entry(entries[1], "logi")[2]
+        row = ui.entry_row(entries[1], False, widths, (0, set(), hits))
+        self.assertEqual(hits, {7, 8, 9, 10})
+        self.assertEqual([t for t, _ in row[-2:]], ["logi", "n"])  # The hits follow the shortened name.
+
+    def test_list_with_no_matches_starts_a_new_worktree_for_the_filter(self):
+        entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False, "track": []}]
+        screen = FakeScreen(["/"] + list("zzz") + ["\n", "q"], (24, 80))
+        picker = self.picker(screen, entries)
+        started = []
+        picker.new_screen = lambda root=False, text="": started.append(text)
+        drive(screen, picker.list_screen)
+        frame = next(screen.text(i) for i in range(len(screen.frames)) if "/ zzz" in screen.text(i)[2])
+        self.assertIn("    enter new worktree for “zzz”", frame)
+        self.assertEqual(started, ["zzz"])
+
+    def test_cleanup_detail_sits_under_the_options(self):
+        entries = [{"name": "fix/done", "worktree": "/w/done", "track": ["remote deleted"], "dirty": False}]
+        screen = FakeScreen(["q"], (40, 140))
+        picker = self.picker(screen, entries)
+        picker.session, picker.terminals = "s", []
+        with patch.object(worktrees, "missing", return_value=False):
+            drive(screen, picker.cleanup)
+        rows = screen.text(0)
+        option = next(i for i, line in enumerate(rows) if "Also delete their branches" in line)
+        self.assertTrue(rows[option + 2].startswith("Its remote branch was deleted."))
+
+    def test_prune_rows_keep_the_folder_name(self):
+        stale = [{"name": "chore/bump-deps", "worktree": "/private/tmp/rexwt-review-opus-r3/reviewopusr3-gone",
+                  "prunable": "gitdir file points to non-existent location"}]
+        screen = FakeScreen(["q"], (16, 50))
+        picker = self.picker(screen, stale)
+        drive(screen, picker.prune)
+        row = next(line for line in screen.text(0) if "chore/bump-deps" in line)
+        self.assertLessEqual(len(row.rstrip()), 47)
+        self.assertTrue(row.rstrip().endswith("reviewopusr3-gone"))
+
 
 if __name__ == "__main__":
     unittest.main()

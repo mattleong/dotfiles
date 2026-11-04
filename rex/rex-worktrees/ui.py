@@ -96,6 +96,11 @@ def wrap(text, width):
     return textwrap.wrap(text, max(1, width)) or [""]
 
 
+def wrap_lines(text, width):
+    """Like wrap, but keeping the text's own line breaks, such as in a message from gh or Git."""
+    return [line for paragraph in text.strip().splitlines() or [""] for line in wrap(paragraph, width)]
+
+
 def wrap_path(text, width):
     """Like wrap, but breaking a long path after a slash rather than inside a folder's name."""
     width = max(1, width)
@@ -140,54 +145,83 @@ def extra(*rows):
     return ("extra", list(rows))
 
 
-def items(rows, indent="  "):
-    """A list that shortens to its first rows and a line such as "…and 12 more"."""
-    return ("items", list(rows), indent)
+def items(rows, indent="  ", heading=None, summary=None, hint=""):
+    """A list, under an optional heading, that shortens to its first rows and a line such as
+    "…and 12 more", followed by hint. Given a summary row, such as "16 uncommitted files", the list
+    shrinks to just that row rather than vanishing."""
+    return ("items", list(rows), indent, [heading] if heading else [], summary, hint)
 
 
 LIST_COMFORT = 4  # Lists shorten to this many rows before the blank gaps between parts drop out.
 
 
+def full_size(part):
+    return len(part[1]) + (len(part[3]) if part[0] == "items" else 0)
+
+
 def fit_parts(parts, room):
     """Fit a screen's body parts in room rows. Lists shorten first, to LIST_COMFORT rows each;
-    then the blank gaps drop out; then lists shorten further, each keeping at least two rows when
-    it keeps any (the heading above it still gives the count). Extra rows drop out only when the
-    lists can't make enough room. Returns the rows."""
+    then the blank gaps drop out, then the extra rows; then lists shorten further, each keeping at
+    least its summary row, or else its heading and two rows when it keeps any. Lists that can be
+    shown whole get the rows first, smallest first. Returns the rows."""
     parts = list(parts)
     lists = [p for p in parts if p[0] == "items"]
 
     def others():
         return sum(len(p[1]) for p in parts if p[0] != "items")
 
-    comfort = sum(min(len(p[1]), LIST_COMFORT) for p in lists)
+    comfort = sum(min(full_size(p), len(p[3]) + LIST_COMFORT) for p in lists)
     while others() + comfort > room and GAP in parts:
         parts.remove(GAP)
-    while others() > room and any(p[0] == "extra" for p in parts):
+    while others() + comfort > room and any(p[0] == "extra" for p in parts):
         parts.remove(next(p for p in reversed(parts) if p[0] == "extra"))
     budget = room - others()
-    if budget >= sum(len(p[1]) for p in lists):
-        return [row for part in parts for row in part[1]]
-    # Share the rows out a little at a time, so every list keeps some.
+    if budget >= sum(full_size(p) for p in lists):
+        return [row for part in parts for row in (part[3] + part[1] if part[0] == "items" else part[1])]
     given = {id(p): 0 for p in lists}
+    for p in lists:  # Every summary first, so no list vanishes.
+        if p[4] and budget >= 1:
+            given[id(p)], budget = 1, budget - 1
+    for p in sorted(lists, key=full_size):  # Then whole lists, smallest first.
+        if full_size(p) - given[id(p)] <= budget:
+            budget -= full_size(p) - given[id(p)]
+            given[id(p)] = full_size(p)
     progress = True
-    while progress:
+    while progress:  # Then the rows left, a little at a time, so every list keeps some.
         progress = False
         for p in lists:
-            count = len(p[1])
-            step = min(count, 2) if given[id(p)] == 0 else 1
-            if given[id(p)] < count and 0 < step <= budget:
-                given[id(p)] += step
+            least = len(p[3]) + 2
+            target = min(full_size(p), least) if given[id(p)] < least else given[id(p)] + 1
+            step = target - given[id(p)]
+            if given[id(p)] < full_size(p) and 0 < step <= budget:
+                given[id(p)] = target
                 budget -= step
                 progress = True
     out = []
     for part in parts:
-        rows = part[1]
-        if part[0] == "items" and given[id(part)] < len(rows):
-            shown = max(0, given[id(part)] - 1)
-            more = [[(f"{part[2]}…and {len(rows) - shown} more", style("dim"))]] if given[id(part)] else []
-            rows = rows[:shown] + more
-        out += rows
+        if part[0] != "items":
+            out += part[1]
+            continue
+        _, rows, indent, heading, summary, hint = part
+        size = given[id(part)]
+        if size >= full_size(part):
+            out += heading + rows
+        elif size >= len(heading) + 2:
+            shown = size - len(heading) - 1
+            out += heading + rows[:shown] + [[(f"{indent}…and {len(rows) - shown} more{hint}", style("dim"))]]
+        elif size and summary:
+            out.append(summary)
     return out
+
+
+def all_rows(parts):
+    """Every row of a screen's body parts, with nothing shortened, for a details screen."""
+    return fit_parts(parts, sum(full_size(p) for p in parts))
+
+
+def cut(parts, room):
+    """Whether fitting the parts in room rows leaves anything out."""
+    return sum(full_size(p) for p in parts) > room
 
 
 def scroll_top(top, index, count, capacity):
@@ -362,7 +396,23 @@ def middle(text, width, hits=()):
 
 CELLS = [("PR", pr_cell), ("SYNC", sync_cell), ("STATE", state_cell)]
 MIN_BRANCH = 28  # The branch keeps this much before the labels turn into icons.
-MIN_FOLDER = 8  # Narrower than this, the folder column is hidden.
+MIN_FOLDER = 12  # Narrower than this, the folder column is hidden.
+
+
+def folder_prefix(entries):
+    """The main checkout's folder name and a dash, such as "app-", which the other worktrees'
+    folders often start with; the folder column leaves it out."""
+    main = next((e for e in entries if e.get("main")), None)
+    return os.path.basename(main["worktree"]) + "-" if main else ""
+
+
+def folder_name(entry, prefix=""):
+    """The worktree's folder name, without the prefix the worktrees share. Returns (name, how
+    many characters were left out)."""
+    name = os.path.basename(entry["worktree"])
+    if prefix and name.startswith(prefix) and len(name) > len(prefix):
+        return name[len(prefix):], len(prefix)
+    return name, 0
 
 
 def column_widths(entries, space=None):
@@ -372,7 +422,8 @@ def column_widths(entries, space=None):
     or is hidden when that's under MIN_FOLDER. When the labels' words don't fit beside the whole
     branch, they turn into short words, such as "main" and "gone", and the branch narrows, to
     MIN_BRANCH at most. When even that isn't enough, rows turn compact: the branch, its age, and
-    the labels' icons."""
+    the labels' icons. Folders leave out the main checkout's folder name, which the others' often
+    start with."""
     longest = max([len(e["name"]) for e in entries] + [6])
     widths = {"BRANCH": longest, "compact": False, "short": False}
 
@@ -385,7 +436,8 @@ def column_widths(entries, space=None):
 
     widths.update(cells(False))
     widths["SOURCE"] = max([len(worktrees.worktree_source(e)) for e in entries] + [0])
-    folder = max([len(os.path.basename(e["worktree"])) for e in entries] + [0])
+    widths["PREFIX"] = folder_prefix(entries)
+    folder = max([len(folder_name(e, widths["PREFIX"])[0]) for e in entries] + [0])
     folder = max(len("FOLDER"), (widths["SOURCE"] + 1 if widths["SOURCE"] else 0) + folder)
     widths["FOLDER"] = folder
     if space is None:
@@ -447,7 +499,8 @@ def entry_row(entry, selected, widths, match=None):
         if widths["SOURCE"]:
             row.append((worktrees.worktree_source(entry).ljust(widths["SOURCE"]) + " ", style("blue")))
             room -= widths["SOURCE"] + 1
-        folder, hits = middle(os.path.basename(entry["worktree"]), max(1, room), folder_hits)
+        folder, skipped = folder_name(entry, widths.get("PREFIX", ""))
+        folder, hits = middle(folder, max(1, room), {h - skipped for h in folder_hits if h >= skipped})
         row += highlighted(folder, hits, style("dim"))
     return Selected(row) if selected else row
 
@@ -492,7 +545,7 @@ class Flash:
         if self.left() is None:
             return []
         icon = util.ICONS[self.ICONS.get(self.tone, "info")]
-        lines = wrap(icon + " " + self.text, width)
+        lines = wrap_lines(icon + " " + self.text, width)
         if len(lines) > self.LINES:
             lines = lines[:self.LINES]
             lines[-1] = lines[-1][:width - 1] + "…"
@@ -513,11 +566,14 @@ def header(title, repo, extra="", note=""):
             + ([("   " + note, style("cyan"), 2)] if note else []))
 
 
-def footer(enter=None, move=False, slash=None, toggle=False, actions=(), back="back", clear_filter=False):
+def footer(enter=None, move=False, slash=None, toggle=False, actions=(), back="back", clear_filter=False,
+           details=False):
     """The key hints at the bottom of every screen, always in the same order. In a narrow pane, the
     hints drop out: j/k first, then the actions from last to first, then esc and q. enter, /, and ?
-    stay, and ? lists every key."""
+    stay, and ? lists every key. On a screen that confirms something (back is "cancel"), q stays
+    instead, and ? goes before tab, which shows what was cut to fit."""
     actions = list(actions)
+    cancel = back == "cancel"
     items = [("j/k", "move", len(actions) + 3)] if move else []
     if slash:
         items.append(("/", slash))
@@ -526,14 +582,16 @@ def footer(enter=None, move=False, slash=None, toggle=False, actions=(), back="b
     if enter:
         items.append(("enter", enter))
     items += [(key, label, i + 3) for i, (key, label) in enumerate(actions)]
-    items.append(("?", "help"))
+    if details:
+        items.append(("tab", "details", 1))
+    items.append(("?", "help", 2) if cancel else ("?", "help"))
     if clear_filter:
         items.append(("esc", "clear filter", 2))
-    items.append(("q", back, 1))
+    items.append(("q", back) if cancel else ("q", back, 1))
     return help_row(*items)
 
 
-def typing_footer(enter):
+def typing_footer(enter="open"):
     """The key hints while typing in a filter: enter acts on the selected row at once."""
     return help_row(("enter", enter), ("↑/↓", "move", 2), ("tab", "done", 1), ("esc", "clear"))
 
@@ -621,28 +679,39 @@ def show_error(stdscr, message, title="Something went wrong", hint=""):
     """Show a message too long for the status line, wrapped, keeping its line breaks, until it's
     closed. j/k scroll it when it doesn't fit."""
     def body(width):
-        lines = []
-        for i, paragraph in enumerate(message.strip().splitlines() or [""]):
-            lines += wrap((util.ICONS["error"] + " " if i == 0 else "") + paragraph.strip(), width)
+        lines = wrap_lines(util.ICONS["error"] + " " + message.strip(), width)
         rows = [[]] + [[(line, style("red"))] for line in lines]
         return rows + ([[]] + [[(line, style("dim"))] for line in wrap(hint, width)] if hint else [])
     page(stdscr, title, body, close="close")
 
 
+DETAILS_HELP = ("tab", "everything this would do, in full, when the pane is too small to show it")
+
+
+def show_details(stdscr, title, parts):
+    """Every row of body parts (see fit_parts), given by a function of the pane's width, scrolling."""
+    page(stdscr, title + " — details", lambda width: [[]] + all_rows(parts(width)))
+
+
 def confirm(stdscr, title, repo, parts, keys, enter, help_items):
     """Show body parts (see fit_parts), given by a function of the pane's width, and wait for one
-    of keys (a dict of key -> result). q and esc cancel."""
+    of keys (a dict of key -> result). q and esc cancel; tab shows what was cut to fit."""
     keyboard.set_timeout(stdscr, -1)
     while True:
         height = stdscr.getmaxyx()[0]
-        top, bottom = [header(title, repo), []], [[], footer(enter=enter, back="cancel")]
-        body = fit_parts(parts(space(stdscr)), height - margin(height) - len(top) - len(bottom))
-        render(stdscr, compose(height, top, body, bottom))
+        body_parts = parts(space(stdscr))
+        room = height - margin(height) - 4
+        top, bottom = [header(title, repo), []], [[], footer(enter=enter, back="cancel",
+                                                              details=cut(body_parts, room))]
+        render(stdscr, compose(height, top, fit_parts(body_parts, room), bottom))
         key = keyboard.read_key(stdscr)
         if key in keyboard.CLOSE:
             return None
         if key == "?":
-            show_help(stdscr, title, [("Keys", help_items + [CLOSE_HELP])])
+            show_help(stdscr, title, [("Keys", help_items + [DETAILS_HELP, CLOSE_HELP])])
+            continue
+        if key == "\t":
+            show_details(stdscr, title, parts)
             continue
         if key in keyboard.ENTER:
             key = "\n"

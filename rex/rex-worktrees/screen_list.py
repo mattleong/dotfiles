@@ -58,12 +58,14 @@ class ListScreen:
             else:
                 note = f"{len(shown)} of {len(self.entries)} match" if query.strip() else ""
             status = self.flash.rows(space) or [[(note, ui.style("dim"))] if note else []]
+            # With nothing matching, enter (while typing) or n starts a new worktree for the filter.
+            missing = query.strip() if not shown else ""
             if filtering:
-                footer = ui.typing_footer("open")
+                footer = ui.typing_footer("new" if missing else "open")
             else:
                 finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e))
                 stale = sum(1 for e in self.entries if "prunable" in e)
-                footer = ui.footer(enter="open", move=True, slash="filter", back="quit", clear_filter=bool(query),
+                footer = ui.footer(enter="new" if missing else "open", move=True, slash="filter", back="quit", clear_filter=bool(query),
                                    actions=[("s", "split"), ("n", "new"), ("dd", "remove")]
                                    + ([("c", f"clean up ({finished})")] if finished else [])
                                    + ([("p", f"prune ({stale})")] if stale else []))
@@ -78,11 +80,14 @@ class ListScreen:
 
             if not keyboard.pending_input(stdscr):
                 heading[1] = ui.with_position(search, index, len(shown), capacity, space)
-                heading.append(ui.header_row(widths))
+                heading.append(ui.header_row(widths) if shown else [])  # No titles over an empty list.
                 body = [ui.entry_row(e, e is selected, widths, matching.match_entry(e, query) if query.strip() else None)
                         for e in shown[top:top + capacity]]
                 if not shown:
                     body.append([("    No matching worktrees", ui.style("dim"))])
+                    if missing:
+                        body.append([("    " + ("enter" if filtering else "n"), ui.style("bold")),
+                                     (f" new worktree for “{missing}”", ui.style("dim"))])
                 if preview_rows:  # Right below the list's rows.
                     body += [[]] * (capacity - len(body))
                     body += self.preview(selected, space, widths["compact"], preview_rows)
@@ -145,7 +150,7 @@ class ListScreen:
             elif key in keyboard.CLOSE:
                 return
             elif key == "n":
-                if self.new_screen():
+                if self.new_screen(text=missing):
                     return
                 keyboard.set_timeout(stdscr, -1)
             elif key == "p":
@@ -201,6 +206,9 @@ class ListScreen:
                     self.say(str(error))
             elif key in keyboard.ENTER:
                 if selected is None:
+                    if missing and self.new_screen(text=missing):
+                        return
+                    keyboard.set_timeout(stdscr, -1)
                     continue
                 if worktrees.missing(selected):
                     self.say(MISSING, "yellow")
@@ -226,7 +234,7 @@ class ListScreen:
             ("enter", "open the worktree's tab"),
             ("s", "open the worktree in a split beside your pane"),
             ("o", "open its tab in the background and stay here"),
-            ("n", "new worktree"),
+            ("n", "new worktree; when nothing matches the filter, starting from its text"),
             ("dd", "remove the worktree, and close the panes inside it"),
             ("c", "clean up worktrees with merged PRs or deleted remote branches"),
             ("p", "prune missing worktrees"),
@@ -238,7 +246,7 @@ class ListScreen:
             ("q", "quit"),
         ]), ("Filter", [
             ("/", "start typing a filter (fuzzy); while typing, every letter goes into it"),
-            ("enter", "open the selected worktree"),
+            ("enter", "open the selected worktree; when nothing matches, start a new worktree from the text"),
             ("↑ / ↓", "move while typing; also ctrl+p / ctrl+n"),
             ("home / end", "the first / last row while typing"),
             ("tab", "stop typing and keep the filter, to use the keys above"),

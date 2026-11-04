@@ -30,11 +30,17 @@ The list's letters are commands, so its filter starts only with `/`. Screens bui
 input (the list's filter while typing, New worktree, and New branch) take every printable key as
 text, and move their list with keys that can't be text: the arrows and ctrl+n/p, plus page up/down
 and home/end where the list scrolls. esc clears the text, then goes back. Keep new keys within
-that split.
+that split. In New worktree and New branch, tab, which can't be text either, shows what enter
+would do in full; confirmations use it the same way.
+
+While you type in New worktree, its first row, which creates a branch from the text, stays
+selected unless the text is an existing branch's name or the start of a word in one (see
+`matching.strong`), so enter never checks out a branch you didn't mean.
 
 Every screen keeps its key hints pinned to the bottom of the pane, and lists shorten or scroll to
 fit (see `compose` and `fit_parts` in `ui.py`), so check changes in a short pane, such as 50×16, as
-well as a large one.
+well as a large one. What's cut stays inspectable: each list keeps at least a line saying how many
+it holds, and tab shows everything.
 
 Rex runs the picker with the system `python3`, which can be as old as 3.9, so keep the code
 compatible with it.

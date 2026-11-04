@@ -175,7 +175,7 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
 
     def say(self, text, tone="red", flash=None):
         """Show a status message. An error too long for the status line gets its own screen."""
-        if tone == "red" and len(ui.wrap(util.ICONS["error"] + " " + text, ui.space(self.stdscr))) > ui.Flash.LINES:
+        if tone == "red" and len(ui.wrap_lines(util.ICONS["error"] + " " + text, ui.space(self.stdscr))) > ui.Flash.LINES:
             ui.show_error(self.stdscr, text)
             return
         (flash or self.flash).set(text, tone)

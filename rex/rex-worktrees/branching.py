@@ -35,9 +35,12 @@ def worktree_root_key(cwd):
 
 def new_path(cwd, branch):
     """Where a new worktree goes: a folder named after the branch, or, when that folder already
-    exists (for example a/b and a-b both make a-b), the name plus a short hash of the branch."""
+    exists (for example a/b and a-b both make a-b), the name plus a short hash of the branch. A
+    name over 100 characters loses its middle, keeping the end, where long names usually differ."""
     folder = Path.home() / ".local/share/rex/worktrees" / worktree_root_key(cwd)
-    slug = branch.replace("/", "-")[:100]
+    slug = branch.replace("/", "-")
+    if len(slug) > 100:
+        slug = slug[:48] + "--" + slug[-50:]
     path = folder / slug
     if path.exists():
         path = folder / (slug + "-" + hashlib.sha256(branch.encode()).hexdigest()[:8])
@@ -87,15 +90,16 @@ def load_branches(cwd, entries, now=None):
 
 def plan_branch(cwd, branches, text, suggestion=None, base=None):
     """Describe what creating a worktree would do: for an existing branch, or a new one named by text.
-    The action leaves out the branch's name, which the screen already shows beside it."""
+    An existing branch's action names it in full, since its row in the list may be cut short, with a
+    shorter form for a small pane; a new branch's leaves its name out, which the screen shows above."""
     base = base or {"ref": "HEAD", "label": branches["head"]}
     if suggestion:
         name, ref = suggestion["name"], suggestion["ref"]
         if suggestion["kind"] == "local":
-            plan = {"branch": name, "action": "check out the existing branch", "args": [name]}
+            plan = {"branch": name, "action": f"check out the existing branch {name}", "short": f"check out {name}",
+                    "args": [name]}
         else:
-            remote = ref[:-len(name) - 1]
-            plan = {"branch": name, "action": f"create a local branch tracking {remote}",
+            plan = {"branch": name, "action": f"create a local branch tracking {ref}", "short": f"track {ref}",
                     "args": ["--track", "-b", name, None, ref]}
     else:
         name = normalize_branch(text)
@@ -109,6 +113,9 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
             return {"branch": name, "error": "A branch with this name exists; select it under Existing branches."}
         if branches["remote"].get(name):
             return {"branch": name, "error": f"{branches['remote'][name][0]} exists; select it under Existing branches."}
+        clash = ref_clash(name, branches["local"])
+        if clash:
+            return {"branch": name, "error": f"{name} can't be a branch while {clash} exists."}
         # --no-track keeps a branch started from origin/main from pushing to or tracking main.
         plan = {"branch": name, "action": f"create the branch from {base['label']}",
                 "args": ["--no-track", "-b", name, None, base["ref"]]}
@@ -117,6 +124,16 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
         plan["error"] = "Destination already exists: " + util.tilde(str(path))
     plan["path"] = path
     return plan
+
+
+def ref_clash(name, local):
+    """A branch that rules out the name, because one would be a folder of the other: docs/readme
+    rules out docs, and docs rules out docs/readme."""
+    parts = name.split("/")
+    for i in range(1, len(parts)):
+        if "/".join(parts[:i]) in local:
+            return "/".join(parts[:i])
+    return next((b for b in sorted(local) if b.startswith(name + "/")), None)
 
 
 def create_worktree(cwd, plan):
