@@ -58,6 +58,7 @@ RECENT_DAYS = 30
 def load_branches(cwd, entries, now=None):
     """Collect branches without worktrees: recent local ones, then remote-only ones, then older local ones."""
     checked_out = {e["branch"].removeprefix("refs/heads/"): e["worktree"] for e in entries if "branch" in e}
+    missing = {e["worktree"] for e in entries if worktrees.missing(e)}
 
     def refs(namespace):
         out = util.git_text(cwd, "for-each-ref", "--sort=-committerdate",
@@ -90,7 +91,7 @@ def load_branches(cwd, entries, now=None):
                     if name not in local_names and name not in checked_out]
     suggestions += [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in available if stamp < cutoff]
     return {"local": local_names, "remote": remote, "remotes": remotes, "checked_out": checked_out,
-            "suggestions": suggestions, "head": head, "bases": bases}
+            "missing": missing, "suggestions": suggestions, "head": head, "bases": bases}
 
 
 def split_remote(text, branches):
@@ -104,12 +105,17 @@ def split_remote(text, branches):
 
 
 def query_for(text, suggestion, branches):
-    """What to match a suggestion's name against: for text such as origin/fix, the rest, when the
-    branch is on that remote; else the text."""
+    """What to match a suggestion's name against, or None when it can't match. Text such as
+    origin/fix names a remote, so it matches origin's branches by the rest, fix, and never another
+    remote's, even one with the same name. A local branch matches by the rest when that remote has
+    a branch of its name, since a remote branch is checked out as the local one of the same name."""
     split = split_remote(text, branches)
-    if split and f"{split[0]}/{suggestion['name']}" in branches["remote"].get(suggestion["name"], ()):
-        return split[1]
-    return text
+    if not split:
+        return text
+    remote, rest = split
+    if suggestion["kind"] == "remote":
+        return rest if suggestion["ref"] == f"{remote}/{suggestion['name']}" else None
+    return rest if f"{remote}/{suggestion['name']}" in branches["remote"].get(suggestion["name"], ()) else text
 
 
 def plan_branch(cwd, branches, text, suggestion=None, base=None):
@@ -134,6 +140,8 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
         existing = existing_branch(name, branches)
         if existing:
             return existing
+        if name in branches.get("remotes", ()):
+            return {"branch": name, "error": f"A branch can't be named {name}, a remote's name."}
         split = split_remote(name, branches)
         if split:
             # A local origin/x would make Git call origin/x ambiguous.
@@ -165,7 +173,11 @@ def existing_branch(name, branches):
         local = name
     if local in branches["checked_out"]:
         path = branches["checked_out"][local]
-        return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path}
+        if path in branches.get("missing", ()):
+            return {"branch": local, "error": "It's checked out in a worktree whose folder is missing; "
+                                              "prune it with p in the list."}
+        return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path,
+                "short": "open the worktree it's in"}
     if local in branches["local"]:
         return {"branch": local, "exists": [local],
                 "error": "A branch with this name exists; select it under Existing branches."}

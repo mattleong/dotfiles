@@ -34,6 +34,16 @@ NONE_SELECTED = "No worktree selected."
 ROW_KEYS = ("s", "o", "e", "y", "Y", "d")  # Keys that act on the selected worktree.
 
 
+def commit_rows(commits, space):
+    """A row per commit: its hash, age, and subject, with its author when there's room for them and
+    a readable subject."""
+    dim = ui.style("dim")
+    author_width = min(16, max([len(c[2]) for c in commits] + [6])) if space >= 72 else 0
+    return [[(sha, ui.style("yellow")), ("  " + ui.short_age(stamp).rjust(3), dim)]
+            + ([("  " + author[:author_width].ljust(author_width), ui.style("blue"))] if author_width else [])
+            + [("  " + subject, 0)] for sha, subject, author, stamp in commits]
+
+
 class ListScreen:
     def list_screen(self):
         stdscr = self.stdscr
@@ -65,7 +75,8 @@ class ListScreen:
             if filtering:
                 footer = ui.typing_footer("new" if missing else "open")
             else:
-                finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e))
+                # Only the ones cleanup can remove: not ones with uncommitted changes.
+                finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e) and e.get("dirty") is not True)
                 stale = sum(1 for e in self.entries if "prunable" in e)
                 # With nothing selected, only the actions that don't need a worktree.
                 footer = ui.footer(enter="new" if missing else "open", move=bool(shown), slash="filter", back="quit",
@@ -325,15 +336,18 @@ class ListScreen:
             else:
                 rows.append([(ui.middle(path, space)[0], dim)])
         if worktrees.missing(entry):
-            if not said:
-                rows += [[(line, ui.style("yellow"))] for line in ui.wrap(util.ICONS["missing"] + " " + MISSING, space)]
+            if not said and len(rows) < size:
+                note = ui.clip(ui.hang(util.ICONS["missing"], MISSING, space), size - len(rows), space)
+                rows += [[(line, ui.style("yellow"))] for line in note]
             return rows[:size]
-        if len(rows) + 2 > size:
-            return rows[:size]  # No room for a commit, so no heading for them either.
+        if len(rows) >= size:
+            return rows[:size]
         key = (entry["worktree"], self.default)
         if key not in self.commits:
             self.commits[key] = worktrees.recent_commits(entry["worktree"], PREVIEW_COMMITS, self.default)
         description, commits = self.commits[key]
+        if len(rows) + 2 > size:
+            return rows + commit_rows(commits[:1], space)  # Room for a commit, but not its heading.
         # "Recent commits", or "Commits" with how many aren't in the default branch yet.
         if description and description != "Recent commits":
             rows.append(ui.section("Commits", description))
@@ -341,10 +355,4 @@ class ListScreen:
             rows.append(ui.section("Recent commits"))
         if not commits:
             rows.append([("No commits", dim)])
-        # Authors only when there's room for them and a readable subject.
-        author_width = min(16, max([len(c[2]) for c in commits] + [6])) if space >= 72 else 0
-        for sha, subject, author, stamp in commits[:max(0, size - len(rows))]:
-            rows.append([(sha, ui.style("yellow")), ("  " + ui.short_age(stamp).rjust(3), dim)]
-                        + ([("  " + author[:author_width].ljust(author_width), ui.style("blue"))] if author_width else [])
-                        + [("  " + subject, 0)])
-        return rows[:size]
+        return (rows + commit_rows(commits[:max(0, size - len(rows))], space))[:size]

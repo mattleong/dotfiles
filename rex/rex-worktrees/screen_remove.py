@@ -137,6 +137,21 @@ def cleanup_done(removed, deleted, asked):
                   f"{'it was' if count == 1 else 'they were'} kept."
 
 
+def dirty_refusal(candidates, width):
+    """Why cleanup can't start when every candidate has uncommitted changes, and what to do
+    instead, before which worktree it is, cut in the middle so it all fits on the status line."""
+    if len(candidates) > 1:
+        return (f"Can't clean up: the {len(candidates)} finished worktrees all have uncommitted changes; "
+                "remove each on its own with dd.")
+    lead = "Can't clean up: the only finished worktree has uncommitted changes; remove it on its own with dd. It's "
+    name = candidates[0]["name"]
+    for size in range(len(name), 7, -1):
+        text = lead + ui.middle(name, size)[0] + "."
+        if len(ui.hang(util.ICONS["info"], text, width)) <= ui.Flash.LINES:
+            return text
+    return text
+
+
 class RemovalScreens:
     def remove(self, entry):
         """Confirm and remove a worktree. Returns True if the picker should exit."""
@@ -253,13 +268,7 @@ class RemovalScreens:
             self.say("No worktrees with merged pull requests or deleted remote branches" + note + ".", "dim")
             return False
         if all(e.get("dirty") is True for e in candidates):
-            if len(candidates) == 1:
-                text = f"{candidates[0]['name']} is finished, but it has uncommitted changes, so it can't be " \
-                       "cleaned up; remove it on its own with dd."
-            else:
-                text = f"The {len(candidates)} finished worktrees all have uncommitted changes, so none can " \
-                       "be cleaned up; remove each on its own with dd."
-            self.say(text, "yellow")
+            self.say(dirty_refusal(candidates, ui.space(self.stdscr)), "yellow")
             return False
         try:
             terminals = self.terminals_now()
@@ -285,7 +294,7 @@ class RemovalScreens:
             details = [self.cleanup_detail(items, i, closes, width, lines, self.session, self.label)
                        for i in range(len(items) + 1)]
             # Under the options, or a message in its place.
-            detail = flash.rows(width) or details[cursor]
+            detail = list(flash.rows(width) or details[cursor])  # A copy: padding it mustn't change details.
             detail += [[]] * (max(len(d) for d in details) - len(detail))
             count = sum(i["checked"] for i in items)
             title = f"Clean up {len(candidates)} finished worktree{'s' if len(candidates) != 1 else ''}"

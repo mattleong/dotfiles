@@ -14,11 +14,6 @@ import worktrees
 PREFIX = "enter: "
 
 
-def wrap_words(text, width):
-    """Wrap at spaces when every word fits, so a branch's name stays whole; else at slashes too."""
-    return ui.wrap(text, width) if all(len(w) <= width for w in text.split()) else ui.wrap_path(text, width)
-
-
 def plan_lines(lines, width, limit, short=None):
     """Fit sentences, wrapped, in at most limit rows. The first, which names the branch, keeps
     the most: the others shorten to a row each first, last first: a folder cut in the middle, so
@@ -29,7 +24,7 @@ def plan_lines(lines, width, limit, short=None):
     ends = [isinstance(line, tuple) for line in lines]
     lines = [line[0] if end else line for line, end in zip(lines, ends)]
     original = list(lines)
-    wrapped = [wrap_words(text, width) for text in lines]
+    wrapped = [ui.wrap(text, width) for text in lines]
 
     def total():
         return sum(len(w) for w in wrapped)
@@ -43,38 +38,40 @@ def plan_lines(lines, width, limit, short=None):
     keep = limit - (total() - len(wrapped[0]))
     if len(wrapped[0]) > keep and short:
         lines[0] = short
-        wrapped[0] = wrap_words(short, width)
+        wrapped[0] = ui.wrap(short, width)
     if len(wrapped[0]) > keep:
         pos = 0
         for line in wrapped[0][:keep - 1]:
             pos = lines[0].index(line, pos) + len(line)
         wrapped[0] = wrapped[0][:keep - 1] + [ui.middle(lines[0][pos:].lstrip(), width)[0]]
     out = [line for w in wrapped for line in w]
-    return out, out != [line for text in original for line in wrap_words(text, width)]
+    return out, out != [line for text in original for line in ui.wrap(text, width)]
 
 
-def plan_rows(lines, width, limit, short=None):
-    """What enter does, beside "enter:", in at most limit rows (see plan_lines). Returns (the rows,
-    whether anything was cut)."""
+TAB_CUE = " (tab shows all)"  # Like the lists' “(tab lists all)”.
+
+
+def plan_rows(lines, width, limit, short=None, cue=False):
+    """What enter does, beside "enter:", in at most limit rows (see plan_lines). With cue, a plan
+    cut to fit ends in a dim hint that tab shows it all, for when the footer has no room to say so.
+    Returns (the rows, whether anything was cut)."""
     fitted, cut = plan_lines(lines, width - len(PREFIX), limit, short)
-    return [[(PREFIX if i == 0 else " " * len(PREFIX), ui.style("dim")), (line, 0)]
-            for i, line in enumerate(fitted)], cut
+    rows = [[(PREFIX if i == 0 else " " * len(PREFIX), ui.style("dim")), (line, 0)] for i, line in enumerate(fitted)]
+    if cut and cue:
+        room = width - len(PREFIX) - len(TAB_CUE)
+        last = fitted[-1] if len(fitted[-1]) <= room else fitted[-1][:room - 1].rstrip() + "…"
+        rows[-1] = rows[-1][:1] + [(last, 0), (TAB_CUE, ui.style("dim"))]
+    return rows, cut
 
 
 def note_rows(text, icon, tone, width):
     """A note below the create row, in up to two rows."""
-    lines = ui.wrap(util.ICONS[icon] + " " + text, width - 2)
-    if len(lines) > 2:
-        lines = lines[:1] + [lines[1][:width - 3] + "…"]
+    lines = ui.clip(ui.hang(util.ICONS[icon], text, width - 2), 2, width - 2)
     return [[("  " + line, ui.style(tone))] for line in lines]
 
 
 def error_rows(error, width, limit):
-    lines = ui.wrap(util.ICONS["error"] + " " + error, width)
-    if len(lines) > limit:
-        lines = lines[:max(1, limit)]
-        lines[-1] = lines[-1][:width - 1] + "…"
-    return [[(line, ui.style("red"))] for line in lines]
+    return [[(line, ui.style("red"))] for line in ui.clip(ui.hang(util.ICONS["error"], error, width), limit, width)]
 
 
 def destination(plan, setup):
@@ -111,8 +108,10 @@ class NewScreens:
             keyboard.set_timeout(stdscr, flash.wait(-1))
             # items[0] creates a new branch; the rest are existing branches. Text such as origin/fix
             # matches the branches on origin by the rest, fix, as git branch -r lists them.
+            # Other remotes' branches never match it, even ones with the same name.
             queries = {id(s): branching.query_for(text, s, branches) for s in suggestions}
-            scores = {id(s): matching.fuzzy_all(queries[id(s)], s["name"]) for s in suggestions}
+            scores = {id(s): matching.fuzzy_all(q, s["name"]) if q is not None else 0
+                      for s, q in ((s, queries[id(s)]) for s in suggestions)}
             existing = [s for s in suggestions if scores[id(s)]]
             if text.strip():
                 existing.sort(key=lambda s: -scores[id(s)])
@@ -140,7 +139,9 @@ class NewScreens:
                 if index and items[index]["ref"] in create.get("exists", ()):
                     note = note_rows("This branch exists; enter checks it out.", "info", "dim", space)
                 elif create.get("open"):
-                    note = note_rows(create["error"] + ".", "info", "dim", space)
+                    # Where it is goes in the plan, which tab shows in full.
+                    note = note_rows("This branch is checked out already." if not index else create["error"] + ".",
+                                     "info", "dim", space)
                 else:
                     note = note_rows(create["error"], "error", "red", space)
             search, column = ui.search_row(text, tpos, True, space, "filter, or name a new branch")
@@ -153,23 +154,26 @@ class NewScreens:
             if plan is None:
                 lines = ["create a new branch; name it next"]
             elif not index and plan.get("open"):
-                lines = ["open that worktree instead"]
+                lines = [f"open the worktree {plan['branch']} is checked out in", "at " + util.tilde(plan["open"])]
             elif plan.get("error"):
                 lines = []  # Said below the create row, or for an existing branch, just below.
             elif not index:
                 lines = [f"create branch {typed}; choose what it starts from next"]
             else:
                 lines = [plan["action"], *destination(plan, setup)]
+            short = plan.get("short") if plan else None
             if index and plan.get("error"):
                 action, cut = error_rows(plan["error"], space, limit), False
             else:
-                action, cut = plan_rows(lines, space, limit, plan.get("short") if plan else None) if lines else ([], False)
+                action, cut = plan_rows(lines, space, limit, short) if lines else ([], False)
             # Once typing selected a branch, ↑ is the way back to the create row, so it outlasts tab.
             moved = moved and bool(index)
             footer = ui.help_row(("enter", "open" if not index and plan and plan.get("open") else "select"),
                                  *([("↑/↓", "move", 2 if moved else 3)] if existing else []),
                                  *([("tab", "details", 3 if moved else 2)] if cut else []),
                                  ("?", "help", 1), ("esc", "clear" if text else back))
+            if cut and "tab" not in [t for t, _ in ui.fit(footer, space)]:
+                action = plan_rows(lines, space, limit, short, cue=True)[0]  # The footer had no room for tab.
             # The list's rows, sized to every branch so the plan below stays put while filtering.
             # The blank row above the plan goes first when they're short of rows.
             capacity = room - fixed - 1 - len(action)

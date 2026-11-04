@@ -94,13 +94,42 @@ def fit(row, width):
 
 def wrap(text, width):
     """Lines of text no wider than width, at least one. Words break only at spaces, so a branch
-    such as fix/login-flow stays whole when it fits."""
-    return textwrap.wrap(text, max(1, width), break_on_hyphens=False) or [""]
+    such as fix/login-flow stays whole when it fits. A word too long for a line, such as a long
+    path, breaks after a slash, and after a dash only where the part between slashes is too long
+    itself; never inside a word unless that's too long as well."""
+    width = max(1, width)
+    words = text.split()
+    if all(len(w) <= width for w in words):
+        return textwrap.wrap(text, width, break_on_hyphens=False) or [""]
+    parts = [text[:len(text) - len(text.lstrip())]]  # Keep an indent, as in Git's messages.
+    for word in words:
+        if len(word) <= width:
+            parts.append(word + " ")
+            continue
+        for piece in re.split(r"(?<=[^/]/)", word):
+            parts += [p for p in re.split(r"(?<=-)", piece) if p] if len(piece) > width else [piece]
+        parts[-1] += " "
+    return break_at(parts, width)
 
 
 def wrap_lines(text, width):
     """Like wrap, but keeping the text's own line breaks, such as in a message from gh or Git."""
     return [line for paragraph in text.strip().splitlines() or [""] for line in wrap(paragraph, width)]
+
+
+def hang(icon, text, width):
+    """An icon and its text, wrapped to width, keeping the text's line breaks, with the lines after
+    the first indented under the text rather than the icon."""
+    pad = len(icon) + 1
+    return [(icon + " " if i == 0 else " " * pad) + line for i, line in enumerate(wrap_lines(text, width - pad))]
+
+
+def clip(lines, limit, width):
+    """At most limit lines, the last ending in an ellipsis when any were left out."""
+    if len(lines) <= limit:
+        return lines
+    lines = lines[:max(1, limit)]
+    return lines[:-1] + [lines[-1][:width - 1].rstrip() + "…"]
 
 
 def wrap_path(text, width):
@@ -563,11 +592,7 @@ class Flash:
         if self.left() is None:
             return []
         icon = util.ICONS[self.ICONS.get(self.tone, "info")]
-        lines = wrap_lines(icon + " " + self.text, width)
-        if len(lines) > self.LINES:
-            lines = lines[:self.LINES]
-            lines[-1] = lines[-1][:width - 1] + "…"
-        return [[(line, style(self.tone))] for line in lines]
+        return [[(line, style(self.tone))] for line in clip(hang(icon, self.text, width), self.LINES, width)]
 
 
 def section(title, extra="", tone="dim"):
@@ -644,7 +669,7 @@ CLOSE_HELP = ("q / esc", "go back, or cancel")
 
 def show_help(stdscr, title, sections):
     """List a screen's keys."""
-    page(stdscr, title + " — keys", lambda width: help_body(sections, width))
+    page(stdscr, title.rstrip("?") + " — keys", lambda width: help_body(sections, width))
 
 
 def page(stdscr, title, body_for, close="back"):
@@ -697,7 +722,7 @@ def show_error(stdscr, message, title="Something went wrong", hint=""):
     """Show a message too long for the status line, wrapped, keeping its line breaks, until it's
     closed. j/k scroll it when it doesn't fit."""
     def body(width):
-        lines = wrap_lines(util.ICONS["error"] + " " + message.strip(), width)
+        lines = hang(util.ICONS["error"], message.strip(), width)
         rows = [[]] + [[(line, style("red"))] for line in lines]
         return rows + ([[]] + [[(line, style("dim"))] for line in wrap(hint, width)] if hint else [])
     page(stdscr, title, body, close="close")
@@ -709,7 +734,7 @@ DETAILS_HELP = ("tab", "everything this would do, in full, when the pane is too 
 def show_details(stdscr, title, parts):
     """Every row of body parts (see fit_parts), scrolling. parts is a function of the pane's width
     and whether to show everything in full, wrapping what the compact screen cuts short."""
-    page(stdscr, title + " — details", lambda width: [[]] + all_rows(parts(width, True)))
+    page(stdscr, title.rstrip("?") + " — details", lambda width: [[]] + all_rows(parts(width, True)))
 
 
 def row_text(row):
