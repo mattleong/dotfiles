@@ -33,6 +33,7 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
         self.session_known = False
         threading.Thread(target=self.load_default, daemon=True).start()
         self.flash = ui.Flash()
+        self.reveal = None  # A worktree for the list to select next, such as one a message names.
         self.commits = {}
         self.prs, self.prs_loading, self.sort = {}, False, "git"
         self.show_prs = github.pull_requests_enabled(self.repo)

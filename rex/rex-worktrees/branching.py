@@ -96,10 +96,10 @@ def load_branches(cwd, entries, now=None):
 
 def split_remote(text, branches):
     """For text that starts with a remote's name and a slash, as git branch -r lists branches,
-    such as origin/fix/login: the remote and the rest. Else None."""
+    such as origin/fix/login: the remote and the rest, which is empty for just origin/. Else None."""
     text = text.strip()
     for remote in branches.get("remotes", ()):  # The longest first, so origin-fork/x isn't origin's.
-        if text.startswith(remote + "/") and len(text) > len(remote) + 1:
+        if text.startswith(remote + "/"):
             return remote, text[len(remote) + 1:]
     return None
 
@@ -107,8 +107,9 @@ def split_remote(text, branches):
 def query_for(text, suggestion, branches):
     """What to match a suggestion's name against, or None when it can't match. Text such as
     origin/fix names a remote, so it matches origin's branches by the rest, fix, and never another
-    remote's, even one with the same name. A local branch matches by the rest when that remote has
-    a branch of its name, since a remote branch is checked out as the local one of the same name."""
+    remote's, even one with the same name; origin/ alone matches all of origin's. A local branch
+    matches by the rest when that remote has a branch of its name, since a remote branch is checked
+    out as the local one of the same name."""
     split = split_remote(text, branches)
     if not split:
         return text
@@ -141,7 +142,11 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
         if existing:
             return existing
         if name in branches.get("remotes", ()):
-            return {"branch": name, "error": f"A branch can't be named {name}, a remote's name."}
+            # Most likely on the way to origin/name, so a hint ("hint") rather than an error.
+            listed = text.strip().endswith("/")
+            return {"branch": name, "remote": name, "hint": True,
+                    "error": f"{name} is a remote; " + ("its branches are below." if listed
+                                                         else f"type {name}/ to list its branches.")}
         split = split_remote(name, branches)
         if split:
             # A local origin/x would make Git call origin/x ambiguous.
@@ -177,7 +182,7 @@ def existing_branch(name, branches):
             return {"branch": local, "error": "It's checked out in a worktree whose folder is missing; "
                                               "prune it with p in the list."}
         return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path,
-                "short": "open the worktree it's in"}
+                "short": "open its worktree"}
     if local in branches["local"]:
         return {"branch": local, "exists": [local],
                 "error": "A branch with this name exists; select it under Existing branches."}
@@ -210,9 +215,20 @@ def create_worktree(cwd, plan):
     util.git(cwd, "worktree", "add", *args)
 
 
-def source_label(item):
-    """'local', 'remote' for origin, or the remote's name for any other remote."""
+def remote_of(item):
+    """The remote a remote branch's suggestion is on, such as origin."""
+    return item["ref"][:-len(item["name"]) - 1]
+
+
+def named_remotes(suggestions):
+    """Whether more than one remote has branches listed, so each is labeled by its name."""
+    return len({remote_of(s) for s in suggestions if s["kind"] == "remote"}) > 1
+
+
+def source_label(item, named=False):
+    """'local', 'remote' for origin, or the remote's name for any other remote, or for every
+    remote when named (see named_remotes)."""
     if item["kind"] != "remote":
         return "local"
-    remote = item["ref"][:-len(item["name"]) - 1]
-    return "remote" if remote == "origin" else remote
+    remote = remote_of(item)
+    return "remote" if remote == "origin" and not named else remote

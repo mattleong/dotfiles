@@ -16,15 +16,18 @@ PREFIX = "enter: "
 
 def plan_lines(lines, width, limit, short=None):
     """Fit sentences, wrapped, in at most limit rows. The first, which names the branch, keeps
-    the most: the others shorten to a row each first, last first: a folder cut in the middle, so
-    it keeps its name, and a command (a sentence given as (text, "end")) cut at its end; then the
-    first turns into short, if given, and then loses its middle too; then the last sentences drop.
-    Returns (the lines, whether anything was cut)."""
+    the most: the others shorten to a row each first, last first: a folder (a sentence given as
+    (text, "path"), which wraps after its slashes) cut in the middle, so it keeps its name, and a
+    command (given as (text, "end")) cut at its end; then the first turns into short, if given,
+    and then loses its middle too; then the last sentences drop. Returns (the lines, whether
+    anything was cut)."""
     limit = max(1, limit)
-    ends = [isinstance(line, tuple) for line in lines]
-    lines = [line[0] if end else line for line, end in zip(lines, ends)]
+    kinds = [line[1] if isinstance(line, tuple) else "" for line in lines]
+    lines = [line[0] if isinstance(line, tuple) else line for line in lines]
+    ends = [kind == "end" for kind in kinds]
+    wraps = [ui.wrap_path if kind == "path" else ui.wrap for kind in kinds]
     original = list(lines)
-    wrapped = [ui.wrap(text, width) for text in lines]
+    wrapped = [wrap(text, width) for wrap, text in zip(wraps, lines)]
 
     def total():
         return sum(len(w) for w in wrapped)
@@ -42,13 +45,14 @@ def plan_lines(lines, width, limit, short=None):
     if len(wrapped[0]) > keep:
         pos = 0
         for line in wrapped[0][:keep - 1]:
-            pos = lines[0].index(line, pos) + len(line)
+            found = lines[0].find(line, pos)  # Not found only where wrapping turned a tab into spaces.
+            pos = (found if found >= 0 else pos) + len(line)
         wrapped[0] = wrapped[0][:keep - 1] + [ui.middle(lines[0][pos:].lstrip(), width)[0]]
     out = [line for w in wrapped for line in w]
-    return out, out != [line for text in original for line in ui.wrap(text, width)]
+    return out, out != [line for wrap, text in zip(wraps, original) for line in wrap(text, width)]
 
 
-TAB_CUE = " (tab shows all)"  # Like the lists' “(tab lists all)”.
+TAB_CUE = ui.TAB_CUE
 
 
 def plan_rows(lines, width, limit, short=None, cue=False):
@@ -64,19 +68,22 @@ def plan_rows(lines, width, limit, short=None, cue=False):
     return rows, cut
 
 
-def note_rows(text, icon, tone, width):
-    """A note below the create row, in up to two rows."""
+def note_rows(text, icon, tone, width, nudge=False):
+    """A note below the create row, in up to two rows. nudge, when enter was pressed but can't
+    go anywhere, draws attention to it: a dim note turns yellow, and the note bold."""
+    tone = "yellow" if nudge and tone == "dim" else tone
     lines = ui.clip(ui.hang(util.ICONS[icon], text, width - 2), 2, width - 2)
-    return [[("  " + line, ui.style(tone))] for line in lines]
+    return [[("  " + line, ui.style(tone) | (ui.style("bold") if nudge else 0))] for line in lines]
 
 
-def error_rows(error, width, limit):
-    return [[(line, ui.style("red"))] for line in ui.clip(ui.hang(util.ICONS["error"], error, width), limit, width)]
+def error_rows(error, width, limit, nudge=False):
+    attr = ui.style("red") | (ui.style("bold") if nudge else 0)
+    return [[(line, attr)] for line in ui.clip(ui.hang(util.ICONS["error"], error, width), limit, width)]
 
 
 def destination(plan, setup):
     """Where the worktree goes, and the setup command that runs in its new tab, if any."""
-    return ["in " + util.tilde(str(plan["path"]))] + ([("then runs " + setup, "end")] if setup else [])
+    return [("in " + util.tilde(str(plan["path"])), "path")] + ([("then runs " + setup, "end")] if setup else [])
 
 
 TYPING_HELP = [
@@ -104,6 +111,8 @@ class NewScreens:
         plans = {}  # New branches' plans by name, since checking a name runs Git.
         back = "quit" if root else "back"
         flash = ui.Flash()
+        nudge = False  # Enter was pressed where it can't go anywhere: the reason stands out.
+        named = branching.named_remotes(suggestions)
         while True:
             keyboard.set_timeout(stdscr, flash.wait(-1))
             # items[0] creates a new branch; the rest are existing branches. Text such as origin/fix
@@ -123,9 +132,10 @@ class NewScreens:
             typed = branching.normalize_branch(text)
             create = None  # The plan for a new branch named by the text.
             if typed:
-                if typed not in plans:
-                    plans[typed] = branching.plan_branch(cwd, branches, text)
-                create = plans[typed]
+                key = (typed, text.rstrip().endswith("/"))  # origin/ lists origin's branches; origin doesn't.
+                if key not in plans:
+                    plans[key] = branching.plan_branch(cwd, branches, text)
+                create = plans[key]
             plan = branching.plan_branch(cwd, branches, "", items[index]) if index else create
 
             height, _ = stdscr.getmaxyx()
@@ -134,6 +144,9 @@ class NewScreens:
             # Why the typed name can't be a new branch, right below the row that would create it,
             # whichever row is selected: in red, unless enter goes to the branch it names instead.
             # Text such as origin/fi, partway to a remote branch, needs no note once one is selected.
+            # Enter can't go anywhere from a row whose plan has an error, except to open the worktree
+            # a branch is checked out in.
+            stuck = bool(plan and plan.get("error")) and not (not index and plan.get("open"))
             note = []
             if create and create.get("error") and not (index and create.get("remote")):
                 if index and items[index]["ref"] in create.get("exists", ()):
@@ -142,8 +155,10 @@ class NewScreens:
                     # Where it is goes in the plan, which tab shows in full.
                     note = note_rows("This branch is checked out already." if not index else create["error"] + ".",
                                      "info", "dim", space)
+                elif create.get("hint"):  # A remote's name, on the way to origin/name.
+                    note = note_rows(create["error"], "info", "dim", space, nudge and not index)
                 else:
-                    note = note_rows(create["error"], "error", "red", space)
+                    note = note_rows(create["error"], "error", "red", space, nudge and not index)
             search, column = ui.search_row(text, tpos, True, space, "filter, or name a new branch")
             heading = [ui.header("New worktree", self.label), search, []]
             room = height - ui.margin(height) - len(heading) - len(status) - 1
@@ -154,7 +169,7 @@ class NewScreens:
             if plan is None:
                 lines = ["create a new branch; name it next"]
             elif not index and plan.get("open"):
-                lines = [f"open the worktree {plan['branch']} is checked out in", "at " + util.tilde(plan["open"])]
+                lines = [f"open {plan['branch']}'s worktree", ("at " + util.tilde(plan["open"]), "path")]
             elif plan.get("error"):
                 lines = []  # Said below the create row, or for an existing branch, just below.
             elif not index:
@@ -163,12 +178,13 @@ class NewScreens:
                 lines = [plan["action"], *destination(plan, setup)]
             short = plan.get("short") if plan else None
             if index and plan.get("error"):
-                action, cut = error_rows(plan["error"], space, limit), False
+                action, cut = error_rows(plan["error"], space, limit, nudge), False
             else:
                 action, cut = plan_rows(lines, space, limit, short) if lines else ([], False)
             # Once typing selected a branch, ↑ is the way back to the create row, so it outlasts tab.
             moved = moved and bool(index)
-            footer = ui.help_row(("enter", "open" if not index and plan and plan.get("open") else "select"),
+            footer = ui.help_row(*([] if stuck else [("enter", "open" if not index and plan and plan.get("open")
+                                                      else "select")]),
                                  *([("↑/↓", "move", 2 if moved else 3)] if existing else []),
                                  *([("tab", "details", 3 if moved else 2)] if cut else []),
                                  ("?", "help", 1), ("esc", "clear" if text else back))
@@ -183,14 +199,22 @@ class NewScreens:
             top = ui.scroll_top(top, list_index, len(existing), capacity)
 
             if not keyboard.pending_input(stdscr):
-                # Dim, with no “…” for a next step, when the text can't be a new branch.
+                # Dim, with no “…” for a next step, when the text can't be a new branch; for a
+                # branch that's checked out, it opens the worktree it's in.
                 possible = not (create and create.get("error"))
-                label = (f"+ Create branch “{typed}”" if typed else "+ Create a new branch") + ("…" if possible else "")
+                if create and create.get("open"):
+                    label, possible = f"→ Open the worktree for “{create['branch']}”", True
+                elif create and create.get("hint"):  # A remote's name: no branch to name.
+                    label = "+ Create a new branch"
+                else:
+                    label = f"+ Create branch “{typed}”" if typed else "+ Create a new branch"
+                    label += "…" if possible else ""
                 row = [ui.pointer(index == 0), (label, (ui.style("green") if possible else ui.style("dim"))
                                                 | (ui.style("bold") if index == 0 else 0))]
                 body = [ui.Selected(row) if index == 0 else row] + note + [[]]
                 visible = existing[top:top + capacity]
-                body += self.branch_rows(visible, top, index, [queries[id(s)] for s in visible], space, len(existing))
+                body += self.branch_rows(visible, top, index, [queries[id(s)] for s in visible], space, len(existing),
+                                         named)
                 if not existing:
                     body.append([("  No matching branches" if text.strip() else "  No other branches", ui.style("dim"))])
                 body += [[]] * (fixed + capacity - len(body)) + ([[]] if gap else []) + action
@@ -201,6 +225,7 @@ class NewScreens:
             if key is None or key == curses.KEY_RESIZE:
                 continue
             flash.clear()
+            nudge = False
             new_index = keyboard.typing_motion(key, index, len(items), capacity)
             if new_index is not None:
                 index, moved = new_index, False
@@ -231,7 +256,8 @@ class NewScreens:
                         return True
                     continue
                 if plan.get("error"):
-                    continue  # The note or the plan's rows already show the error.
+                    nudge = True  # The note or the plan's rows say why; they stand out.
+                    continue
                 try:
                     self.create_and_open(cwd, plan)
                 except RuntimeError as error:
@@ -265,18 +291,21 @@ class NewScreens:
             (util.ICONS["pr"] + " #12 open", "its pull request: open, draft, merged, or closed"),
             (util.ICONS["local"] + " local", "a branch in this repository"),
             (util.ICONS["remote"] + " remote", "only on a remote; enter creates a local branch tracking it"),
+            (util.ICONS["remote"] + " fork", "the remote's name, when it's not origin or there's more than one; "
+                                            "fork/ lists only its branches"),
             ("narrow panes", "only the icons show, and the branch is cut short; the plan below the "
                              "list names the selected branch in full"),
         ])])
 
-    def branch_rows(self, visible, top, index, queries, space, count):
+    def branch_rows(self, visible, top, index, queries, space, count, named=False):
         """The existing branches' heading, column titles, and rows: the same columns as the
         worktree list: branch, age, pull request, then where it is. queries holds the text each
-        visible branch matched, to highlight. In a narrow pane, the branch column narrows, the pull
+        visible branch matched, to highlight; named labels every remote by its name (see
+        branching.named_remotes). In a narrow pane, the branch column narrows, the pull
         requests' labels shorten, then rows turn compact: the pull request's number and the
         source's icon."""
         longest = max([len(s["name"]) for s in visible] + [10])
-        sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s) for s in visible]
+        sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s, named) for s in visible]
         source_width = max([len(s) for s in sources] + [4])
 
         def layout(short):

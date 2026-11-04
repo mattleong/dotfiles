@@ -16,17 +16,19 @@ def where(group, session, label):
     return f" ({label} session)" if other and session and other != session else ""
 
 
-def closing_rows(groups, width, session="", label="", full=False):
+def closing_rows(groups, width, session="", label="", full=False, cue=False):
     """A row per tab with panes that will close, marking the tab the picker was opened in and tabs
     in other sessions. A long tab name is cut, so what closes in it stays in view; in a narrow pane,
-    what closes goes on its own row below. In full, a name too long for its row wraps instead,
-    with the mark after it and what closes below."""
+    what closes goes on its own row below. With cue, for when the footer has no room for "tab
+    details", what closes after a cut name is followed by a hint that tab shows all, where it fits;
+    with cue "always", what closes goes below a cut name to make room for it. In full, a name too
+    long for its row wraps instead, with the mark after it and what closes below."""
     rows = []
     for group in groups:
         name, detail = tabs.describe_closing(group)
         mark = where(group, session, label)
         room = width - 2 - len(mark) - 2 - len(detail)
-        below = room < min(len(name), 12)
+        below = room < min(len(name), 12) or (cue == "always" and len(name) > room)
         if below:
             room = max(4, width - 2 - len(mark))
         if full and len(name) > room:
@@ -40,12 +42,15 @@ def closing_rows(groups, width, session="", label="", full=False):
                 last.append((mark, ui.style("cyan")))
             rows += [last] + [[("    " + line, ui.style("dim"))] for line in ui.wrap(detail, width - 4)]
             continue
+        hint = [(ui.TAB_CUE, ui.style("dim"), 1)] if cue and len(name) > room else []
         name = name if len(name) <= room else name[:room - 1] + "…"
         row = [("  " + name, ui.style("bold"))] + ([(mark, ui.style("cyan"))] if mark else [])
         if below:
-            rows += [row, [("    " + detail, ui.style("dim"))]]
+            lines = ui.wrap(detail, width - 4) if full else [detail]  # In full, wrapped in a narrow pane.
+            rows += [row] + [[("    " + line, ui.style("dim"))] for line in lines]
+            rows[-1] = rows[-1] + hint
         else:
-            rows.append(row + [("  " + detail, ui.style("dim"))])
+            rows.append(row + [("  " + detail, ui.style("dim"))] + hint)  # The hint drops out without room.
     return rows
 
 
@@ -145,10 +150,13 @@ def dirty_refusal(candidates, width):
                 "remove each on its own with dd.")
     lead = "Can't clean up: the only finished worktree has uncommitted changes; remove it on its own with dd. It's "
     name = candidates[0]["name"]
+    text = lead + name + "."
+    # The whole name, or else the longest middle cut that fits, down to 8 characters; when even
+    # that doesn't fit, the shortest, and the status line cuts the rest.
     for size in range(len(name), 7, -1):
         text = lead + ui.middle(name, size)[0] + "."
         if len(ui.hang(util.ICONS["info"], text, width)) <= ui.Flash.LINES:
-            return text
+            break
     return text
 
 
@@ -197,10 +205,10 @@ class RemovalScreens:
             width = ui.space(stdscr)
             checked = {o["id"] for o in options if o["checked"]}
 
-            def parts(width, full=False):
+            def parts(width, full=False, cue=False):
                 """The worktree, then what removing it loses and closes, then the options. When
                 they don't all fit, each list keeps at least a line saying how many, and tab shows
-                them all, in full."""
+                them all, in full. cue marks a cut tab name (see closing_rows)."""
                 body = [ui.fixed(*[[(line, ui.style("bold"))] for line in ui.wrap_path(entry["name"], width)]),
                         ui.extra(*[[(line, ui.style("dim"))] for line in ui.wrap_path(util.tilde(entry["worktree"]), width)]),
                         ui.GAP]
@@ -210,7 +218,7 @@ class RemovalScreens:
                         summary=summary_row(plural(len(files), "uncommitted file")), hint=LIST_HINT), ui.GAP]
                 if closing:
                     count = sum(len(g["panes"]) for g in closing)
-                    body += [ui.items(closing_rows(closing, width, self.session, self.label, full),
+                    body += [ui.items(closing_rows(closing, width, self.session, self.label, full, cue),
                                       heading=closing_heading(closing),
                                       summary=summary_row(plural(count, "pane") + " will close"), hint=LIST_HINT),
                              ui.GAP]
@@ -230,8 +238,15 @@ class RemovalScreens:
             top = [ui.header("Remove worktree?", self.label), []]
             room = height - ui.margin(height) - len(top) - len(status) - 1
             body = parts(width)
-            bottom = status + [ui.footer(enter="remove", move=len(options) > 1, toggle=bool(options), back="cancel",
-                                         details=ui.abridged(body, parts(width, True), room, width))]
+            details = ui.abridged(body, parts(width, True), room, width)
+            footer = ui.footer(enter="remove", move=len(options) > 1, toggle=bool(options), back="cancel",
+                               details=details)
+            if details and "tab" not in [t for t, _ in ui.fit(footer, width)]:
+                # The footer has no room to say tab shows what's cut, so a cut tab name says so,
+                # taking a row for it only when no list says “(tab lists all)” already.
+                listed = any("(tab lists" in ui.row_text(row) for row in ui.fit_parts(body, room))
+                body = parts(width, cue=True if listed else "always")
+            bottom = status + [footer]
             ui.render(stdscr, ui.compose(height, top, ui.fit_parts(body, room), bottom))
             key = keyboard.read_key(stdscr)
             if key is None:
@@ -268,6 +283,8 @@ class RemovalScreens:
             self.say("No worktrees with merged pull requests or deleted remote branches" + note + ".", "dim")
             return False
         if all(e.get("dirty") is True for e in candidates):
+            if len(candidates) == 1:
+                self.reveal = candidates[0]  # The list selects it, so dd removes it.
             self.say(dirty_refusal(candidates, ui.space(self.stdscr)), "yellow")
             return False
         try:

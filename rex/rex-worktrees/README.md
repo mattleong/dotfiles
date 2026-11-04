@@ -26,6 +26,10 @@ Run the tests from this directory:
 python3 -m unittest test_worktrees
 ```
 
+`test_every_screen_fits_any_width_and_name` renders every screen at widths from 20 to 160 with
+awkward names (empty, one character, very long, unicode, spaces); keep it passing when you add a
+screen or change how one fits.
+
 The list's letters are commands, so its filter starts only with `/`. Screens built around a text
 input (the list's filter while typing, New worktree, and New branch) take every printable key as
 text, and move their list with keys that can't be text: the arrows and ctrl+n/p, plus page up/down
@@ -38,21 +42,27 @@ selected unless the text is an existing branch's name or the start of a word in 
 `matching.strong`), so enter never checks out a branch you didn't mean. Text such as `origin/fix`,
 as `git branch -r` lists branches, matches the branches on that remote by the rest (see
 `branching.query_for`), never another remote's, even one with the same name, and never creates a
-local `origin/…` branch; a remote's name alone can't be a new branch either. When the text names a
-branch that exists, the note under the first row is dim, not an error, because enter goes to that
-branch: it checks out the selected branch, or opens the worktree a checked-out one is in. Red is for
-text that can't go anywhere, such as a branch checked out in a worktree whose folder is missing.
+local `origin/…` branch; `origin/` alone lists all of origin's branches. A remote's name alone
+can't be a new branch either, but it's most likely on the way to `origin/…`, so its note is a dim
+hint. When the text names a branch that exists, the note under the first row is dim too, not an
+error, because enter goes to that branch: it checks out the selected branch, or opens the worktree
+a checked-out one is in, and the first row then says `→ Open the worktree for “…”`. Red is for text
+that can't go anywhere, such as a branch checked out in a worktree whose folder is missing. Where
+enter can't go anywhere, the footer leaves it out, and pressing it makes the note stand out.
+Branches only on a remote say so in the FROM column: `remote` for origin, or the remote's name,
+for every remote when more than one has branches.
 
 Every screen keeps its key hints pinned to the bottom of the pane, and lists shorten or scroll to
 fit (see `compose` and `fit_parts` in `ui.py`), so check changes in a short pane, such as 50×16, as
 well as a large one. What's cut stays inspectable: each list keeps at least a line saying how many
 it holds, and tab shows everything. Where a footer has no room for `tab details`, the cut text
-says so itself, as `(tab lists all)` or `(tab shows all)`. In the details of a screen that removes
+says so itself, as `(tab lists all)` or `(tab shows all)` (`ui.TAB_CUE`). In the details of a screen that removes
 something, everything is in full: file names, tab names, and paths wrap rather than being cut, so a
 screen's `parts` function takes whether to show them in full (see `show_details`).
 
 Text wraps at spaces, so a branch such as `fix/login-flow` stays whole; only a word too long for a
-line breaks, after a slash, or a dash where that's not enough (see `ui.wrap`). A message's or note's
+line breaks, after a slash, or a dash where that's not enough (see `ui.wrap`). Spaces inside a line
+are kept as they are, since they can matter in a command. A message's or note's
 later lines start under its text, not its icon (see `ui.hang`).
 
 Rex runs the picker with the system `python3`, which can be as old as 3.9, so keep the code

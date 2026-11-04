@@ -181,6 +181,11 @@ class ListScreen:
                 if self.cleanup():
                     return
                 selected = self.reselect(paths, index)
+                if self.reveal in self.entries:  # The worktree cleanup's message is about.
+                    if self.reveal not in matching.filter_entries(self.entries, query):
+                        query, qpos = "", 0
+                    selected = self.reveal
+                self.reveal = None
             elif key == "S":
                 self.sort = matching.SORTS[(matching.SORTS.index(self.sort) + 1) % len(matching.SORTS)]
                 self.say(f"Sorted by {self.sort}" + (" order" if self.sort == "git" else "") + ".", "dim")
@@ -314,7 +319,8 @@ class ListScreen:
         """The selected worktree in size rows: a blank row, its full branch, wrapped, then its path
         and as many of its commits as fit. The branch comes first so long ones that look alike in
         the list can be told apart. Compact rows leave out the labels' words, so the preview gives
-        them in full. A missing folder is said, wrapped, unless the status line said it (said)."""
+        them in full, wrapped between labels. A missing folder is said, wrapped, unless the status
+        line said it (said)."""
         if entry is None or size < 2:
             return []
         bold, dim = ui.style("bold"), ui.style("dim")
@@ -328,7 +334,7 @@ class ListScreen:
             path_rows = [[(line, dim)] for line in ui.wrap_path(path, space)]
         if compact:
             labels = [c for c in ui.badges(entry) if not c[0].endswith("folder missing")]  # Said below.
-            rows += [ui.joined(labels)] if labels else []
+            rows += ui.joined_rows(labels, space)
         if path_rows:
             # Wrapped when there's still room for a commit below it, else on one row.
             if len(rows) + len(path_rows) + 2 <= size or len(path_rows) == 1:

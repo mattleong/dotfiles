@@ -96,19 +96,22 @@ def wrap(text, width):
     """Lines of text no wider than width, at least one. Words break only at spaces, so a branch
     such as fix/login-flow stays whole when it fits. A word too long for a line, such as a long
     path, breaks after a slash, and after a dash only where the part between slashes is too long
-    itself; never inside a word unless that's too long as well."""
+    itself; never inside a word unless that's too long as well. The spaces inside a line stay as
+    they are, as in a command, where they can matter."""
     width = max(1, width)
-    words = text.split()
-    if all(len(w) <= width for w in words):
+    if all(len(w) <= width for w in text.split()):
         return textwrap.wrap(text, width, break_on_hyphens=False) or [""]
-    parts = [text[:len(text) - len(text.lstrip())]]  # Keep an indent, as in Git's messages.
-    for word in words:
-        if len(word) <= width:
-            parts.append(word + " ")
-            continue
-        for piece in re.split(r"(?<=[^/]/)", word):
-            parts += [p for p in re.split(r"(?<=-)", piece) if p] if len(piece) > width else [piece]
-        parts[-1] += " "
+    text = re.sub(r"\s", " ", text.expandtabs())  # As textwrap does.
+    parts = []
+    # Each word, with the spaces after it; the first has none when the text starts with an indent.
+    for word, spaces in re.findall(r"(\S*)( *)", text):
+        pieces = [word]
+        if len(word) > width:
+            pieces = []
+            for piece in re.split(r"(?<=[^/]/)", word):
+                pieces += [p for p in re.split(r"(?<=-)", piece) if p] if len(piece) > width else [piece]
+        pieces[-1] += spaces
+        parts += [p for p in pieces if p]
     return break_at(parts, width)
 
 
@@ -143,13 +146,18 @@ def wrap_path(text, width):
 
 
 def break_at(parts, width):
-    """Join parts into lines no wider than width, splitting a part only when it's wider itself."""
+    """Join parts into lines no wider than width, splitting a part only when it's wider itself.
+    A line after the first starts at a word, without the spaces before it; an indent that leaves
+    no room for the word after it drops out."""
     lines, line = [], ""
     for part in parts:
-        if line and len(line) + len(part.rstrip()) > width:
-            lines.append(line.rstrip())
+        if len(line) + len(part.rstrip()) > width:
+            if line.strip():
+                lines.append(line.rstrip())
             line = ""
-        while len(part) > width:
+        if not line and lines:
+            part = part.lstrip()
+        while len(part.rstrip()) > width:
             lines.append(part[:width])
             part = part[width:]
         line += part
@@ -418,6 +426,18 @@ def joined(cell, gap=" · "):
     for i, (text, attr) in enumerate(cell):
         row += ([(gap, style("dim"))] if i else []) + [(text, attr)]
     return row
+
+
+def joined_rows(cell, width, gap=" · "):
+    """A cell's labels joined as by joined, in as many rows as they need to fit in width, breaking
+    only between labels."""
+    rows = [[]]
+    for text, attr in cell:
+        used = sum(len(t) for t, _ in rows[-1])
+        if rows[-1] and used + len(gap) + len(text) > width:
+            rows.append([])
+        rows[-1] += ([(gap, style("dim"))] if rows[-1] else []) + [(text, attr)]
+    return rows if rows[0] else []
 
 
 def middle(text, width, hits=()):
@@ -728,6 +748,7 @@ def show_error(stdscr, message, title="Something went wrong", hint=""):
     page(stdscr, title, body, close="close")
 
 
+TAB_CUE = " (tab shows all)"  # After text cut short, when the footer has no room for "tab details".
 DETAILS_HELP = ("tab", "everything this would do, in full, when the pane is too small to show it")
 
 
