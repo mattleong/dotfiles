@@ -11,8 +11,6 @@ import util
 import worktrees
 
 
-# Keys the branch list acts on; any other letter starts the filter with it.
-NEW_KEYS = set("jkgGq?/")
 PREFIX = "enter: "
 
 
@@ -43,18 +41,27 @@ def destination(plan, setup):
     return ["in " + util.tilde(str(plan["path"]))] + (["then runs " + setup] if setup else [])
 
 
+TYPING_HELP = [
+    ("ctrl+a / ctrl+e", "the start / end of the text; ← / → move the cursor"),
+    ("ctrl+u / ctrl+w", "delete to the start / the word before the cursor"),
+]
+
+
 class NewScreens:
     def new_screen(self, root=False):
-        """Pick a branch for a new worktree. Returns True once one is created and opened. root is
-        True when the picker opened straight into this screen, so q quits."""
+        """Pick a branch for a new worktree, or type a new branch's name. Every printable key types
+        into the filter, so typing a name never runs a command; the list moves with the arrows.
+        Returns True once one is created and opened. root is True when the picker opened straight
+        into this screen, so esc quits."""
         stdscr = self.stdscr
         keyboard.set_timeout(stdscr, -1)
         cwd = self.cwd
         branches = self.branches()
         setup = worktrees.setup_command(cwd)
-        keyboard.set_timeout(stdscr, -1)
         suggestions = branches["suggestions"]
-        text, tpos, index, top, filtering, pending = "", 0, 0, 0, False, None
+        text, tpos, index, top = "", 0, 0, 0
+        plans = {}  # New branches' plans by name, since checking a name runs Git.
+        back = "quit" if root else "back"
         flash = ui.Flash()
         while True:
             keyboard.set_timeout(stdscr, flash.wait(-1))
@@ -64,31 +71,41 @@ class NewScreens:
                 existing.sort(key=lambda s: -matching.fuzzy_all(text, s["name"]))
             items = [None] + existing
             index = min(index, len(items) - 1)
-            plan = branching.plan_branch(cwd, branches, "", items[index]) if index else None
             typed = branching.normalize_branch(text)
+            if index:
+                plan = branching.plan_branch(cwd, branches, "", items[index])
+            elif typed:
+                if typed not in plans:
+                    plans[typed] = branching.plan_branch(cwd, branches, text)
+                plan = plans[typed]
+            else:
+                plan = None
 
             height, _ = stdscr.getmaxyx()
             space = ui.space(stdscr)
             status = flash.rows(space)
-            if filtering:
-                footer = ui.typing_footer("select")
-            else:
-                footer = ui.footer(enter="select", move=True, slash="filter", clear_filter=bool(text),
-                                   back="quit" if root else "back")
-            search, column = ui.search_row(text, tpos, filtering, space)
+            footer = ui.help_row(("enter", "select"), ("↑/↓", "move", 2), ("?", "help", 1),
+                                 ("esc", "clear" if text else back))
+            search, column = ui.search_row(text, tpos, True, space, "filter, or name a new branch")
             heading = [ui.header("New worktree", self.label), search, []]
             room = height - ui.margin(height) - len(heading) - len(status) - 1
-            # What enter does, wrapped, with at least three rows left for the list.
-            limit = max(1, room - 5 - min(3, max(1, len(existing))))
+            # Above the list: the create row, a blank row, the heading, and the column titles.
+            fixed = 4
+            # What enter does, wrapped, below the list, with at least two of the list's rows left.
+            limit = max(1, room - fixed - 1 - min(2, max(1, len(existing))))
             if plan is None:
-                what = (f"create branch {typed}; choose what it starts from next" if typed
-                        else "create a new branch; name it next")
-                action = plan_rows([what], space, limit)
+                action = plan_rows(["create a new branch; name it next"], space, limit)
             elif plan.get("error"):
                 action = error_rows(plan["error"], space, limit)
+            elif not index:
+                action = plan_rows([f"create branch {typed}; choose what it starts from next"], space, limit)
             else:
                 action = plan_rows([plan["action"]] + destination(plan, setup), space, limit)
-            capacity = max(1, room - 4 - 1 - len(action))
+            # The list's rows, sized to every branch so the plan below stays put while filtering.
+            # The blank row above the plan goes first when they're short of rows.
+            capacity = room - fixed - 1 - len(action)
+            gap = capacity >= min(3, max(1, len(suggestions)))
+            capacity = max(1, min(max(1, len(suggestions)), capacity + (0 if gap else 1)))
             list_index = max(0, index - 1)
             top = ui.scroll_top(top, list_index, len(existing), capacity)
 
@@ -96,120 +113,50 @@ class NewScreens:
                 label = f"+ Create branch “{typed}”…" if typed else "+ Create a new branch…"
                 create = [ui.pointer(index == 0), (label, ui.style("green") | (ui.style("bold") if index == 0 else 0))]
                 body = [ui.Selected(create) if index == 0 else create, []]
-                # The same columns as the worktree list: branch, age, pull request, then where it is.
-                # In a narrow pane, the branch column narrows, then rows turn compact: the pull
-                # request's number and the source's icon.
-                visible = existing[top:top + capacity]
-                longest = max([len(s["name"]) for s in visible] + [10])
-                ref_width = longest
-                prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}) for s in visible]
-                sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s) for s in visible]
-                pr_width = max([ui.cell_width(c) for c in prs] + [0])
-                pr_width = max(pr_width, 2) if pr_width else 0
-                rest = 2 + 2 + 5 + (pr_width + 3 if pr_width else 0) + max([len(s) for s in sources] + [4])
-                compact = rest + ref_width > space and space - rest < min(ui.MIN_BRANCH, longest)
-                if compact:
-                    prs = [ui.short_cell(c) for c in prs]
-                    sources = [s[:1] for s in sources]
-                    pr_width = max([ui.cell_width(c, 1) for c in prs] + [0])
-                    ref_width = max(6, min(longest, space - 2 - 2 - 5 - (pr_width + 2 if pr_width else 0) - 1))
-                elif rest + ref_width > space:
-                    ref_width = space - rest
-                gap = 2 if compact else 3
-                dim = ui.style("dim") | ui.style("bold")
-                heading[1] = ui.with_position(search, list_index, len(existing), capacity, space)
-                body.append(ui.section(f"Existing branches ({len(existing)})"))
-                header = [("  " + "BRANCH".ljust(ref_width + 2), dim), ("AGE  ", dim)]
-                if not compact:
-                    header += ([("PR".ljust(pr_width + 3), dim)] if pr_width else []) + [("FROM", dim)]
-                body.append(header)
-                for i, (item, pr, source) in enumerate(zip(visible, prs, sources), top + 1):
-                    hits = set()
-                    for token in text.lower().split():
-                        hits.update((matching.fuzzy(token, item["name"]) or (0, []))[1])
-                    name = item["name"] if len(item["name"]) <= ref_width else item["name"][:ref_width - 1] + "…"
-                    row = [ui.pointer(i == index)]
-                    row += ui.highlighted(name, {h for h in hits if h < len(name)}, ui.style("bold") if i == index else 0)
-                    row += [(" " * (ref_width - len(name) + 2), 0),
-                            (ui.short_age(item.get("time")).rjust(3) + "  ", ui.style("dim"))]
-                    if pr_width:
-                        row += ui.joined(pr, " " if compact else " · ")
-                        row.append((" " * (pr_width - ui.cell_width(pr, 1 if compact else 3) + gap), 0))
-                    row.append((source, ui.style("blue") if item["kind"] == "remote" else ui.style("dim")))
-                    body.append(ui.Selected(row) if i == index else row)
+                body += self.branch_rows(existing[top:top + capacity], top, index, text, space, len(existing))
                 if not existing:
                     body.append([("  No matching branches" if text.strip() else "  No other branches", ui.style("dim"))])
-                body += [[]] * (4 + capacity - len(body))
-                bottom = [[]] + action + status + [footer]
+                body += [[]] * (fixed + capacity - len(body)) + ([[]] if gap else []) + action
+                heading[1] = ui.with_position(search, list_index, len(existing), capacity, space)
                 cursor = (ui.margin(height) + 1, column) if column is not None else None
-                ui.render(stdscr, ui.compose(height, heading, body, bottom), cursor=cursor)
+                ui.render(stdscr, ui.compose(height, heading, body, status + [footer]), cursor=cursor)
             key = keyboard.read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:
                 continue
             flash.clear()
-            if filtering:
-                if key in keyboard.ENTER:
-                    filtering = False  # And select the row, below.
-                elif key == "\t":
-                    filtering = False
-                    continue
-                elif key == keyboard.ESCAPE:
-                    filtering, text, tpos, index = False, "", 0, 0
-                    continue
-                elif key in keyboard.BACKSPACE and not text:
-                    filtering = False
-                    continue
-                elif key in (curses.KEY_DOWN, "\x0e"):
-                    index = min(len(items) - 1, index + 1)
-                    continue
-                elif key in (curses.KEY_UP, "\x10"):
-                    index = max(0, index - 1)
-                    continue
-                else:
-                    new_text, tpos = keyboard.edit_text(text, tpos, key)
-                    if new_text != text:
-                        # Keep the first match selected while typing.
-                        text, index = new_text, 1 if new_text.strip() else 0
-                    continue
-            if pending == "g" and key not in ("g", "p"):
-                pending = None  # An unfinished gg or gp: the next key only cancels it.
-                continue
-            if pending == "g" and key == "p":
-                pending = None
-                if index:
-                    self.open_pr({"pr": self.prs.get(items[index]["name"])}, flash)
-                keyboard.set_timeout(stdscr, flash.wait(-1))
-                continue
-            new_index, pending = keyboard.motion(key, index, len(items), capacity, pending)
+            new_index = keyboard.typing_motion(key, index, len(items), capacity)
             if new_index is not None:
                 index = new_index
-            elif key == "/":
-                filtering, tpos = True, len(text)
-            elif key == "?":
-                ui.show_help(stdscr, "New worktree", [("Move", ui.NAVIGATION_HELP), ("Actions", [
-                    ("enter", "create a worktree for the selected branch"),
-                    ("", "or, on the first row, create a new branch"),
-                    ("gp", "open the branch's pull request in the browser"),
-                    ("q", "quit" if root else "go back"),
-                ]), ("Filter", [
-                    ("/", "filter existing branches; typing a letter no key uses starts it too"),
-                    ("enter", "select the highlighted row"),
-                    ("↑ / ↓", "move while typing"),
-                    ("tab", "stop typing and keep the filter"),
-                    ("esc", "clear the filter; with no filter, " + ("quit" if root else "go back")),
-                ])])
-            elif key == keyboard.ESCAPE and text:
+            elif key == keyboard.ESCAPE:
+                if not text:
+                    return False
                 text, tpos, index = "", 0, 0
-            elif key in keyboard.CLOSE:
-                return False
+            elif key == "?":  # Never part of a branch name.
+                ui.show_help(stdscr, "New worktree", [("Keys", [
+                    ("typing", "filter the existing branches, or name a new branch"),
+                    ("↑ / ↓", "move; also ctrl+p / ctrl+n"),
+                    ("pgup / pgdn", "a page up / down"),
+                    ("home / end", "the first / last row"),
+                    ("enter", "create a worktree for the selected branch; on the first row, name a new "
+                              "branch and choose what it starts from"),
+                    ("ctrl+g", "open the selected branch's pull request in the browser"),
+                    ("esc", "clear the text; with none, " + ("quit" if root else "go back")),
+                    ("ctrl+c", "quit"),
+                ]), ("Editing", TYPING_HELP)])
+            elif key == "\x07":
+                if index:
+                    self.open_pr({"pr": self.prs.get(items[index]["name"])}, flash)
+                else:
+                    flash.set("Select an existing branch to open its pull request.", "dim")
+                keyboard.set_timeout(stdscr, flash.wait(-1))
             elif key in keyboard.ENTER:
-                if plan is None:
+                if plan is None or (not index and not plan.get("error")):
                     if self.new_branch_screen(cwd, branches, text, setup):
                         return True
                     keyboard.set_timeout(stdscr, -1)
                     continue
                 if plan.get("error"):
-                    continue  # The action line already shows the error.
+                    continue  # The plan's rows already show the error.
                 try:
                     self.create_and_open(cwd, plan)
                 except RuntimeError as error:
@@ -218,10 +165,59 @@ class NewScreens:
                         continue
                     raise
                 return True
-            elif isinstance(key, str) and key.isprintable() and not key.isspace() and key not in NEW_KEYS:
-                filtering = True
-                text, tpos = keyboard.edit_text(text, len(text), key)
-                index = 1 if text.strip() else 0
+            else:
+                new_text, tpos = keyboard.edit_text(text, tpos, key)
+                if new_text != text:
+                    # Keep the first match selected while typing.
+                    text, index = new_text, 1 if new_text.strip() else 0
+
+    def branch_rows(self, visible, top, index, text, space, count):
+        """The existing branches' heading, column titles, and rows: the same columns as the
+        worktree list: branch, age, pull request, then where it is. In a narrow pane, the branch
+        column narrows, the pull requests' labels shorten, then rows turn compact: the pull
+        request's number and the source's icon."""
+        longest = max([len(s["name"]) for s in visible] + [10])
+        sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s) for s in visible]
+        source_width = max([len(s) for s in sources] + [4])
+
+        def layout(short):
+            prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}, short) for s in visible]
+            pr_width = max([ui.cell_width(c) for c in prs] + [0])
+            pr_width = max(pr_width, 2) if pr_width else 0
+            return prs, pr_width, 2 + 2 + 5 + (pr_width + 3 if pr_width else 0) + source_width
+
+        prs, pr_width, rest = layout(False)
+        if rest + longest > space:
+            prs, pr_width, rest = layout(True)
+        ref_width = min(longest, space - rest)
+        compact = ref_width < min(ui.MIN_BRANCH, longest)
+        if compact:
+            prs = [ui.short_cell(ui.pr_cell({"pr": self.prs.get(s["name"])})) for s in visible]
+            sources = [s[:1] for s in sources]
+            pr_width = max([ui.cell_width(c, 1) for c in prs] + [0])
+            ref_width = max(6, min(longest, space - 2 - 2 - 5 - (pr_width + 2 if pr_width else 0) - 1))
+        gap = 2 if compact else 3
+        dim = ui.style("dim") | ui.style("bold")
+        rows = [ui.section(f"Existing branches ({count})")]
+        header = [("  " + "BRANCH".ljust(ref_width + 2), dim), ("AGE  ", dim)]
+        if not compact:
+            header += ([("PR".ljust(pr_width + 3), dim)] if pr_width else []) + [("FROM", dim)]
+        rows.append(header)
+        for i, (item, pr, source) in enumerate(zip(visible, prs, sources), top + 1):
+            hits = set()
+            for token in text.lower().split():
+                hits.update((matching.fuzzy(token, item["name"]) or (0, []))[1])
+            name = item["name"] if len(item["name"]) <= ref_width else item["name"][:ref_width - 1] + "…"
+            row = [ui.pointer(i == index)]
+            row += ui.highlighted(name, {h for h in hits if h < len(name)}, ui.style("bold") if i == index else 0)
+            row += [(" " * (ref_width - len(name) + 2), 0),
+                    (ui.short_age(item.get("time")).rjust(3) + "  ", ui.style("dim"))]
+            if pr_width:
+                row += ui.joined(pr, " " if compact else " · ")
+                row.append((" " * (pr_width - ui.cell_width(pr, 1 if compact else 3) + gap), 0))
+            row.append((source, ui.style("blue") if item["kind"] == "remote" else ui.style("dim")))
+            rows.append(ui.Selected(row) if i == index else row)
+        return rows
 
     def new_branch_screen(self, cwd, branches, name="", setup=""):
         """Name a new branch and choose its base. Returns True once a worktree is created and opened.
@@ -229,7 +225,7 @@ class NewScreens:
         stdscr = self.stdscr
         keyboard.set_timeout(stdscr, -1)
         bases = branches["bases"]
-        text, tpos, base = name, len(name), 0
+        text, tpos, base, nudge = name, len(name), 0, False
         flash = ui.Flash()
         while True:
             keyboard.set_timeout(stdscr, flash.wait(-1))
@@ -242,7 +238,7 @@ class NewScreens:
             normalized = []
             if typed and typed != text.strip():
                 normalized = [[("       → " if i == 0 else "         ", ui.style("dim")), (line, ui.style("bold"))]
-                              for i, line in enumerate(ui.wrap(typed, space - 9))]
+                              for i, line in enumerate(ui.wrap_path(typed, space - 9))]
             base_rows = []
             for i, option in enumerate(bases):
                 row = [("Base   " if i == 0 else "       ", ui.style("dim")), ui.pointer(i == base),
@@ -254,21 +250,25 @@ class NewScreens:
                                  ("?", "help", 1), ("esc", "clear" if text else "back"))
             heading = [ui.header("New branch", self.label), []]
             room = height - ui.margin(height) - len(heading) - len(status) - 1
-            limit = max(2, room - 1 - len(normalized) - 1 - len(bases) - 1)
+            # The plan, right below the bases, keeps every row but the name's and the bases'.
+            limit = max(2, room - 1 - len(bases))
             if not text.strip():
-                action = [[("Type a name for the new branch; spaces become dashes.", ui.style("dim"))]]
+                hint = "Type a name; spaces become dashes."
+                action = [[(line, ui.style("yellow") if nudge else ui.style("dim"))] for line in ui.wrap(hint, space)]
             elif plan.get("error"):
                 action = error_rows(plan["error"], space, limit)
             else:
                 action = plan_rows([plan["action"]] + destination(plan, setup), space, limit)
-            parts = [ui.fixed(name_row), ui.extra(*normalized), ui.GAP, ui.fixed(*base_rows), ui.GAP]
-            body = ui.fit_parts(parts, room - len(action))
-            rows = ui.compose(height, heading, body, action + status + [footer])
+            parts = [ui.fixed(name_row), ui.extra(*normalized), ui.GAP, ui.fixed(*base_rows), ui.GAP,
+                     ui.fixed(*action)]
+            body = ui.fit_parts(parts, room)
+            rows = ui.compose(height, heading, body, status + [footer])
             ui.render(stdscr, rows, cursor=(ui.margin(height) + len(heading), 7 + column))
             key = keyboard.read_key(stdscr)
             if key is None or key == curses.KEY_RESIZE:
                 continue
             flash.clear()
+            nudge = False
             if key in (curses.KEY_DOWN, "\x0e"):
                 base = min(len(bases) - 1, base + 1)
             elif key in (curses.KEY_UP, "\x10"):
@@ -278,19 +278,16 @@ class NewScreens:
                     return False
                 text, tpos = "", 0
             elif key == "?":  # Never part of a branch name.
-                ui.show_help(stdscr, "New branch", [("Name", [
+                ui.show_help(stdscr, "New branch", [("Keys", [
                     ("typing", "the branch's name; spaces become dashes"),
-                    ("ctrl+u / ctrl+w", "delete to the start / the word before the cursor"),
-                ]), ("Base", [
-                    ("↑ / ↓", "choose what the branch starts from"),
-                    ("ctrl+p / ctrl+n", "the same"),
-                ]), ("Actions", [
+                    ("↑ / ↓", "choose what the branch starts from; also ctrl+p / ctrl+n"),
                     ("enter", "create the worktree and open its tab"),
                     ("esc", "clear the name; with no name, go back"),
-                ])])
+                    ("ctrl+c", "quit"),
+                ]), ("Editing", [("home / end", "the start / end of the name")] + TYPING_HELP)])
             elif key in keyboard.ENTER:
                 if not text.strip():
-                    flash.set("Type a name for the new branch first.", "yellow")
+                    nudge = True  # The hint turns yellow.
                 elif not plan.get("error"):
                     try:
                         self.create_and_open(cwd, plan)

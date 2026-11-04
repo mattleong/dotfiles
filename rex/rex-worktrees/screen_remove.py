@@ -7,13 +7,25 @@ import util
 import worktrees
 
 
-def closing_rows(groups):
-    """A row per tab with panes that will close, marking the tab the picker was opened in."""
+def where(group, session, label):
+    """Which tab a group is in, when that's worth saying: the picker's own, or one in another
+    session, such as the repository's."""
+    if group["here"]:
+        return " (this tab)"
+    other = group["window"].get("session_id")
+    return f" ({label} session)" if other and session and other != session else ""
+
+
+def closing_rows(groups, width, session="", label=""):
+    """A row per tab with panes that will close, marking the tab the picker was opened in and tabs
+    in other sessions. A long tab name is cut, so what closes in it stays in view."""
     rows = []
     for group in groups:
-        label, detail = tabs.describe_closing(group)
-        rows.append([("  " + label, ui.style("bold"))]
-                    + ([(" (this tab)", ui.style("cyan"))] if group["here"] else [])
+        name, detail = tabs.describe_closing(group)
+        mark = where(group, session, label)
+        room = max(8, width - 2 - len(mark) - 2 - len(detail))
+        name = name if len(name) <= room else name[:room - 1] + "…"
+        rows.append([("  " + name, ui.style("bold"))] + ([(mark, ui.style("cyan"))] if mark else [])
                     + [("  " + detail, ui.style("dim"))])
     return rows
 
@@ -23,18 +35,28 @@ def closing_heading(groups):
     return ui.section(f"Panes that will close ({count})", tone="yellow")
 
 
-def closing_summary(groups):
+def closing_summary(groups, session="", label=""):
     """What closes, in a sentence, such as "Closes 1 of 2 panes in Shell (this tab)"."""
     parts = []
     for group in groups:
-        label, _ = tabs.describe_closing(group)
-        label += " (this tab)" if group["here"] else ""
-        count = len(group["panes"])
+        name, _ = tabs.describe_closing(group)
+        name += where(group, session, label)
         if group["whole"]:
-            parts.append(f"its tab {label}")
+            parts.append(f"the tab {name}")
         else:
-            parts.append(f"{count} of {group['total']} panes in {label}")
+            parts.append(f"{len(group['panes'])} of {group['total']} panes in {name}")
     return "Closes " + ", ".join(parts) + "." if parts else ""
+
+
+def cleanup_reason_text(entry):
+    """Why a worktree is offered for cleanup, as a sentence."""
+    reason = worktrees.cleanup_reason(entry) or ""
+    if reason.endswith(" merged"):
+        return f"Its pull request {reason}."
+    return "Its remote branch was deleted." if reason == worktrees.REMOTE_DELETED else ""
+
+
+DIRTY_NOTE = "Has uncommitted changes, so it can't be cleaned up here; remove it on its own with dd."
 
 
 class RemovalScreens:
@@ -88,7 +110,8 @@ class RemovalScreens:
                 parts += [ui.fixed(ui.section(f"Uncommitted changes ({len(files)})", tone="yellow")),
                           ui.items([[("  " + f, 0)] for f in files]), ui.GAP]
             if closing:
-                parts += [ui.fixed(closing_heading(closing)), ui.items(closing_rows(closing)), ui.GAP]
+                parts += [ui.fixed(closing_heading(closing)),
+                          ui.items(closing_rows(closing, width, self.session, self.label)), ui.GAP]
             option_rows = []
             for i, option in enumerate(options):
                 box = "[x] " if option["checked"] else "[ ] "
@@ -152,7 +175,13 @@ class RemovalScreens:
             index = len(items)  # The cursor's row for "Also delete their branches".
             branch_row = [ui.pointer(cursor == index), ("[x] " if delete_branches["checked"] else "[ ] ", ui.style("cyan")),
                           ("Also delete their branches", 0), ("   (only ones with no unmerged commits)", ui.style("dim"), 1)]
-            status = flash.rows(width) or self.cleanup_detail(items, cursor, closes, width)
+            # The selected row's detail, in the same number of rows for every row, so the list
+            # doesn't jump as the cursor moves.
+            lines = max(1, min(4, (height - 8) // 2))
+            details = [self.cleanup_detail(items, i, closes, width, lines, self.session, self.label)
+                       for i in range(len(items) + 1)]
+            status = flash.rows(width) or details[cursor]
+            status += [[]] * (max(len(d) for d in details) - len(status))
             count = sum(i["checked"] for i in items)
             title = f"Clean up {len(candidates)} finished worktree{'s' if len(candidates) != 1 else ''}"
             heading = [ui.header(title, self.label)]
@@ -195,8 +224,7 @@ class RemovalScreens:
                 if cursor == index:
                     delete_branches["checked"] = not delete_branches["checked"]
                 elif items[cursor]["entry"].get("dirty") is True:
-                    flash.set(f"{items[cursor]['entry']['name']} has uncommitted changes, so it can't be cleaned up "
-                              "here. Remove it on its own with dd.", "yellow")
+                    flash.set("Can't check it: it has uncommitted changes. Remove it on its own with dd.", "yellow")
                 else:
                     items[cursor]["checked"] = not items[cursor]["checked"]
             elif key in keyboard.ENTER:
@@ -212,7 +240,8 @@ class RemovalScreens:
 
         removed, failures = self.busy(f"Removing {len(chosen)} worktree{'s' if len(chosen) != 1 else ''}…", work)
         if failures:
-            self.say(f"Removed {len(removed)}; " + "; ".join(failures))
+            done = f"Removed {len(removed)}" + (f" of {len(chosen)}" if len(removed) != len(chosen) else "")
+            self.say(done + ", but " + "; ".join(failures).rstrip(".") + ".")
         else:
             self.say(f"Removed {len(removed)} worktree{'s' if len(removed) != 1 else ''}.", "green")
         self.reload()
@@ -251,25 +280,26 @@ class RemovalScreens:
         return ui.Selected(row) if selected else row
 
     @staticmethod
-    def cleanup_detail(items, cursor, closes, width):
-        """The selected row in full, wrapped: its branch, its reason, and what removing it does."""
+    def cleanup_detail(items, cursor, closes, width, lines=3, session="", label=""):
+        """The selected row explained in up to lines rows: why it can't be cleaned up, or why it's
+        offered and what removing it closes; then its branch in full, or cut in the middle."""
         if cursor >= len(items):
-            text, tone = "Deletes each removed worktree's branch when it has no unmerged commits.", ui.style("dim")
+            text = "Deletes each removed worktree's branch when it has no unmerged commits."
+            return [[(line, ui.style("dim"))] for line in ui.wrap(text, width)[:lines]]
+        entry = items[cursor]["entry"]
+        if entry.get("dirty") is True:
+            text, tone = DIRTY_NOTE, ui.style("yellow")
         else:
-            entry = items[cursor]["entry"]
-            text = f"{entry['name']}: {worktrees.cleanup_reason(entry)}."
-            if entry.get("dirty") is True:
-                text += " It has uncommitted changes, so it can't be cleaned up here; remove it on its own with dd."
-                tone = ui.style("yellow")
-            else:
-                closing = closing_summary(closes.get(entry["worktree"]) or [])
-                text += " " + closing if closing else ""
-                tone = ui.style("dim")
-        lines = ui.wrap(text, width)
-        if len(lines) > ui.Flash.LINES:
-            lines = lines[:ui.Flash.LINES]
-            lines[-1] = lines[-1][:width - 1] + "…"
-        return [[(line, tone)] for line in lines]
+            closing = closing_summary(closes.get(entry["worktree"]) or [], session, label)
+            text, tone = cleanup_reason_text(entry) + (" " + closing if closing else ""), ui.style("dim")
+        reason = ui.wrap(text, width)
+        name = ui.wrap_path(entry["name"], width)
+        if len(reason) + len(name) > lines:
+            name = [ui.middle(entry["name"], width)[0]] if lines > 1 else []
+        if len(reason) + len(name) > lines:
+            reason = reason[:max(1, lines - len(name))]
+            reason[-1] = reason[-1][:width - 1] + "…"
+        return [[(line, tone)] for line in reason] + [[(line, ui.style("bold"))] for line in name]
 
     def prune(self):
         stale = [e for e in self.entries if "prunable" in e]

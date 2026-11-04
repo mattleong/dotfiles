@@ -83,9 +83,20 @@ def remove_worktree(repo, session, entry, closing, force=False, delete_branch=Fa
         raise RuntimeError("Worktree removed, but " + "; ".join(problems))
 
 
+def registered(repo, path):
+    """Whether Git still lists a worktree at path."""
+    try:
+        listed = worktrees.worktrees(repo)
+    except (RuntimeError, OSError):
+        return os.path.isdir(path)
+    real = os.path.realpath(path)
+    return any(os.path.realpath(e["worktree"]) == real for e in listed)
+
+
 def remove_many(repo, session, items, terminals=None):
     """Remove several worktrees, closing their panes at the end so the picker's own tab closes
-    last. items holds (entry, delete_branch) pairs. Returns (removed names, failure messages)."""
+    last. items holds (entry, delete_branch) pairs. Returns (removed names, failure messages); a
+    worktree counts as removed once Git no longer lists it, even if its folder couldn't be deleted."""
     removed, failures, paths = [], [], []
     if terminals is None:
         try:
@@ -98,10 +109,16 @@ def remove_many(repo, session, items, terminals=None):
             removed.append(entry["name"])
             paths.append(entry["worktree"])
         except (RuntimeError, OSError) as error:
-            if not os.path.isdir(entry["worktree"]):
-                removed.append(entry["name"])
-                paths.append(entry["worktree"])
-            failures.append(f"{entry['name']}: {error}")
+            # Git can drop a worktree from its list and still fail to delete its folder.
+            if registered(repo, entry["worktree"]):
+                failures.append(f"{entry['name']} wasn't removed: {error}")
+                continue
+            removed.append(entry["name"])
+            paths.append(entry["worktree"])
+            if os.path.isdir(entry["worktree"]):
+                failures.append(f"couldn't delete the folder of {entry['name']}: {error}")
+            else:
+                failures.append(f"{entry['name']}: {error}")
     try:
         tabs.close_panes(session, tabs.panes_to_close(terminals, paths))
     except (RuntimeError, OSError) as error:

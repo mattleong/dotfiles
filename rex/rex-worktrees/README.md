@@ -26,6 +26,12 @@ Run the tests from this directory:
 python3 -m unittest test_worktrees
 ```
 
+The list's letters are commands, so its filter starts only with `/`. Screens built around a text
+input (the list's filter while typing, New worktree, and New branch) take every printable key as
+text, and move their list with keys that can't be text: the arrows and ctrl+n/p, plus page up/down
+and home/end where the list scrolls. esc clears the text, then goes back. Keep new keys within
+that split.
+
 Every screen keeps its key hints pinned to the bottom of the pane, and lists shorten or scroll to
 fit (see `compose` and `fit_parts` in `ui.py`), so check changes in a short pane, such as 50×16, as
 well as a large one.

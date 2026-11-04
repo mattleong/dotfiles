@@ -39,6 +39,10 @@ def main(stdscr, mode, cwd, session, client="", origin=""):
                 ui.show_error(stdscr, str(error))
         except keyboard.FocusLost:
             util.STATE["navigated"] = True
+    if not util.STATE["navigated"]:
+        # Focus goes back to the pane the picker was opened from: keep the rest of a quickly
+        # typed word out of it.
+        keyboard.settle(stdscr)
 
 
 def setup_locale():

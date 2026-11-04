@@ -1,6 +1,7 @@
 """Keyboard input: reading keys, focus reports, line editing, and Vim-style motions."""
 import curses
 import re
+import time
 
 import tabs
 import util
@@ -58,6 +59,36 @@ def motion(key, index, count, page, pending):
     if key not in moves:
         return None, None
     return min(count - 1, max(0, moves[key])), None
+
+
+# While typing in a filter, every printable key types, so the list moves with keys that can't be
+# part of the text: the arrows, ctrl+n/p, page up/down, and home/end for the first and last rows.
+TYPING_MOVES = (curses.KEY_DOWN, "\x0e", curses.KEY_UP, "\x10", curses.KEY_NPAGE, curses.KEY_PPAGE,
+                curses.KEY_HOME, curses.KEY_END)
+
+
+def typing_motion(key, index, count, page):
+    """Move a list below a text input. Returns the new index, or None if key isn't a move."""
+    if key not in TYPING_MOVES:
+        return None
+    return motion(key, index, count, page, None)[0]
+
+
+def settle(stdscr, quiet=0.15, longest=1.0):
+    """Read and drop keys until none arrive for quiet seconds, or for at most longest seconds.
+    Called before the picker exits and focus returns to the pane it was opened from, so the rest
+    of something typed quickly, such as a name after a q that quits, doesn't land in that pane."""
+    deadline = time.monotonic() + longest
+    stdscr.timeout(int(quiet * 1000))
+    try:
+        while time.monotonic() < deadline:
+            try:
+                stdscr.get_wch()
+            except curses.error:
+                return
+    finally:
+        stdscr.timeout(util.STATE.get("timeout", -1))
+        curses.flushinp()
 
 
 class FocusLost(Exception):
