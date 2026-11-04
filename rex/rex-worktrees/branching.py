@@ -38,13 +38,18 @@ def new_path(cwd, branch):
     exists (for example a/b and a-b both make a-b), the name plus a short hash of the branch. A
     name over 100 characters loses its middle, keeping the end, where long names usually differ."""
     folder = Path.home() / ".local/share/rex/worktrees" / worktree_root_key(cwd)
+    path = folder / folder_slug(branch)
+    if path.exists():
+        path = folder / folder_slug(branch, True)
+    return path
+
+
+def folder_slug(branch, hashed=False):
+    """A worktree folder's name for a branch (see new_path), with the hash when hashed."""
     slug = branch.replace("/", "-")
     if len(slug) > 100:
         slug = slug[:48] + "--" + slug[-50:]
-    path = folder / slug
-    if path.exists():
-        path = folder / (slug + "-" + hashlib.sha256(branch.encode()).hexdigest()[:8])
-    return path
+    return slug + "-" + hashlib.sha256(branch.encode()).hexdigest()[:8] if hashed else slug
 
 
 RECENT_DAYS = 30
@@ -84,8 +89,27 @@ def load_branches(cwd, entries, now=None):
     suggestions += [{"name": name, "ref": ref, "kind": "remote", "time": stamp} for name, ref, stamp in remote_refs
                     if name not in local_names and name not in checked_out]
     suggestions += [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in available if stamp < cutoff]
-    return {"local": local_names, "remote": remote, "checked_out": checked_out,
+    return {"local": local_names, "remote": remote, "remotes": remotes, "checked_out": checked_out,
             "suggestions": suggestions, "head": head, "bases": bases}
+
+
+def split_remote(text, branches):
+    """For text that starts with a remote's name and a slash, as git branch -r lists branches,
+    such as origin/fix/login: the remote and the rest. Else None."""
+    text = text.strip()
+    for remote in branches.get("remotes", ()):  # The longest first, so origin-fork/x isn't origin's.
+        if text.startswith(remote + "/") and len(text) > len(remote) + 1:
+            return remote, text[len(remote) + 1:]
+    return None
+
+
+def query_for(text, suggestion, branches):
+    """What to match a suggestion's name against: for text such as origin/fix, the rest, when the
+    branch is on that remote; else the text."""
+    split = split_remote(text, branches)
+    if split and f"{split[0]}/{suggestion['name']}" in branches["remote"].get(suggestion["name"], ()):
+        return split[1]
+    return text
 
 
 def plan_branch(cwd, branches, text, suggestion=None, base=None):
@@ -107,12 +131,14 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
             return {"error": "Enter a branch name." if not text.strip() else "No usable branch-name characters."}
         if not util.git_ok(cwd, "check-ref-format", "--branch", name):
             return {"branch": name, "error": "Not a valid branch name."}
-        if name in branches["checked_out"]:
-            return {"branch": name, "error": "Already checked out at " + util.tilde(branches["checked_out"][name])}
-        if name in branches["local"]:
-            return {"branch": name, "error": "A branch with this name exists; select it under Existing branches."}
-        if branches["remote"].get(name):
-            return {"branch": name, "error": f"{branches['remote'][name][0]} exists; select it under Existing branches."}
+        existing = existing_branch(name, branches)
+        if existing:
+            return existing
+        split = split_remote(name, branches)
+        if split:
+            # A local origin/x would make Git call origin/x ambiguous.
+            return {"branch": name, "remote": split[0],
+                    "error": f"A branch can't start with {split[0]}/, a remote's name; name it {split[1]}."}
         clash = ref_clash(name, branches["local"])
         if clash:
             return {"branch": name, "error": f"{name} can't be a branch while {clash} exists."}
@@ -124,6 +150,31 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
         plan["error"] = "Destination already exists: " + util.tilde(str(path))
     plan["path"] = path
     return plan
+
+
+def existing_branch(name, branches):
+    """The plan for a name that's a branch already, or on a remote, such as origin/x: an error, and
+    either the worktree it's checked out in ("open"), or the refs of the suggestions it means
+    ("exists"). Else None."""
+    split = split_remote(name, branches)
+    if split and name in branches["remote"].get(split[1], ()):
+        local = split[1]  # Remote branches are checked out as local ones of the same name.
+    elif split:
+        return None
+    else:
+        local = name
+    if local in branches["checked_out"]:
+        path = branches["checked_out"][local]
+        return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path}
+    if local in branches["local"]:
+        return {"branch": local, "exists": [local],
+                "error": "A branch with this name exists; select it under Existing branches."}
+    if split:
+        return {"branch": local, "exists": [name], "error": f"{name} exists; select it under Existing branches."}
+    if branches["remote"].get(name):
+        return {"branch": name, "exists": branches["remote"][name],
+                "error": f"{branches['remote'][name][0]} exists; select it under Existing branches."}
+    return None
 
 
 def ref_clash(name, local):

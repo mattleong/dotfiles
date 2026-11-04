@@ -870,15 +870,21 @@ class WorktreeTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("New worktree — keys") for t in texts for line in t))
         self.assertTrue(any("esc quit" in line for line in texts[-1]))
 
-    def test_new_worktree_shows_why_a_name_cant_be_created(self):
+    def test_new_worktree_opens_a_branch_thats_checked_out_already(self):
         cwd, branches = self.setup_branches()
-        screen = FakeScreen(list("main") + [curses.KEY_HOME, "\n", "\x1b", "\x1b"], (16, 60))
-        picker = self.picker(screen)
+        screen = FakeScreen(list("main") + [curses.KEY_HOME, "\n"], (16, 60))
+        path = branches["checked_out"]["main"]
+        picker = self.picker(screen, [{"name": "main", "worktree": path, "branch": "refs/heads/main", "main": True}])
+        picker.session, picker.client = "s", None
         picker.branches = lambda: branches
         picker.new_branch_screen = lambda *args: self.fail("enter went on to name the branch")
-        drive(screen, lambda: picker.new_screen())
-        rows = next(screen.text(i) for i in range(len(screen.frames)) if "› + Create branch “main”…" in screen.text(i))
+        with patch.object(tabs, "open_tab") as open_tab:
+            self.assertTrue(drive(screen, lambda: picker.new_screen()))
+        self.assertIs(open_tab.call_args[0][1], picker.entries[0])
+        rows = next(screen.text(i) for i in range(len(screen.frames)) if "› + Create branch “main”" in screen.text(i))
         self.assertTrue(any("Already checked out" in line for line in rows))
+        self.assertIn("enter: open that worktree instead", rows)
+        self.assertTrue(rows[-1].startswith("enter open"))
 
     def test_new_branch_plan_follows_the_bases_and_the_hint_fits(self):
         cwd, branches = self.setup_branches()
@@ -1008,16 +1014,17 @@ class WorktreeTests(unittest.TestCase):
         for name in (long_name, "feature/remote-only-pr", "release/login-redirect"):
             git(self.repo, "branch", name)
         cwd, branches = self.setup_branches()
-        for typed in ("main", "remote-pr"):
+        for typed, label in (("main", "“main”"), ("remote-pr", "“remote-pr”…")):  # main can't be created.
             frames = self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches)
             rows = next(f for f in frames if any(line.startswith("/ " + typed) for line in f))
-            self.assertIn(f"› + Create branch “{typed}”…", rows, typed)
+            self.assertIn(f"› + Create branch {label}", rows, typed)
         # A word the branch starts with, or its whole name, selects it, and the plan names it.
         frames = self.new_worktree_frames(list("login") + ["\x1b", "\x1b"], branches, (24, 60))
         rows = next(f for f in frames if any(line.startswith("/ login") for line in f))
         self.assertTrue(any(line.startswith("› release/login-redirect") for line in rows))
-        plan = "".join(line[7:] for line in rows[next(i for i, line in enumerate(rows) if line.startswith("enter:")):])
-        self.assertIn("check out the existing branch release/login-redirect", plan)
+        plan = rows[next(i for i, line in enumerate(rows) if line.startswith("enter:")):]
+        self.assertIn("check out the existing branch release/login-redirect", " ".join(line[7:].strip() for line in plan))
+        self.assertIn("       release/login-redirect", plan)  # Whole, not broken at its dash.
 
     def test_already_checked_out_shows_whichever_row_is_selected(self):
         git(self.repo, "branch", "main-old")
@@ -1130,7 +1137,7 @@ class WorktreeTests(unittest.TestCase):
         with patch.object(worktrees, "missing", return_value=False):
             drive(screen, picker.cleanup)
         rows = screen.text(0)
-        option = next(i for i, line in enumerate(rows) if "Also delete their branches" in line)
+        option = next(i for i, line in enumerate(rows) if "Also delete its branch" in line)  # Just one.
         self.assertTrue(rows[option + 2].startswith("Its remote branch was deleted."))
 
     def test_prune_rows_keep_the_folder_name(self):
@@ -1142,6 +1149,162 @@ class WorktreeTests(unittest.TestCase):
         row = next(line for line in screen.text(0) if "chore/bump-deps" in line)
         self.assertLessEqual(len(row.rstrip()), 47)
         self.assertTrue(row.rstrip().endswith("reviewopusr3-gone"))
+
+    def test_an_existing_branchs_name_selects_it_without_an_error(self):
+        cwd, branches = self.setup_branches()
+        for typed, plan in (("existing", "check out the existing branch existing"),
+                            ("remote-only", "create a local branch tracking origin/remote-only")):
+            rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, (24, 60))
+                        if any(line.startswith("/ " + typed) for line in f))
+            self.assertIn(f"  + Create branch “{typed}”", rows)  # No “…”: it can't be created.
+            self.assertIn("  " + util.ICONS["info"] + " This branch exists; enter checks it out.", rows)
+            self.assertFalse(any(util.ICONS["error"] in line for line in rows), rows)
+            self.assertTrue(any(line.startswith("› " + typed) for line in rows))
+            self.assertIn(plan, " ".join(rows))
+        # Moved back to the create row, the error applies again.
+        frames = self.new_worktree_frames(list("existing") + [curses.KEY_UP, "\x1b", "\x1b"], branches, (24, 60))
+        rows = next(f for f in frames if "› + Create branch “existing”" in f)
+        self.assertTrue(any(util.ICONS["error"] + " A branch with this name exists" in line for line in rows))
+
+    def test_a_remote_qualified_name_means_the_remote_branch(self):
+        cwd, branches = self.setup_branches()
+        self.assertEqual(branching.split_remote("origin/fix/x", branches), ("origin", "fix/x"))
+        self.assertIsNone(branching.split_remote("originals/x", branches))
+        plan = branching.plan_branch(cwd, branches, "origin/remote-only")
+        self.assertEqual(plan["exists"], ["origin/remote-only"])
+        self.assertEqual(branching.plan_branch(cwd, branches, "origin/new-idea")["error"],
+                         "A branch can't start with origin/, a remote's name; name it new-idea.")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/existing", "HEAD")
+        cwd, branches = str(self.repo), branching.load_branches(str(self.repo), worktrees.worktrees(str(self.repo)))
+        self.assertIn("open", branching.plan_branch(cwd, branches, "origin/main"))  # main is checked out.
+        self.assertEqual(branching.plan_branch(cwd, branches, "origin/existing")["exists"], ["existing"])
+        for typed, selected in (("origin/remote-only", "› remote-only"), ("origin/exist", "› existing"),
+                                ("origin/remote-o", "› remote-only")):
+            rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, (24, 60))
+                        if any(line.startswith("/ " + typed) for line in f))
+            self.assertTrue(any(line.startswith(selected) for line in rows), (typed, rows))
+            self.assertFalse(any(util.ICONS["error"] in line for line in rows), rows)
+
+    def test_wrapping_keeps_hyphenated_names_whole(self):
+        self.assertEqual(ui.wrap("check out the existing branch fix/login-flow-timeout", 43),
+                         ["check out the existing branch", "fix/login-flow-timeout"])
+        # Paths break after a slash, and inside a folder's name only when it's too long for a line.
+        self.assertEqual(ui.wrap_path("/private/tmp/a-long-parent/unique-leaf-folder", 30),
+                         ["/private/tmp/a-long-parent/", "unique-leaf-folder"])
+        self.assertEqual(ui.wrap_path("experiment/very-long-branch-name", 16),
+                         ["experiment/very-", "long-branch-name"])
+
+    def test_footer_keeps_the_way_back_to_create_once_typing_selects_a_branch(self):
+        name = "experiment/very-long-branch-name-to-test-truncation-behaviour-" + "x" * 40 + "-available-alpha"
+        git(self.repo, "branch", name)
+        cwd, branches = self.setup_branches()
+        screen = FakeScreen(list("available") + ["\x1b", "\x1b"], (16, 50))
+        picker = self.picker(screen)
+        picker.branches = lambda: branches
+        with patch.object(worktrees, "setup_command", return_value='printf "setup complete\\n"'):
+            drive(screen, lambda: picker.new_screen(root=True))
+        frame = next(f for f in screen.frames if any("available" in t for t, *_ in f[1]))
+        footer = "".join(t for t, _ in ui.fit(frame[-1], 47))
+        self.assertIn("↑/↓ move", footer)
+
+    def test_list_without_a_selection_hides_and_explains_row_actions(self):
+        entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False, "track": []}]
+        screen = FakeScreen(["/"] + list("zzz") + ["\t", "s", "q"], (24, 100))
+        picker = self.picker(screen, entries)
+        drive(screen, picker.list_screen)
+        frames = [screen.text(i) for i in range(len(screen.frames))]
+        footer = frames[-1][-1]
+        self.assertNotIn("split", footer)
+        self.assertNotIn("remove", footer)
+        self.assertIn("n new", footer)
+        self.assertTrue(any(screen_list.NONE_SELECTED in line for line in frames[-1]))
+
+    def test_missing_folder_is_said_once(self):
+        entry = {"name": "gone", "worktree": "/nonexistent/gone", "prunable": "gone", "track": []}
+        picker = self.picker(None)
+        rows = lambda said: ["".join(t for t, _ in row) for row in picker.preview(entry, 47, False, 8, said)]
+        self.assertIn("press p to prune it.", " ".join(rows(False)))
+        self.assertTrue(rows(False)[-1].endswith("prune it."))  # Wrapped, not cut.
+        self.assertFalse(any("missing" in line for line in rows(True)))
+
+    def test_folder_column_hides_folders_that_repeat_the_branch(self):
+        made = str(Path.home()) + "/.local/share/rex/worktrees/repo-0123456789/"
+        entries = [{"name": "main", "worktree": "/w/repo", "branch": "refs/heads/main", "main": True, "track": []},
+                   {"name": "chore/old-thing", "worktree": made + "chore-old-thing", "branch": "x", "track": []},
+                   {"name": "fix/b", "worktree": "/w/repo-fix-b", "branch": "x", "track": []}]
+        self.assertEqual(ui.folder_name(entries[1]), ("", 0))
+        self.assertEqual(ui.folder_name(entries[2], "repo-"), ("", 0))
+        widths = ui.column_widths(entries, 120)
+        rows = ["".join(t for t, _ in ui.entry_row(e, False, widths)).rstrip() for e in entries]
+        self.assertTrue(rows[0].endswith(" repo"))
+        self.assertTrue(rows[1].endswith(" rex"), rows[1])  # Only the tool that made it.
+        self.assertEqual(ui.column_widths(entries[1:2], 120)["FOLDER"], len("FOLDER"))  # For "rex".
+        alone = [{"name": "fix/b", "worktree": "/w/fix-b", "branch": "x", "track": []}]
+        self.assertEqual(ui.column_widths(alone, 120)["FOLDER"], 0)  # Nothing to show.
+
+    def test_cleanup_says_up_front_when_every_candidate_is_dirty(self):
+        entries = [{"name": "fix/done", "worktree": "/w/done", "track": ["remote deleted"], "dirty": True}]
+        picker = self.picker(FakeScreen([], (24, 80)), entries)
+        with patch.object(worktrees, "missing", return_value=False):
+            self.assertFalse(picker.cleanup())
+        self.assertIn("fix/done is finished, but it has uncommitted changes", picker.flash.text)
+        self.assertEqual(picker.flash.tone, "yellow")
+
+    def test_cleanup_message_names_the_deleted_branches(self):
+        done = screen_remove.cleanup_done
+        self.assertEqual(done(["a"], 0, False), "Removed 1 worktree.")
+        self.assertEqual(done(["a"], 1, True), "Removed 1 worktree and its branch.")
+        self.assertEqual(done(["a", "b"], 2, True), "Removed 2 worktrees and their branches.")
+        self.assertEqual(done(["a", "b", "c"], 2, True),
+                         "Removed 3 worktrees and 2 of their branches; 1 with unmerged commits was kept.")
+        self.assertEqual(done(["a"], 0, True),
+                         "Removed 1 worktree; its branch had unmerged commits, so it was kept.")
+
+    def test_destructive_details_show_everything_in_full(self):
+        stem = "feature-config-with-a-very-long-name-to-check-identification-"
+        files = ["?? " + stem + tail + ".json" for tail in ("alpha", "beta")]
+        label = "long-name-same-prefix-for-every-tab-label-with-distinguishing-tail-end"
+        entry = {"name": "fix/x", "worktree": str(self.repo), "branch": "refs/heads/fix/x"}
+        closing = [{"window": {"window_id": "w2", "label": label, "session_id": "other"}, "panes": ["c"],
+                    "total": 1, "whole": True, "here": False}]
+        screen = FakeScreen(["\t", "q", "q"], (16, 60))
+        picker = self.picker(screen)
+        picker.session = "s"
+        options = [{"id": "force", "checked": False, "label": [("Discard uncommitted changes", 0)]}]
+        drive(screen, lambda: picker.removal_options(entry, files, closing, None, options))
+        footer = "".join(t for t, _ in ui.fit(screen.frames[0][-1], 57))
+        details = next(screen.frames[i] for i in range(len(screen.frames))
+                       if screen.text(i)[0].startswith("Remove worktree — details"))
+        rows = ["".join(t for t, *_ in row).rstrip() for row in details]
+        self.assertTrue(all(len(row) <= 57 for row in rows), rows)
+        text = "".join(row.strip() for row in rows)
+        for name in files[0][3:], files[1][3:], label:
+            self.assertIn(name, text)
+        self.assertIn("(repo session)", text)
+        self.assertIn("tab details", footer)
+        # Prune: every name and path, wrapped.
+        path = "/private/tmp/rexwt-review-sol-r4/a-long-parent-name-with-extra-context-/unique-leaf-folder"
+        stale = [{"name": "r4/prune-full-details", "worktree": path, "prunable": "gone"}]
+        screen = FakeScreen(["\t", "q", "q"], (22, 100))
+        drive(screen, self.picker(screen, stale).prune)
+        details = next(screen.text(i) for i in range(len(screen.frames)) if "— details" in "".join(screen.text(i)[:2]))
+        self.assertIn(path, "".join(line.strip() for line in details))
+
+    def test_cleanup_details_name_every_candidate_in_full(self):
+        name = "experiment/" + "very-long-branch-name-" * 4 + "distinctive-final-suffix"
+        entries = [{"name": name, "worktree": "/w/a", "track": ["remote deleted"], "dirty": False},
+                   {"name": "fix/done", "worktree": "/w/b", "track": ["remote deleted"], "dirty": True}]
+        screen = FakeScreen(["\t", "q", "q"], (16, 50))
+        picker = self.picker(screen, entries)
+        picker.session, picker.terminals = "s", []
+        with patch.object(worktrees, "missing", return_value=False):
+            drive(screen, picker.cleanup)
+        self.assertIn("Also delete their branches", "".join(screen.text(0)))
+        details = next(screen.text(i) for i in range(len(screen.frames)) if "Clean up — details" in screen.text(i)[0])
+        self.assertIn(name, "".join(line.strip() for line in details))
+        self.assertTrue(all(len(line.rstrip()) <= 47 for line in details))
+        self.assertTrue(any("Has uncommitted changes" in line for line in details))
 
 
 if __name__ == "__main__":

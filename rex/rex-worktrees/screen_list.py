@@ -30,6 +30,8 @@ def list_layout(room, count):
 
 
 MISSING = "This worktree's folder is missing; press p to prune it."
+NONE_SELECTED = "No worktree selected."
+ROW_KEYS = ("s", "o", "e", "y", "Y", "d")  # Keys that act on the selected worktree.
 
 
 class ListScreen:
@@ -65,8 +67,11 @@ class ListScreen:
             else:
                 finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e))
                 stale = sum(1 for e in self.entries if "prunable" in e)
-                footer = ui.footer(enter="new" if missing else "open", move=True, slash="filter", back="quit", clear_filter=bool(query),
-                                   actions=[("s", "split"), ("n", "new"), ("dd", "remove")]
+                # With nothing selected, only the actions that don't need a worktree.
+                footer = ui.footer(enter="new" if missing else "open", move=bool(shown), slash="filter", back="quit",
+                                   clear_filter=bool(query),
+                                   actions=([("s", "split")] if selected else []) + [("n", "new")]
+                                   + ([("dd", "remove")] if selected else [])
                                    + ([("c", f"clean up ({finished})")] if finished else [])
                                    + ([("p", f"prune ({stale})")] if stale else []))
             search, column = ui.search_row(query, qpos, filtering, space)
@@ -90,7 +95,8 @@ class ListScreen:
                                      (f" new worktree for “{missing}”", ui.style("dim"))])
                 if preview_rows:  # Right below the list's rows.
                     body += [[]] * (capacity - len(body))
-                    body += self.preview(selected, space, widths["compact"], preview_rows)
+                    body += self.preview(selected, space, widths["compact"], preview_rows,
+                                         said=self.flash.left() is not None and self.flash.text == MISSING)
                 cursor = (ui.margin(height) + 1, column) if column is not None else None
                 ui.render(stdscr, ui.compose(height, heading, body, bottom), cursor=cursor)
 
@@ -124,6 +130,10 @@ class ListScreen:
             paths = [e["worktree"] for e in shown]
             if pending and key not in (pending, "p" if pending == "g" else pending):
                 pending = None  # An unfinished dd, gg, or gp: the next key only cancels it.
+                continue
+            if selected is None and (key in ROW_KEYS or (pending == "g" and key == "p")):
+                pending = None
+                self.say(NONE_SELECTED, "dim")
                 continue
             if key == "d":
                 if pending == "d":
@@ -289,11 +299,11 @@ class ListScreen:
         parts += [f"{n} {label}" for n, label in counts[1:] if n]
         return " · ".join(parts)
 
-    def preview(self, entry, space, compact, size):
+    def preview(self, entry, space, compact, size, said=False):
         """The selected worktree in size rows: a blank row, its full branch, wrapped, then its path
         and as many of its commits as fit. The branch comes first so long ones that look alike in
         the list can be told apart. Compact rows leave out the labels' words, so the preview gives
-        them in full."""
+        them in full. A missing folder is said, wrapped, unless the status line said it (said)."""
         if entry is None or size < 2:
             return []
         bold, dim = ui.style("bold"), ui.style("dim")
@@ -315,7 +325,8 @@ class ListScreen:
             else:
                 rows.append([(ui.middle(path, space)[0], dim)])
         if worktrees.missing(entry):
-            rows.append([(util.ICONS["missing"] + " " + MISSING, ui.style("yellow"))])
+            if not said:
+                rows += [[(line, ui.style("yellow"))] for line in ui.wrap(util.ICONS["missing"] + " " + MISSING, space)]
             return rows[:size]
         if len(rows) + 2 > size:
             return rows[:size]  # No room for a commit, so no heading for them either.

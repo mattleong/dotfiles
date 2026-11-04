@@ -16,10 +16,11 @@ def where(group, session, label):
     return f" ({label} session)" if other and session and other != session else ""
 
 
-def closing_rows(groups, width, session="", label=""):
+def closing_rows(groups, width, session="", label="", full=False):
     """A row per tab with panes that will close, marking the tab the picker was opened in and tabs
     in other sessions. A long tab name is cut, so what closes in it stays in view; in a narrow pane,
-    what closes goes on its own row below."""
+    what closes goes on its own row below. In full, a name too long for its row wraps instead,
+    with the mark after it and what closes below."""
     rows = []
     for group in groups:
         name, detail = tabs.describe_closing(group)
@@ -28,12 +29,36 @@ def closing_rows(groups, width, session="", label=""):
         below = room < min(len(name), 12)
         if below:
             room = max(4, width - 2 - len(mark))
+        if full and len(name) > room:
+            lines = ui.wrap_path(name, width - 2)
+            rows += [[("  " + line, ui.style("bold"))] for line in lines[:-1]]
+            last = [("  " + lines[-1], ui.style("bold"))]
+            if mark and len(lines[-1]) + len(mark) > width - 2:
+                rows.append(last)
+                last = [("  " + mark.strip(), ui.style("cyan"))]
+            elif mark:
+                last.append((mark, ui.style("cyan")))
+            rows += [last] + [[("    " + line, ui.style("dim"))] for line in ui.wrap(detail, width - 4)]
+            continue
         name = name if len(name) <= room else name[:room - 1] + "…"
         row = [("  " + name, ui.style("bold"))] + ([(mark, ui.style("cyan"))] if mark else [])
         if below:
             rows += [row, [("    " + detail, ui.style("dim"))]]
         else:
             rows.append(row + [("  " + detail, ui.style("dim"))])
+    return rows
+
+
+def file_rows(files, width, full=False):
+    """A row per changed file, such as "?? notes.txt". In full, a long path wraps after a slash,
+    below its start."""
+    if not full:
+        return [[("  " + f, 0)] for f in files]
+    rows = []
+    for f in files:
+        status, path = (f[:3], f[3:]) if len(f) > 3 and f[2] == " " else ("", f)
+        lines = ui.wrap_path(path, max(8, width - 2 - len(status)))
+        rows += [[("  " + (status if i == 0 else " " * len(status)) + line, 0)] for i, line in enumerate(lines)]
     return rows
 
 
@@ -76,6 +101,40 @@ def cleanup_reason_text(entry):
 
 
 DIRTY_NOTE = "Has uncommitted changes, so it can't be cleaned up here; remove it on its own with dd."
+
+
+def cleanup_text(entry, closes, session="", label=""):
+    """A cleanup candidate explained: why it can't be cleaned up, or why it's offered and what
+    removing it closes. Returns (the text, its tone)."""
+    if entry.get("dirty") is True:
+        return DIRTY_NOTE, ui.style("yellow")
+    closing = closing_summary(closes.get(entry["worktree"]) or [], session, label)
+    return cleanup_reason_text(entry) + (" " + closing if closing else ""), ui.style("dim")
+
+
+def branch_option(count):
+    """The cleanup option to delete the branches, and what it does, for count candidates."""
+    if count == 1:
+        return "Also delete its branch", "Deletes the worktree's branch when it has no unmerged commits."
+    return "Also delete their branches", "Deletes each removed worktree's branch when it has no unmerged commits."
+
+
+def cleanup_done(removed, deleted, asked):
+    """What cleanup did, such as "Removed 2 worktrees and their branches." deleted counts the
+    branches deleted; asked is whether deleting them was checked."""
+    count = len(removed)
+    text = f"Removed {plural(count, 'worktree')}"
+    if not asked:
+        return text + "."
+    its = "its" if count == 1 else "their"
+    if deleted == count:
+        return text + f" and {its} branch{'es' if count != 1 else ''}."
+    if deleted:
+        kept = count - deleted
+        return text + (f" and {deleted} of their branches; {kept} with unmerged commits "
+                       f"{'was' if kept == 1 else 'were'} kept.")
+    return text + f"; {its} branch{'es' if count != 1 else ''} had unmerged commits, so " \
+                  f"{'it was' if count == 1 else 'they were'} kept."
 
 
 class RemovalScreens:
@@ -123,20 +182,20 @@ class RemovalScreens:
             width = ui.space(stdscr)
             checked = {o["id"] for o in options if o["checked"]}
 
-            def parts(width):
+            def parts(width, full=False):
                 """The worktree, then what removing it loses and closes, then the options. When
                 they don't all fit, each list keeps at least a line saying how many, and tab shows
-                them all."""
+                them all, in full."""
                 body = [ui.fixed(*[[(line, ui.style("bold"))] for line in ui.wrap_path(entry["name"], width)]),
                         ui.extra(*[[(line, ui.style("dim"))] for line in ui.wrap_path(util.tilde(entry["worktree"]), width)]),
                         ui.GAP]
                 if files:
-                    body += [ui.items([[("  " + f, 0)] for f in files], heading=ui.section(
+                    body += [ui.items(file_rows(files, width, full), heading=ui.section(
                         f"Uncommitted changes ({len(files)})", tone="yellow"),
                         summary=summary_row(plural(len(files), "uncommitted file")), hint=LIST_HINT), ui.GAP]
                 if closing:
                     count = sum(len(g["panes"]) for g in closing)
-                    body += [ui.items(closing_rows(closing, width, self.session, self.label),
+                    body += [ui.items(closing_rows(closing, width, self.session, self.label, full),
                                       heading=closing_heading(closing),
                                       summary=summary_row(plural(count, "pane") + " will close"), hint=LIST_HINT),
                              ui.GAP]
@@ -157,7 +216,7 @@ class RemovalScreens:
             room = height - ui.margin(height) - len(top) - len(status) - 1
             body = parts(width)
             bottom = status + [ui.footer(enter="remove", move=len(options) > 1, toggle=bool(options), back="cancel",
-                                         details=ui.cut(body, room))]
+                                         details=ui.abridged(body, parts(width, True), room, width))]
             ui.render(stdscr, ui.compose(height, top, ui.fit_parts(body, room), bottom))
             key = keyboard.read_key(stdscr)
             if key is None:
@@ -193,6 +252,15 @@ class RemovalScreens:
             note = " (pull requests are still loading)" if self.prs_loading else ""
             self.say("No worktrees with merged pull requests or deleted remote branches" + note + ".", "dim")
             return False
+        if all(e.get("dirty") is True for e in candidates):
+            if len(candidates) == 1:
+                text = f"{candidates[0]['name']} is finished, but it has uncommitted changes, so it can't be " \
+                       "cleaned up; remove it on its own with dd."
+            else:
+                text = f"The {len(candidates)} finished worktrees all have uncommitted changes, so none can " \
+                       "be cleaned up; remove each on its own with dd."
+            self.say(text, "yellow")
+            return False
         try:
             terminals = self.terminals_now()
         except (RuntimeError, OSError, ValueError):
@@ -208,7 +276,9 @@ class RemovalScreens:
             width = ui.space(stdscr)
             index = len(items)  # The cursor's row for "Also delete their branches".
             branch_row = [ui.pointer(cursor == index), ("[x] " if delete_branches["checked"] else "[ ] ", ui.style("cyan")),
-                          ("Also delete their branches", 0), ("   (only ones with no unmerged commits)", ui.style("dim"), 1)]
+                          (branch_option(len(items))[0], 0),
+                          ("   (if it has no unmerged commits)" if len(items) == 1
+                           else "   (only ones with no unmerged commits)", ui.style("dim"), 1)]
             # The selected row's detail, in the same number of rows for every row, so the list
             # doesn't jump as the cursor moves.
             lines = max(1, min(4, (height - 8) // 2))
@@ -222,13 +292,18 @@ class RemovalScreens:
             heading = [ui.header(title, self.label)]
             intro = "Merged pull requests or deleted remote branches."
             intro = [(intro if len(intro) + 8 <= width else "Merged PRs or deleted remote branches.", ui.style("dim"))]
-            bottom = [ui.footer(enter=f"remove {count}", move=True, toggle=True, back="cancel")]
             # Below the list: a blank row, the branch option, a blank row, and the detail.
-            capacity = height - ui.margin(height) - len(heading) - 2 - 3 - len(detail) - len(bottom)
+            capacity = height - ui.margin(height) - len(heading) - 2 - 3 - len(detail) - 1
             gaps = capacity >= min(3, len(items))
             if not gaps:  # A short pane: the list keeps the rows.
-                intro, capacity = None, height - ui.margin(height) - len(heading) - 1 - len(detail) - len(bottom)
+                intro, capacity = None, height - ui.margin(height) - len(heading) - 1 - len(detail) - 1
             capacity = max(1, capacity)
+            # Tab shows every candidate in full when the list scrolls, or a name or detail is cut.
+            longest = max(len(i["entry"]["name"]) for i in items)
+            abridged = (capacity < len(items) or longest > self.cleanup_name_width(items, width) or any(
+                d != self.cleanup_detail(items, i, closes, width, 1000, self.session, self.label)
+                for i, d in enumerate(details)))
+            bottom = [ui.footer(enter=f"remove {count}", move=True, toggle=True, back="cancel", details=abridged)]
             top = ui.scroll_top(top, min(cursor, len(items) - 1), len(items), capacity)
             rows = [self.cleanup_row(item, i == cursor, items, closes, width) for i, item in enumerate(items)]
             body = rows[top:top + capacity] + ([[]] if gaps else [])
@@ -247,10 +322,14 @@ class RemovalScreens:
             new_cursor, pending = keyboard.motion(key, cursor, len(items) + 1, capacity, pending)
             if new_cursor is not None:
                 cursor = new_cursor
+            elif key == "\t":
+                ui.page(stdscr, "Clean up — details", lambda width: self.cleanup_details(
+                    items, delete_branches["checked"], closes, width, self.session, self.label))
             elif key == "?":
                 ui.show_help(stdscr, "Clean up", [("Move", ui.NAVIGATION_HELP), ("Actions", [
                     ("space", "check or uncheck the worktree or option"),
                     ("enter", "remove the checked worktrees, and close the panes inside them"),
+                    ("tab", "every worktree in full, with why it's offered and what removing it closes"),
                     ui.CLOSE_HELP,
                 ]), ("Notes", [
                     (util.ICONS["dirty"], "uncommitted changes: it can't be cleaned up here; remove it with dd"),
@@ -272,16 +351,42 @@ class RemovalScreens:
 
         def work():
             pairs = [(e, delete_branches["checked"] and bool(worktrees.merged_into(self.repo, e))) for e in chosen]
-            return actions.remove_many(self.repo, self.session, pairs, terminals)
+            removed, failures = actions.remove_many(self.repo, self.session, pairs, terminals)
+            return removed, failures, sum(1 for e, delete in pairs if delete and e["name"] in removed)
 
-        removed, failures = self.busy(f"Removing {len(chosen)} worktree{'s' if len(chosen) != 1 else ''}…", work)
+        removed, failures, deleted = self.busy(f"Removing {plural(len(chosen), 'worktree')}…", work)
         if failures:
             done = f"Removed {len(removed)}" + (f" of {len(chosen)}" if len(removed) != len(chosen) else "")
             self.say(done + ", but " + "; ".join(failures).rstrip(".") + ".")
         else:
-            self.say(f"Removed {len(removed)} worktree{'s' if len(removed) != 1 else ''}.", "green")
+            self.say(cleanup_done(removed, deleted, delete_branches["checked"]), "green")
         self.reload()
         return False
+
+    @staticmethod
+    def cleanup_name_width(items, width):
+        """The branch column's width: room for the reason and at least a note's icon beside it."""
+        reasons = max(len(worktrees.cleanup_reason(i["entry"])) for i in items)
+        longest = max(len(i["entry"]["name"]) for i in items)
+        return max(6, min(longest, width - 6 - 2 - reasons - 3))
+
+    @staticmethod
+    def cleanup_details(items, delete_branches, closes, width, session="", label=""):
+        """Every candidate in full, for tab: its checkbox and branch, wrapped, then why it's offered
+        and what removing it closes; then the branch option."""
+        rows = []
+        for item in items:
+            entry = item["entry"]
+            dirty = entry.get("dirty") is True
+            box = ("[ ] ", ui.style("dim")) if dirty else ("[x] " if item["checked"] else "[ ] ", ui.style("cyan"))
+            for i, line in enumerate(ui.wrap_path(entry["name"], width - 4)):
+                rows.append([box if i == 0 else ("    ", 0), (line, ui.style("bold"))])
+            text, tone = cleanup_text(entry, closes, session, label)
+            rows += [[("    " + line, tone)] for line in ui.wrap(text, width - 4)] + [[]]
+        label_text, explanation = branch_option(len(items))
+        rows.append([("[x] " if delete_branches else "[ ] ", ui.style("cyan")), (label_text, 0)])
+        rows += [[("    " + line, ui.style("dim"))] for line in ui.wrap(explanation, width - 4)]
+        return [[]] + rows
 
     @staticmethod
     def cleanup_row(item, selected, items, closes, width):
@@ -289,7 +394,6 @@ class RemovalScreens:
         narrow pane: uncommitted changes, or panes that will close."""
         entry = item["entry"]
         reasons = max(len(worktrees.cleanup_reason(i["entry"])) for i in items)
-        longest = max(len(i["entry"]["name"]) for i in items)
         dirty = entry.get("dirty") is True
         groups = closes.get(entry["worktree"]) or []
         panes = sum(len(g["panes"]) for g in groups)
@@ -302,8 +406,7 @@ class RemovalScreens:
             icon, tone = util.ICONS["tab"], ui.style("dim")
         else:
             notes, icon, tone = [], "", 0
-        # Leave room for the reason and at least a note's icon beside the branch.
-        name_width = max(6, min(longest, width - 6 - 2 - reasons - 3))
+        name_width = RemovalScreens.cleanup_name_width(items, width)
         name = entry["name"] if len(entry["name"]) <= name_width else entry["name"][:name_width - 1] + "…"
         reason = worktrees.cleanup_reason(entry)
         box = ("[ ] ", ui.style("dim")) if dirty else ("[x] " if item["checked"] else "[ ] ", ui.style("cyan"))
@@ -320,14 +423,9 @@ class RemovalScreens:
         """The selected row explained in up to lines rows: why it can't be cleaned up, or why it's
         offered and what removing it closes; then its branch in full, or cut in the middle."""
         if cursor >= len(items):
-            text = "Deletes each removed worktree's branch when it has no unmerged commits."
-            return [[(line, ui.style("dim"))] for line in ui.wrap(text, width)[:lines]]
+            return [[(line, ui.style("dim"))] for line in ui.wrap(branch_option(len(items))[1], width)[:lines]]
         entry = items[cursor]["entry"]
-        if entry.get("dirty") is True:
-            text, tone = DIRTY_NOTE, ui.style("yellow")
-        else:
-            closing = closing_summary(closes.get(entry["worktree"]) or [], session, label)
-            text, tone = cleanup_reason_text(entry) + (" " + closing if closing else ""), ui.style("dim")
+        text, tone = cleanup_text(entry, closes, session, label)
         reason = ui.wrap(text, width)
         name = ui.wrap_path(entry["name"], width)
         if len(reason) + len(name) > lines:
@@ -343,11 +441,16 @@ class RemovalScreens:
             self.say("No missing worktrees to prune.", "dim")
             return
 
-        def parts(width):
+        def parts(width, full=False):
             rows = []
             for e in stale:
-                # Each name, then its path cut in the middle, keeping the folder's name at the end.
+                # Each name, then its path cut in the middle, keeping the folder's name at the end;
+                # in full, when they don't fit in a row, the name, then the path below it, wrapped.
                 path = util.tilde(e["worktree"])
+                if full and len(e["name"]) + 2 + len(path) > width - 2:
+                    rows += [[("  " + line, ui.style("bold"))] for line in ui.wrap_path(e["name"], width - 2)]
+                    rows += [[("    " + line, ui.style("dim"))] for line in ui.wrap_path(path, width - 4)]
+                    continue
                 room = max(16, width - 4 - len(e["name"]))
                 name = ui.middle(e["name"], max(4, width - 4 - min(room, len(path))))[0]
                 rows.append([("  " + name, ui.style("bold")),

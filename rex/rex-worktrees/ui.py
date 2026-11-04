@@ -5,6 +5,7 @@ import re
 import textwrap
 import time
 
+import branching
 import keyboard
 import util
 import worktrees
@@ -92,8 +93,9 @@ def fit(row, width):
 
 
 def wrap(text, width):
-    """Lines of text no wider than width, at least one."""
-    return textwrap.wrap(text, max(1, width)) or [""]
+    """Lines of text no wider than width, at least one. Words break only at spaces, so a branch
+    such as fix/login-flow stays whole when it fits."""
+    return textwrap.wrap(text, max(1, width), break_on_hyphens=False) or [""]
 
 
 def wrap_lines(text, width):
@@ -102,10 +104,19 @@ def wrap_lines(text, width):
 
 
 def wrap_path(text, width):
-    """Like wrap, but breaking a long path after a slash rather than inside a folder's name."""
+    """Like wrap, but breaking a long path after a slash rather than inside a folder's name: after
+    a dash only when a folder's name is too long for a line."""
     width = max(1, width)
+    whole = [p for p in re.split(r"(?<=[/ ])", text) if p]
+    if all(len(p.rstrip()) <= width for p in whole):
+        return break_at(whole, width)
+    return break_at([p for p in re.split(r"(?<=[/ -])", text) if p], width)
+
+
+def break_at(parts, width):
+    """Join parts into lines no wider than width, splitting a part only when it's wider itself."""
     lines, line = [], ""
-    for part in (p for p in re.split(r"(?<=[/ -])", text) if p):
+    for part in parts:
         if line and len(line) + len(part.rstrip()) > width:
             lines.append(line.rstrip())
             line = ""
@@ -407,12 +418,17 @@ def folder_prefix(entries):
 
 
 def folder_name(entry, prefix=""):
-    """The worktree's folder name, without the prefix the worktrees share. Returns (name, how
-    many characters were left out)."""
+    """The worktree's folder name, without the prefix the worktrees share, or nothing when it just
+    repeats the branch, as for worktrees the picker created. Returns (name, how many characters
+    were left out)."""
     name = os.path.basename(entry["worktree"])
     if prefix and name.startswith(prefix) and len(name) > len(prefix):
-        return name[len(prefix):], len(prefix)
-    return name, 0
+        name, skipped = name[len(prefix):], len(prefix)
+    else:
+        skipped = 0
+    if "branch" in entry and name in (branching.folder_slug(entry["name"]), branching.folder_slug(entry["name"], True)):
+        return "", 0
+    return name, skipped
 
 
 def column_widths(entries, space=None):
@@ -423,7 +439,7 @@ def column_widths(entries, space=None):
     branch, they turn into short words, such as "main" and "gone", and the branch narrows, to
     MIN_BRANCH at most. When even that isn't enough, rows turn compact: the branch, its age, and
     the labels' icons. Folders leave out the main checkout's folder name, which the others' often
-    start with."""
+    start with, and are left blank when they just repeat the branch."""
     longest = max([len(e["name"]) for e in entries] + [6])
     widths = {"BRANCH": longest, "compact": False, "short": False}
 
@@ -438,7 +454,8 @@ def column_widths(entries, space=None):
     widths["SOURCE"] = max([len(worktrees.worktree_source(e)) for e in entries] + [0])
     widths["PREFIX"] = folder_prefix(entries)
     folder = max([len(folder_name(e, widths["PREFIX"])[0]) for e in entries] + [0])
-    folder = max(len("FOLDER"), (widths["SOURCE"] + 1 if widths["SOURCE"] else 0) + folder)
+    if folder or widths["SOURCE"]:  # Else every folder just repeats its branch: no column.
+        folder = max(len("FOLDER"), (widths["SOURCE"] + 1 if widths["SOURCE"] else 0) + folder)
     widths["FOLDER"] = folder
     if space is None:
         return widths
@@ -449,7 +466,7 @@ def column_widths(entries, space=None):
     if space - rest() < longest:
         widths.update(cells(True), short=True)
     left = space - rest() - longest
-    if left >= MIN_FOLDER:
+    if left >= MIN_FOLDER and folder:
         widths["FOLDER"] = min(folder, left)
         return widths
     widths["FOLDER"] = 0
@@ -500,8 +517,9 @@ def entry_row(entry, selected, widths, match=None):
             row.append((worktrees.worktree_source(entry).ljust(widths["SOURCE"]) + " ", style("blue")))
             room -= widths["SOURCE"] + 1
         folder, skipped = folder_name(entry, widths.get("PREFIX", ""))
-        folder, hits = middle(folder, max(1, room), {h - skipped for h in folder_hits if h >= skipped})
-        row += highlighted(folder, hits, style("dim"))
+        if folder:
+            folder, hits = middle(folder, max(1, room), {h - skipped for h in folder_hits if h >= skipped})
+            row += highlighted(folder, hits, style("dim"))
     return Selected(row) if selected else row
 
 
@@ -689,20 +707,35 @@ DETAILS_HELP = ("tab", "everything this would do, in full, when the pane is too 
 
 
 def show_details(stdscr, title, parts):
-    """Every row of body parts (see fit_parts), given by a function of the pane's width, scrolling."""
-    page(stdscr, title + " — details", lambda width: [[]] + all_rows(parts(width)))
+    """Every row of body parts (see fit_parts), scrolling. parts is a function of the pane's width
+    and whether to show everything in full, wrapping what the compact screen cuts short."""
+    page(stdscr, title + " — details", lambda width: [[]] + all_rows(parts(width, True)))
+
+
+def row_text(row):
+    return "".join(s[0] for s in row).rstrip()
+
+
+def abridged(parts, full, room, width):
+    """Whether a screen's body parts, fitted in room rows, leave anything out that details would
+    show: rows cut to fit, or text cut short, compared with the parts in full."""
+    rows = all_rows(parts)
+    return (cut(parts, room) or any(len(row_text(r)) > width for r in rows)
+            or [row_text(r) for r in rows] != [row_text(r) for r in all_rows(full)])
 
 
 def confirm(stdscr, title, repo, parts, keys, enter, help_items):
-    """Show body parts (see fit_parts), given by a function of the pane's width, and wait for one
-    of keys (a dict of key -> result). q and esc cancel; tab shows what was cut to fit."""
+    """Show body parts (see fit_parts), given by a function of the pane's width and whether to
+    show them in full (see show_details), and wait for one of keys (a dict of key -> result). q
+    and esc cancel; tab shows everything, in full."""
     keyboard.set_timeout(stdscr, -1)
     while True:
         height = stdscr.getmaxyx()[0]
-        body_parts = parts(space(stdscr))
+        width = space(stdscr)
+        body_parts = parts(width)
         room = height - margin(height) - 4
-        top, bottom = [header(title, repo), []], [[], footer(enter=enter, back="cancel",
-                                                              details=cut(body_parts, room))]
+        details = abridged(body_parts, parts(width, True), room, width)
+        top, bottom = [header(title, repo), []], [[], footer(enter=enter, back="cancel", details=details)]
         render(stdscr, compose(height, top, fit_parts(body_parts, room), bottom))
         key = keyboard.read_key(stdscr)
         if key in keyboard.CLOSE:

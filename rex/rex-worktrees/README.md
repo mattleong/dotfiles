@@ -35,12 +35,19 @@ would do in full; confirmations use it the same way.
 
 While you type in New worktree, its first row, which creates a branch from the text, stays
 selected unless the text is an existing branch's name or the start of a word in one (see
-`matching.strong`), so enter never checks out a branch you didn't mean.
+`matching.strong`), so enter never checks out a branch you didn't mean. Text such as `origin/fix`,
+as `git branch -r` lists branches, matches the branches on that remote by the rest (see
+`branching.query_for`), and never creates a local `origin/…` branch. When the text names a branch
+that exists, the note under the first row is dim, not an error, because enter goes to that branch:
+it checks out the selected branch, or opens the worktree a checked-out one is in. Red is for text
+that can't go anywhere.
 
 Every screen keeps its key hints pinned to the bottom of the pane, and lists shorten or scroll to
 fit (see `compose` and `fit_parts` in `ui.py`), so check changes in a short pane, such as 50×16, as
 well as a large one. What's cut stays inspectable: each list keeps at least a line saying how many
-it holds, and tab shows everything.
+it holds, and tab shows everything. In the details of a screen that removes something, everything is
+in full: file names, tab names, and paths wrap rather than being cut, so a screen's `parts` function
+takes whether to show them in full (see `show_details`).
 
 Rex runs the picker with the system `python3`, which can be as old as 3.9, so keep the code
 compatible with it.
