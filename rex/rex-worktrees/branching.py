@@ -140,6 +140,11 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
             return {"branch": name, "error": "Not a valid branch name."}
         existing = existing_branch(name, branches)
         if existing:
+            split = split_remote(name, branches)
+            if split and existing["branch"] in branches["local"]:
+                tracks = other_upstream(cwd, existing["branch"], name, branches)
+                if tracks is not None:
+                    existing["tracks"] = (tracks, split[0])
             return existing
         if name in branches.get("remotes", ()):
             # Most likely on the way to origin/name, so a hint ("hint") rather than an error.
@@ -165,10 +170,27 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
     return plan
 
 
+def other_upstream(cwd, local, ref, branches):
+    """For text such as fork/x, which means the local branch x, when x doesn't track ref and is at
+    another commit: what x tracks, such as origin (a remote's branch of its name, by the remote's
+    name), or "" for nothing. Else None."""
+    try:
+        upstream = util.git_text(cwd, "for-each-ref", "--format=%(upstream:short)", "refs/heads/" + local)
+        if upstream == ref:
+            return None
+        shas = util.git_text(cwd, "rev-parse", "refs/heads/" + local, "refs/remotes/" + ref).split()
+    except RuntimeError:
+        return None
+    if len(set(shas)) < 2:
+        return None
+    split = split_remote(upstream, branches)
+    return split[0] if split and split[1] == local else upstream
+
+
 def existing_branch(name, branches):
     """The plan for a name that's a branch already, or on a remote, such as origin/x: an error, and
-    either the worktree it's checked out in ("open"), or the refs of the suggestions it means
-    ("exists"). Else None."""
+    either the worktree it's checked out in ("open", or "missing" when its folder is gone), or the
+    refs of the suggestions it means ("exists"). Else None."""
     split = split_remote(name, branches)
     if split and name in branches["remote"].get(split[1], ()):
         local = split[1]  # Remote branches are checked out as local ones of the same name.
@@ -179,8 +201,8 @@ def existing_branch(name, branches):
     if local in branches["checked_out"]:
         path = branches["checked_out"][local]
         if path in branches.get("missing", ()):
-            return {"branch": local, "error": "It's checked out in a worktree whose folder is missing; "
-                                              "prune it with p in the list."}
+            return {"branch": local, "missing": path,
+                    "error": "It's checked out in a worktree whose folder is missing; prune it with p in the list."}
         return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path,
                 "short": "open its worktree"}
     if local in branches["local"]:

@@ -318,18 +318,29 @@ class RemovalScreens:
             heading = [ui.header(title, self.label)]
             intro = "Merged pull requests or deleted remote branches."
             intro = [(intro if len(intro) + 8 <= width else "Merged PRs or deleted remote branches.", ui.style("dim"))]
-            # Below the list: a blank row, the branch option, a blank row, and the detail.
-            capacity = height - ui.margin(height) - len(heading) - 2 - 3 - len(detail) - 1
-            gaps = capacity >= min(3, len(items))
-            if not gaps:  # A short pane: the list keeps the rows.
-                intro, capacity = None, height - ui.margin(height) - len(heading) - 1 - len(detail) - 1
-            capacity = max(1, capacity)
+
+            def fit_list(detail):
+                """The list's rows, and whether there's room for a blank row above and below the
+                branch option: below the list go those, the option, and the detail."""
+                capacity = height - ui.margin(height) - len(heading) - 2 - 3 - len(detail) - 1
+                if capacity >= min(3, len(items)):
+                    return capacity, True
+                return max(1, height - ui.margin(height) - len(heading) - 1 - len(detail) - 1), False
+
+            capacity, gaps = fit_list(detail)
             # Tab shows every candidate in full when the list scrolls, or a name or detail is cut.
             longest = max(len(i["entry"]["name"]) for i in items)
             abridged = (capacity < len(items) or longest > self.cleanup_name_width(items, width) or any(
                 d != self.cleanup_detail(items, i, closes, width, 1000, self.session, self.label)
                 for i, d in enumerate(details)))
-            bottom = [ui.footer(enter=f"remove {count}", move=True, toggle=True, back="cancel", details=abridged)]
+            footer = ui.footer(enter=f"remove {count}", move=True, toggle=True, back="cancel", details=abridged)
+            if abridged and "tab" not in [t for t, _ in ui.fit(footer, width)]:
+                # The footer has no room to say tab shows what's cut, so a row below the detail does.
+                detail.append([(ui.TAB_CUE.strip(), ui.style("dim"))])
+                capacity, gaps = fit_list(detail)
+            if not gaps:  # A short pane: the list keeps the rows.
+                intro = None
+            bottom = [footer]
             top = ui.scroll_top(top, min(cursor, len(items) - 1), len(items), capacity)
             rows = [self.cleanup_row(item, i == cursor, items, closes, width) for i, item in enumerate(items)]
             body = rows[top:top + capacity] + ([[]] if gaps else [])

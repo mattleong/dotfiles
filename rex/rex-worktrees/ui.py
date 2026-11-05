@@ -654,9 +654,10 @@ def footer(enter=None, move=False, slash=None, toggle=False, actions=(), back="b
     return help_row(*items)
 
 
-def typing_footer(enter="open"):
-    """The key hints while typing in a filter: enter acts on the selected row at once."""
-    return help_row(("enter", enter), ("↑/↓", "move", 2), ("tab", "done", 1), ("esc", "clear"))
+def typing_footer(enter="open", move=True):
+    """The key hints while typing in a filter: enter acts on the selected row at once. move is
+    False when no rows match, so there's nothing to move to."""
+    return help_row(("enter", enter), *([("↑/↓", "move", 2)] if move else []), ("tab", "done", 1), ("esc", "clear"))
 
 
 def help_row(*items):

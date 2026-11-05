@@ -73,7 +73,7 @@ class ListScreen:
             # With nothing matching, enter (while typing) or n starts a new worktree for the filter.
             missing = query.strip() if not shown else ""
             if filtering:
-                footer = ui.typing_footer("new" if missing else "open")
+                footer = ui.typing_footer("new" if missing else "open", move=bool(shown))
             else:
                 # Only the ones cleanup can remove: not ones with uncommitted changes.
                 finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e) and e.get("dirty") is not True)

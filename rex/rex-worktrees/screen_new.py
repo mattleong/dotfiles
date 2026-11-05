@@ -86,6 +86,23 @@ def destination(plan, setup):
     return [("in " + util.tilde(str(plan["path"])), "path")] + ([("then runs " + setup, "end")] if setup else [])
 
 
+def tracks_note(tracks):
+    """For text such as fork/x that means the local branch x, at another commit than fork's: what
+    x tracks instead (see branching.other_upstream)."""
+    upstream, remote = tracks
+    return (f"The local branch tracks {upstream}; {remote}'s differs." if upstream
+            else f"The local branch differs from {remote}'s.")
+
+
+def exists_note(create):
+    """Below the create row, when the text names the selected branch."""
+    if not create.get("tracks"):
+        return "This branch exists; enter checks it out."
+    upstream, remote = create["tracks"]
+    return ("Enter checks out the local branch, which tracks " + upstream if upstream
+            else "Enter checks out the local branch") + f"; {remote}'s differs."
+
+
 TYPING_HELP = [
     ("ctrl+a / ctrl+e", "the start / end of the text; ← / → move the cursor"),
     ("ctrl+u / ctrl+w", "delete to the start / the word before the cursor"),
@@ -123,12 +140,11 @@ class NewScreens:
                       for s, q in ((s, queries[id(s)]) for s in suggestions)}
             existing = [s for s in suggestions if scores[id(s)]]
             if text.strip():
-                existing.sort(key=lambda s: -scores[id(s)])
+                # A branch the text names in full goes first, above longer names that start with it;
+                # fix/a just as typed goes above fix-a.
+                existing.sort(key=lambda s: (not matching.exact(queries[id(s)], s["name"]),
+                                             queries[id(s)].strip() != s["name"], -scores[id(s)]))
             items = [None] + existing
-            if index is None:
-                index = next((i for i, s in enumerate(existing, 1) if matching.strong(queries[id(s)], s["name"])), 0)
-                moved = bool(index)  # Off the create row, by what was typed.
-            index = min(index, len(items) - 1)
             typed = branching.normalize_branch(text)
             create = None  # The plan for a new branch named by the text.
             if typed:
@@ -136,6 +152,14 @@ class NewScreens:
                 if key not in plans:
                     plans[key] = branching.plan_branch(cwd, branches, text)
                 create = plans[key]
+            if index is None:
+                # A branch that's checked out isn't listed: the create row, which opens it, stays
+                # selected, rather than a longer name that starts with it.
+                checked_out = bool(create and (create.get("open") or create.get("missing")))
+                index = 0 if checked_out else next(
+                    (i for i, s in enumerate(existing, 1) if matching.strong(queries[id(s)], s["name"])), 0)
+                moved = bool(index)  # Off the create row, by what was typed.
+            index = min(index, len(items) - 1)
             plan = branching.plan_branch(cwd, branches, "", items[index]) if index else create
 
             height, _ = stdscr.getmaxyx()
@@ -150,11 +174,14 @@ class NewScreens:
             note = []
             if create and create.get("error") and not (index and create.get("remote")):
                 if index and items[index]["ref"] in create.get("exists", ()):
-                    note = note_rows("This branch exists; enter checks it out.", "info", "dim", space)
+                    note = note_rows(exists_note(create), "info", "dim", space)
                 elif create.get("open"):
-                    # Where it is goes in the plan, which tab shows in full.
-                    note = note_rows("This branch is checked out already." if not index else create["error"] + ".",
-                                     "info", "dim", space)
+                    # Selected, the row and the plan say it; where it is goes in the plan, which tab
+                    # shows in full.
+                    if index:
+                        note = note_rows(create["error"] + ".", "info", "dim", space)
+                    elif create.get("tracks"):
+                        note = note_rows(tracks_note(create["tracks"]), "info", "dim", space)
                 elif create.get("hint"):  # A remote's name, on the way to origin/name.
                     note = note_rows(create["error"], "info", "dim", space, nudge and not index)
                 else:
@@ -204,8 +231,8 @@ class NewScreens:
                 possible = not (create and create.get("error"))
                 if create and create.get("open"):
                     label, possible = f"→ Open the worktree for “{create['branch']}”", True
-                elif create and create.get("hint"):  # A remote's name: no branch to name.
-                    label = "+ Create a new branch"
+                elif create and (create.get("hint") or (not possible and branching.split_remote(text, branches))):
+                    label = "+ Create a new branch"  # A remote's name, or text such as origin/x: no branch to name.
                 else:
                     label = f"+ Create branch “{typed}”" if typed else "+ Create a new branch"
                     label += "…" if possible else ""
@@ -274,7 +301,8 @@ class NewScreens:
     def new_help(self, root):
         ui.show_help(self.stdscr, "New worktree", [("Keys", [
             ("typing", "filter the existing branches, or name a new branch; the first row stays "
-                       "selected unless what you type is a branch's name or the start of one of its words; "
+                       "selected unless what you type is a branch's name or the start of one of its words, "
+                       "and a whole name wins over longer ones that start with it; "
                        "origin/name finds name among origin's branches"),
             ("↑ / ↓", "move; also ctrl+p / ctrl+n"),
             ("pgup / pgdn", "a page up / down"),
@@ -293,7 +321,8 @@ class NewScreens:
             (util.ICONS["remote"] + " remote", "only on a remote; enter creates a local branch tracking it"),
             (util.ICONS["remote"] + " fork", "the remote's name, when it's not origin or there's more than one; "
                                             "fork/ lists only its branches"),
-            ("narrow panes", "only the icons show, and the branch is cut short; the plan below the "
+            ("narrow panes", "pull requests show just their number, then only the icons show, and the "
+                             "branch is cut short; the plan below the "
                              "list names the selected branch in full"),
         ])])
 
@@ -302,21 +331,25 @@ class NewScreens:
         worktree list: branch, age, pull request, then where it is. queries holds the text each
         visible branch matched, to highlight; named labels every remote by its name (see
         branching.named_remotes). In a narrow pane, the branch column narrows, the pull
-        requests' labels shorten, then rows turn compact: the pull request's number and the
-        source's icon."""
+        requests' labels shorten, then lose their state where the rows would otherwise turn compact:
+        the pull request's number and the source's icon."""
         longest = max([len(s["name"]) for s in visible] + [10])
         sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s, named) for s in visible]
         source_width = max([len(s) for s in sources] + [4])
 
         def layout(short):
-            prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}, short) for s in visible]
+            prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}, short > 0) for s in visible]
+            if short > 1:  # Just the number, such as #12.
+                prs = [ui.short_cell(c) for c in prs]
             pr_width = max([ui.cell_width(c) for c in prs] + [0])
             pr_width = max(pr_width, 2) if pr_width else 0
             return prs, pr_width, 2 + 2 + 5 + (pr_width + 3 if pr_width else 0) + source_width
 
-        prs, pr_width, rest = layout(False)
+        prs, pr_width, rest = layout(0)
         if rest + longest > space:
-            prs, pr_width, rest = layout(True)
+            prs, pr_width, rest = layout(1)
+        if space - rest < min(ui.MIN_BRANCH, longest):  # Rather than turn compact, losing the source.
+            prs, pr_width, rest = layout(2)
         ref_width = min(longest, space - rest)
         compact = ref_width < min(ui.MIN_BRANCH, longest)
         if compact:

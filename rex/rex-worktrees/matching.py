@@ -76,14 +76,21 @@ def fuzzy(token, text):
     return score, positions
 
 
+def plain(text):
+    """A name with slashes, dashes, underscores, and spaces the same, for comparing names."""
+    return "".join("-" if c in "/_ " else c for c in text.strip().lower())
+
+
+def exact(typed, name):
+    """Whether typed is the branch's whole name (see plain), not just the start of a longer one."""
+    return bool(typed.strip()) and plain(typed) == plain(name)
+
+
 def strong(typed, name):
     """Whether a typed name surely means an existing branch: it's the branch's name, or it
     appears unbroken in it from the start of a word (so main doesn't mean domain), at least two
     characters long. Slashes, dashes, underscores, and spaces count as the same."""
-    def plain(text):
-        return "".join("-" if c in "/_ " else c for c in text.lower())
-
-    typed, name = plain(typed.strip()), plain(name)
+    typed, name = plain(typed), plain(name)
     if not typed:
         return False
     if typed == name:

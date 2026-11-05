@@ -39,10 +39,13 @@ would do in full; confirmations use it the same way.
 
 While you type in New worktree, its first row, which creates a branch from the text, stays
 selected unless the text is an existing branch's name or the start of a word in one (see
-`matching.strong`), so enter never checks out a branch you didn't mean. Text such as `origin/fix`,
+`matching.strong`), so enter never checks out a branch you didn't mean. A name typed in full beats
+longer names that start with it: a listed branch goes first and is selected (see `matching.exact`),
+and a checked-out one, which isn't listed, keeps the first row selected, since that row opens it. Text such as `origin/fix`,
 as `git branch -r` lists branches, matches the branches on that remote by the rest (see
 `branching.query_for`), never another remote's, even one with the same name, and never creates a
-local `origin/…` branch; `origin/` alone lists all of origin's branches. A remote's name alone
+local `origin/…` branch; `origin/` alone lists all of origin's branches. When `fork/x` means a
+local `x` that tracks another remote and is at another commit, a dim note says so. A remote's name alone
 can't be a new branch either, but it's most likely on the way to `origin/…`, so its note is a dim
 hint. When the text names a branch that exists, the note under the first row is dim too, not an
 error, because enter goes to that branch: it checks out the selected branch, or opens the worktree
