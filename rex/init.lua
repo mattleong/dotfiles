@@ -75,15 +75,48 @@ rex.bind("session/r", "session.rename")
 rex.bind("session/x", "session.close")
 
 -- Worktree actions open a temporary floating terminal for interaction.
+local PICKER_LABEL = "worktrees"
+-- Open pickers by block ID: their layer, folder, and the pane they were opened from. The picker runs
+-- under a root-owned login wrapper, so its own working directory can't be read.
+local pickers = {}
+
+-- Whether a block is a picker pane, even one opened before the config was last reloaded.
+local function is_picker(session_id, block_id)
+	local view = rex.session.view({ session_id = session_id })
+	for _, window in ipairs((view and view.windows) or {}) do
+		for _, layer in ipairs(window.layers or {}) do
+			for _, block in ipairs(layer.blocks or {}) do
+				if block.block_id == block_id then return block.label == PICKER_LABEL end
+			end
+		end
+	end
+	return false
+end
+
 local function worktree_action(mode)
 	return function(ctx)
 		if not ctx.session_id or not ctx.block_id then
 			error("Worktrees require a focused terminal and session")
 		end
-		local process, err = rex.block.call("com.superlogical.terminal", "process", { block_id = ctx.block_id })
-		if not process then error(err) end
-		local cwd = (process.foreground and process.foreground.cwd) or (process.child and process.child.cwd)
-		if not cwd then error("Cannot determine the focused terminal's working directory") end
+		local cwd, origin = nil, ctx.block_id
+		local open = pickers[ctx.block_id]
+		if open then
+			-- Invoked from inside a picker: replace it, opening the requested screen for the same folder.
+			pickers[ctx.block_id] = nil
+			rex.session.close_layer({ session_id = ctx.session_id, layer_id = open.layer_id })
+			cwd, origin = open.cwd, open.origin
+		elseif is_picker(ctx.session_id, ctx.block_id) then
+			return -- A picker from before a config reload is already open and focused.
+		else
+			local process, err = rex.block.call("com.superlogical.terminal", "process", { block_id = ctx.block_id })
+			if not process then error(err) end
+			cwd = (process.foreground and process.foreground.cwd) or (process.child and process.child.cwd)
+			if not cwd then
+				local running = (process.foreground and process.foreground.name) or "a program"
+				error("Can't tell which folder the focused pane is in (it's running " .. running
+					.. "). Focus a shell inside a Git repository and try again.")
+			end
+		end
 		local home = os.getenv("HOME")
 		if not home then error("HOME is not set") end
 		local result, layer_err = rex.session.new_layer({
@@ -92,14 +125,17 @@ local function worktree_action(mode)
 			focus = true,
 			layout = rex.layout.block({
 				flavor = "com.superlogical.terminal.shell",
+				label = PICKER_LABEL,
 				options = {
 					shell = "none",
 					cwd = "/",
-					command = { "python3", home .. "/.config/rex/rex-worktrees", mode, cwd, ctx.session_id, ctx.client_id or "", ctx.block_id },
+					command = { "python3", home .. "/.config/rex/rex-worktrees", mode, cwd, ctx.session_id, ctx.client_id or "", origin },
 				},
 			}),
 		})
 		if not result then error(layer_err) end
+		local block_id = result.block_ids and result.block_ids[1]
+		if block_id then pickers[block_id] = { layer_id = result.layer_id, cwd = cwd, origin = origin } end
 	end
 end
 
