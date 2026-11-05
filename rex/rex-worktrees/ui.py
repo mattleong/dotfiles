@@ -739,11 +739,30 @@ def help_body(sections, width):
     return body
 
 
+def tidy_error(message):
+    """A message, such as Git's, made to read well wrapped to any width: its fatal: or error: line
+    first, with what came before it, such as "Preparing worktree", after the rest; and each
+    sentence Git broke across lines, such as its advice, joined again, so it wraps to the pane.
+    A line starting with a lowercase letter continues the one before, unless it starts with a word
+    and a colon, as hint: does; other lines, blank ones, and indented ones stay as they are."""
+    lines = message.strip().splitlines()
+    first = next((i for i, line in enumerate(lines) if re.match(r"(fatal|error):", line)), 0)
+    if first:
+        lines = lines[first:] + [""] + lines[:first]
+    out = []
+    for line in lines:
+        if out and out[-1].strip() and line[:1].islower() and not re.match(r"[a-z]+:(\s|$)", line):
+            out[-1] = out[-1].rstrip() + " " + line.strip()
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def show_error(stdscr, message, title="Something went wrong", hint=""):
-    """Show a message too long for the status line, wrapped, keeping its line breaks, until it's
-    closed. j/k scroll it when it doesn't fit."""
+    """Show a message too long for the status line, wrapped, keeping its paragraphs (see
+    tidy_error), until it's closed. j/k scroll it when it doesn't fit."""
     def body(width):
-        lines = hang(util.ICONS["error"], message.strip(), width)
+        lines = hang(util.ICONS["error"], tidy_error(message), width)
         rows = [[]] + [[(line, style("red"))] for line in lines]
         return rows + ([[]] + [[(line, style("dim"))] for line in wrap(hint, width)] if hint else [])
     page(stdscr, title, body, close="close")

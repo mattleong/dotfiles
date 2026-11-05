@@ -917,8 +917,11 @@ class WorktreeTests(unittest.TestCase):
         first, last = screen.text(0), screen.text()
         self.assertRegex(first[0].rstrip(), r"  \d+/\d+$")  # How far down the last visible row is.
         self.assertIn("j/k scroll", first[-1])
-        self.assertTrue(any("Preparing worktree" in line for line in first))
+        lead = next(line for line in first if util.ICONS["error"] in line)
+        self.assertIn(util.ICONS["error"] + " fatal: cannot lock ref", lead)
+        self.assertFalse(any("Preparing worktree" in line for line in first))  # It goes after the error.
         self.assertIn("the end", " ".join(line.strip() for line in last))
+        self.assertIn("Preparing worktree", last[-2])
         position, total = last[0].split()[-1].split("/")
         self.assertEqual(position, total)
 
@@ -1847,7 +1850,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertLess(names.index("feature/x-2"), names.index("feature/x"))
         cases = [("fix/a", "› → Open the worktree for “fix/a”", "enter open"),
                  ("main", "› → Open the worktree for “main”", "enter open"),
-                 ("chore/gone", "› + Create branch “chore/gone”", "↑/↓ move"),  # Its folder is missing: no enter.
+                 ("chore/gone", "› + Create a new branch", "↑/↓ move"),  # Its folder is missing: no enter.
                  ("feature/login-redirect", "› feature/login-redirect ", "enter select"),
                  ("feature/x", "› feature/x ", "enter select"),
                  ("origin/feature/x", "› feature/x ", "enter select")]
@@ -1886,7 +1889,8 @@ class WorktreeTests(unittest.TestCase):
         rows = next(f for f in self.new_worktree_frames(list("fork/feature/remote-two") + ["\x1b", "\x1b"], branches,
                                                          (22, 100)) if self.search_text(f) == "fork/feature/remote-two")
         self.assertTrue(any(line.startswith("› feature/remote-two") for line in rows), rows)
-        self.assertIn("Enter checks out the local branch, which tracks origin; fork's differs.", " ".join(rows))
+        self.assertIn("fork's version differs; enter checks out the local branch, which tracks origin.",
+                      " ".join(line.strip() for line in rows))
         # Checked out, the first row opens it, and says the same.
         self.add("two", "feature/remote-two-other")
         git(self.repo, "worktree", "add", "-q", str(Path(self.tmp.name) / "remote-two"), "feature/remote-two")
@@ -1894,7 +1898,7 @@ class WorktreeTests(unittest.TestCase):
         rows = next(f for f in self.new_worktree_frames(list("fork/feature/remote-two") + ["\x1b", "\x1b"], branches,
                                                          (16, 50)) if self.search_text(f) == "fork/feature/remote-two")
         self.assertTrue(any(line.startswith("› → Open the worktree for") for line in rows), rows)
-        self.assertIn("The local branch tracks origin; fork's differs.", " ".join(line.strip() for line in rows))
+        self.assertIn("fork's version differs; the local branch tracks origin.", " ".join(line.strip() for line in rows))
         # At fork's commit, or with no upstream at another, it says so only where they differ.
         git(self.repo, "update-ref", "refs/remotes/fork/feature/remote-two", shas["origin"])
         self.assertNotIn("tracks", branching.plan_branch(cwd, branches, "fork/feature/remote-two"))
@@ -1949,6 +1953,223 @@ class WorktreeTests(unittest.TestCase):
                     self.assertEqual(ui.TAB_CUE.strip() in rows, cue, rows)
                     self.assertNotIn("tab details", rows[-1])  # No room at 50 columns; nothing's cut at 100.
                     self.assertTrue(all(any(name[:10] in line for line in rows) for name in names), rows)
+
+    def test_a_checked_out_name_typed_loosely_opens_its_worktree(self):
+        self.add("fixa", "fix/a")
+        self.add("login", "feature/login-redirect")
+        gone = self.add("gone", "chore/gone")
+        shutil.rmtree(gone)
+        newer = self.commit_at("newer", "2026-02-01T00:00:00")
+        for branch in ("fix/a-followup", "maintenance/cleanup", "feature/login-redirect-v2", "chore/gone-2"):
+            git(self.repo, "branch", branch, newer)
+        cwd, branches = self.setup_branches()
+        cases = [("fix a", "fix/a"), ("FIX/A", "fix/a"), ("Fix_A", "fix/a"), ("MAIN", "main"),
+                 ("feature login-redirect", "feature/login-redirect")]
+        for typed, branch in cases:
+            plan = branching.plan_branch(cwd, branches, typed)
+            self.assertEqual((plan["branch"], plan.get("open") is not None), (branch, True), typed)
+            for size in ((16, 50), (22, 100), (40, 140)):
+                rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, size)
+                            if self.search_text(f) == typed)
+                with self.subTest(typed=typed, size=size):
+                    self.assertIn(f"› → Open the worktree for “{branch}”", rows)
+                    self.assertTrue(rows[-1].startswith("enter open"), rows[-1])
+                    self.assertFalse(any(line.startswith("› ") and "→" not in line for line in rows), rows)
+        # Its folder missing, it's refused just as the exact name is, naming no branch to create.
+        plan = branching.plan_branch(cwd, branches, "CHORE/GONE")
+        self.assertEqual((plan["branch"], "missing" in plan), ("chore/gone", True))
+        rows = next(f for f in self.new_worktree_frames(list("CHORE/GONE") + ["\x1b", "\x1b"], branches)
+                    if self.search_text(f) == "CHORE/GONE")
+        self.assertIn("› + Create a new branch", rows)
+        self.assertTrue(rows[-1].startswith("↑/↓ move"), rows[-1])
+        # Enter on fix a opens fix/a; it doesn't check out fix/a-followup.
+        screen = FakeScreen(list("fix a") + ["\n"], (16, 50))
+        picker = self.picker(screen)
+        picker.branches = lambda: branches
+        opened = []
+        picker.open_checked_out = lambda plan, flash: opened.append(plan["branch"]) or True
+        picker.create_and_open = lambda *args: self.fail("enter checked out another branch")
+        with patch.object(worktrees, "setup_command", return_value=""):
+            self.assertTrue(drive(screen, lambda: picker.new_screen()))
+        self.assertEqual(opened, ["fix/a"])
+        # A listed branch just as close wins: it's the one the list selects.
+        git(self.repo, "branch", "fix-a", newer)
+        branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
+        self.assertNotIn("open", branching.plan_branch(cwd, branches, "fix a"))
+        rows = next(f for f in self.new_worktree_frames(list("fix a") + ["\x1b", "\x1b"], branches)
+                    if self.search_text(f) == "fix a")
+        self.assertTrue(any(line.startswith("› fix-a ") for line in rows), rows)
+
+    def test_new_worktree_columns_stay_put_while_the_list_scrolls(self):
+        long_name = "experiment/very-long-branch-name-to-test-trunc"
+        names = [f"feature/topic-{i:02}" for i in range(24)] + [long_name]
+        for name in names:
+            git(self.repo, "branch", name)
+        cwd, branches = self.setup_branches()
+        prs = {names[3]: {"number": 105, "state": "MERGED", "isDraft": False},
+               names[20]: {"number": 7, "state": "OPEN", "isDraft": False}}
+        for size, compact in (((16, 50), False), ((22, 100), False), ((40, 140), False), ((16, 40), True)):
+            screen = FakeScreen([curses.KEY_DOWN] * 30 + [curses.KEY_UP] * 30 + ["\x1b"], size)
+            picker = self.picker(screen)
+            picker.branches = lambda: branches
+            picker.prs = prs
+            with patch.object(worktrees, "setup_command", return_value=""):
+                drive(screen, lambda: picker.new_screen(root=True))
+            titles, sources = set(), set()
+            for i in range(len(screen.frames)):
+                rows = screen.text(i)
+                title = next(line for line in rows if line.startswith("  BRANCH"))
+                titles.add(title.rstrip())
+                sources.update(line.index("local") for line in rows
+                               if line[:2] in ("  ", "› ") and line.rstrip().endswith("local"))
+            with self.subTest(size=size):
+                self.assertEqual(len(titles), 1, titles)  # The same titles, in the same places, all along.
+                self.assertEqual(("FROM" in titles.pop()), not compact)
+                self.assertLessEqual(len(sources), 1, sources)
+
+    def test_long_remote_names_keep_the_source_column_in_a_narrow_pane(self):
+        cwd, branches = self.setup_branches()
+        long_remote = "upstream-with-a-descriptive-name"
+        git(self.repo, "remote", "add", long_remote, "https://example.invalid/up.git")
+        git(self.repo, "update-ref", f"refs/remotes/{long_remote}/only-upstream", "HEAD")
+        branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
+        rows = self.new_worktree_frames(["\x1b"], branches, (16, 50))[0]
+        title = next(line for line in rows if line.startswith("  BRANCH"))
+        self.assertIn("FROM", title)  # Not compact: the long name is cut instead.
+        listed = next(line for line in rows if "only-upstream" in line)
+        self.assertIn(util.ICONS["remote"] + " upstrea", listed)
+        self.assertTrue(listed.rstrip().endswith("…"), listed)
+        self.assertTrue(all(len(line) <= 47 for line in rows), rows)
+
+    def test_a_long_remote_names_note_leads_with_the_difference_and_tab_shows_it(self):
+        cwd, branches = self.setup_branches()
+        upstream, fork = "upstream-with-a-descriptive-name", "fork-with-a-descriptive-name"
+        for remote in (upstream, fork):
+            git(self.repo, "remote", "add", remote, f"https://example.invalid/{remote}.git")
+        git(self.repo, "update-ref", f"refs/remotes/{upstream}/note-test", "HEAD")
+        git(self.repo, "update-ref", f"refs/remotes/{fork}/note-test", self.commit_at("fork", "2026-02-01T00:00:00"))
+        git(self.repo, "branch", "--track", "note-test", f"{upstream}/note-test")
+        typed = f"{fork}/note-test"
+        full = f"{fork}'s version differs; enter checks out the local branch, which tracks {upstream}."
+
+        def check(branches, full):
+            screen = FakeScreen(list(typed) + ["\t", "q", "\x1b", "\x1b"], (16, 50))
+            picker = self.picker(screen)
+            picker.branches = lambda: branches
+            with patch.object(worktrees, "setup_command", return_value=""):
+                drive(screen, lambda: picker.new_screen(root=True))
+            frames = [screen.text(i) for i in range(len(screen.frames))]
+            rows = next(f for f in frames if self.search_text(f) == typed)
+            note = next(i for i, line in enumerate(rows) if util.ICONS["info"] in line)
+            self.assertIn(f"{fork}'s version", rows[note])  # The difference first.
+            self.assertTrue(rows[note + 1].rstrip().endswith("…") or "(tab shows all)" in rows[note + 1], rows)
+            self.assertTrue("tab details" in rows[-1] or "(tab shows all)" in " ".join(rows), rows)
+            details = next(f for f in frames if f[0].startswith("New worktree — details"))
+            self.assertIn(full, " ".join(line.strip().lstrip(util.ICONS["info"]).strip() for line in details), details)
+
+        check(branching.load_branches(cwd, worktrees.worktrees(cwd)), full)
+        # Checked out, the first row opens it, and says the same, with tab though the plan fits.
+        git(self.repo, "worktree", "add", "-q", str(Path(self.tmp.name) / "note"), "note-test")
+        check(branching.load_branches(cwd, worktrees.worktrees(cwd)),
+              f"{fork}'s version differs; the local branch tracks {upstream}.")
+
+    def test_same_name_remote_branches_prefer_origin_or_the_default_remote(self):
+        cwd, branches, shas = self.two_remotes()
+        self.assertEqual(branches["remote"]["feature/remote-two"],
+                         ["origin/feature/remote-two", "fork/feature/remote-two"])
+        for preferred in ("origin", "fork"):
+            if preferred == "fork":
+                git(self.repo, "config", "checkout.defaultRemote", "fork")
+                branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
+            rows = next(f for f in self.new_worktree_frames(list("feature/remote-two") + ["\x1b", "\x1b"], branches)
+                        if self.search_text(f) == "feature/remote-two")
+            selected = next(line for line in rows if line.startswith("› feature/remote-two"))
+            self.assertTrue(selected.rstrip().endswith(preferred), rows)
+            self.assertIn(f"tracking {preferred}/feature/remote-two", " ".join(line.strip() for line in rows))
+
+    def test_new_worktree_help_splits_what_typing_does(self):
+        screen = FakeScreen(["?", "q", "\x1b"], (40, 100))
+        picker = self.picker(screen)
+        picker.branches = lambda: {"suggestions": [], "checked_out": {}, "local": set(), "remote": {},
+                                   "remotes": [], "head": "main", "bases": []}
+        with patch.object(worktrees, "setup_command", return_value=""):
+            drive(screen, lambda: picker.new_screen(root=True))
+        rows = next(screen.text(i) for i in range(len(screen.frames)) if "keys" in screen.text(i)[1])
+        typing = next(i for i, line in enumerate(rows) if line.lstrip().startswith("typing"))
+        self.assertTrue(rows[typing].rstrip().endswith("filter the existing branches, or name a new branch"), rows)
+        self.assertTrue(any(line.lstrip().startswith("origin/name") for line in rows), rows)
+        self.assertTrue(any(line.split() == ["whole", "name", "wins", "over", "longer", "names", "that", "start", "with",
+                                             "it"] for line in rows), rows)
+
+    def test_cleanup_footer_leaves_out_enter_with_nothing_checked(self):
+        entries = [{"name": "fix/done", "worktree": "/w/done", "track": ["remote deleted"], "dirty": False}]
+        for size in ((16, 50), (22, 100)):
+            screen = FakeScreen([" ", "\n", " ", "q"], size)
+            picker = self.picker(screen, entries)
+            picker.session, picker.terminals = "s", []
+            with patch.object(worktrees, "missing", return_value=False):
+                drive(screen, picker.cleanup)
+            footers = [screen.text(i)[-1] for i in range(len(screen.frames))]
+            with self.subTest(size=size):
+                self.assertIn("enter remove 1", footers[0])
+                self.assertNotIn("enter", footers[1])  # Unchecked.
+                self.assertIn("Nothing is checked", " ".join(screen.text(2)))  # Enter still says why.
+                self.assertNotIn("enter", footers[2])
+                self.assertIn("enter remove 1", footers[3])
+
+    def test_list_with_no_matches_offers_new_once(self):
+        entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False, "track": []}]
+        screen = FakeScreen(["/"] + list("zzz") + ["\t", "q"], (24, 100))
+        drive(screen, self.picker(screen, entries).list_screen)
+        footer = screen.text()[-1]
+        self.assertEqual(footer.count("new"), 1, footer)
+        self.assertIn("n new", footer)
+        typing = next(screen.text(i) for i in range(len(screen.frames)) if self.search_text(screen.text(i)) == "zzz")
+        self.assertEqual(typing[-1].count("new"), 1, typing[-1])
+
+    def test_remove_says_why_the_branch_is_kept(self):
+        other = self.add("ahead", "ahead")
+        git(other, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "ahead")
+        entry = {**worktrees.worktrees(str(self.repo))[1], "name": "ahead"}
+        self.assertEqual(screen_remove.kept_reason(entry, "main"), "The branch will be kept: it has commits not in main.")
+        self.assertIn("default branch", screen_remove.kept_reason({"name": "main"}, "origin/main"))
+        for size in ((16, 50), (22, 100)):
+            screen = FakeScreen(["q"], size)
+            picker = self.picker(screen)
+            picker.session, picker.terminals, picker.entries = "s", [], [entry]
+            picker.reload = lambda: None
+            drive(screen, lambda: picker.remove(entry))
+            text = " ".join(line.strip() for line in screen.text(0))
+            with self.subTest(size=size):
+                self.assertIn("The branch will be kept: it has commits not in main.", text)
+                self.assertNotIn("Also delete the branch", text)
+
+    def test_git_errors_lead_with_the_error_and_join_wrapped_sentences(self):
+        message = ("Preparing worktree (new branch 'x')\n"
+                   "fatal: cannot lock ref 'refs/heads/x': Unable to create '/r/.git/refs/heads/x.lock': File exists.\n"
+                   "\n"
+                   "Another git process seems to be running in this repository, e.g.\n"
+                   "an editor opened by 'git commit'. Please make sure all processes\n"
+                   "are terminated then try again. If it still fails, a git process\n"
+                   "may have crashed in this repository earlier:\n"
+                   "remove the file manually to continue.\n"
+                   "hint: one\n"
+                   "hint: two\n"
+                   "\tindented.txt")
+        tidy = ui.tidy_error(message).splitlines()
+        self.assertTrue(tidy[0].startswith("fatal: cannot lock ref"))
+        self.assertEqual(tidy[2], "Another git process seems to be running in this repository, e.g. an editor opened "
+                                  "by 'git commit'. Please make sure all processes are terminated then try again. If "
+                                  "it still fails, a git process may have crashed in this repository earlier: remove "
+                                  "the file manually to continue.")
+        self.assertEqual(tidy[3:], ["hint: one", "hint: two", "\tindented.txt", "", "Preparing worktree (new branch 'x')"])
+        self.assertEqual(ui.tidy_error(ui.tidy_error(message)), ui.tidy_error(message))
+        self.assertEqual(ui.tidy_error("please run:\n  gh auth login"), "please run:\n  gh auth login")
+        screen = FakeScreen(["q"], (16, 50))
+        drive(screen, lambda: ui.show_error(screen, message))
+        rows = [line.strip() for line in screen.text(0)]
+        self.assertIn(util.ICONS["error"] + " fatal: cannot lock ref", rows[1])
+        self.assertIn("this repository, e.g. an editor opened by", " ".join(rows))  # Joined, then wrapped.
 
 
 if __name__ == "__main__":

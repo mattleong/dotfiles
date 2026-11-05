@@ -160,6 +160,16 @@ def dirty_refusal(candidates, width):
     return text
 
 
+def kept_reason(entry, target):
+    """Why removing a worktree keeps its branch, which can be deleted only once it's merged into
+    the default branch, target (see worktrees.merged_into)."""
+    if not target:
+        return "The branch will be kept: there's no default branch to check it's merged into."
+    if target in (entry["name"], "origin/" + entry["name"]):
+        return "The branch will be kept: it's the default branch."
+    return f"The branch will be kept: it has commits not in {target}."
+
+
 class RemovalScreens:
     def remove(self, entry):
         """Confirm and remove a worktree. Returns True if the picker should exit."""
@@ -171,6 +181,7 @@ class RemovalScreens:
             files = worktrees.changed_files(entry)
             closing = tabs.panes_to_close(self.terminals_now(), [entry["worktree"]])
             merged = worktrees.merged_into(self.repo, entry)
+            kept = None if merged or "branch" not in entry else kept_reason(entry, worktrees.default_branch(self.repo))
         except (RuntimeError, OSError, ValueError) as error:
             self.say(str(error))
             return False
@@ -181,7 +192,7 @@ class RemovalScreens:
         if merged:
             options.append({"id": "delete_branch", "checked": False,
                             "label": [("Also delete the branch", 0), ("   (no unmerged commits)", ui.style("dim"), 1)]})
-        checked = self.removal_options(entry, files, closing, merged, options)
+        checked = self.removal_options(entry, files, closing, merged, options, kept)
         if checked is None:
             return False
         delete_branch = "delete_branch" in checked
@@ -195,9 +206,10 @@ class RemovalScreens:
         self.reload()
         return False
 
-    def removal_options(self, entry, files, closing, merged, options):
+    def removal_options(self, entry, files, closing, merged, options, kept=None):
         """Show the removal confirmation. Returns the set of checked option ids, or None if cancelled.
-        The options and key hints always show; the lists of files and panes shorten to fit."""
+        The options and key hints always show; the lists of files and panes shorten to fit. kept
+        says why the branch is kept, when it can't be deleted (see kept_reason)."""
         stdscr, cursor, pending, flash = self.stdscr, 0, None, ui.Flash()
         while True:
             keyboard.set_timeout(stdscr, flash.wait(-1))
@@ -228,7 +240,7 @@ class RemovalScreens:
                     row = [ui.pointer(i == cursor), (box, ui.style("cyan"))] + option["label"]
                     option_rows.append(ui.Selected(row) if i == cursor else row)
                 if not merged and "branch" in entry:
-                    option_rows.append([("The branch will be kept.", 0)])
+                    option_rows += [[(line, 0)] for line in ui.wrap(kept or "The branch will be kept.", width)]
                 return body + [ui.fixed(*option_rows)]
 
             status = flash.rows(width)
@@ -333,7 +345,10 @@ class RemovalScreens:
             abridged = (capacity < len(items) or longest > self.cleanup_name_width(items, width) or any(
                 d != self.cleanup_detail(items, i, closes, width, 1000, self.session, self.label)
                 for i, d in enumerate(details)))
-            footer = ui.footer(enter=f"remove {count}", move=True, toggle=True, back="cancel", details=abridged)
+            # With nothing checked, enter can't remove anything: the footer leaves it out, as New
+            # worktree's does, and pressing it says why.
+            footer = ui.footer(enter=f"remove {count}" if count else None, move=True, toggle=True, back="cancel",
+                               details=abridged)
             if abridged and "tab" not in [t for t, _ in ui.fit(footer, width)]:
                 # The footer has no room to say tab shows what's cut, so a row below the detail does.
                 detail.append([(ui.TAB_CUE.strip(), ui.style("dim"))])

@@ -6,6 +6,7 @@ import re
 import time
 from pathlib import Path
 
+import matching
 import util
 import worktrees
 
@@ -76,6 +77,12 @@ def load_branches(cwd, entries, now=None):
                 remote.setdefault(ref[len(name) + 1:], []).append(ref)
                 remote_refs.append((ref[len(name) + 1:], ref, stamp))
                 break
+    # Of branches with the same name on several remotes, the one Git's checkout picks comes first:
+    # checkout.defaultRemote's, else origin's.
+    preferred = util.run("git", "-C", cwd, "config", "--get", "checkout.defaultRemote", check=False)
+    preferred = os.fsdecode(preferred).strip() or "origin"
+    for branch, refs_of_name in remote.items():
+        refs_of_name.sort(key=lambda ref: ref != f"{preferred}/{branch}")
     head = util.git_text(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     if head == "HEAD":
         head = util.git_text(cwd, "rev-parse", "--short", "HEAD")
@@ -91,7 +98,8 @@ def load_branches(cwd, entries, now=None):
                     if name not in local_names and name not in checked_out]
     suggestions += [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in available if stamp < cutoff]
     return {"local": local_names, "remote": remote, "remotes": remotes, "checked_out": checked_out,
-            "missing": missing, "suggestions": suggestions, "head": head, "bases": bases}
+            "missing": missing, "suggestions": suggestions, "head": head, "bases": bases,
+            "preferred": preferred}
 
 
 def split_remote(text, branches):
@@ -213,6 +221,13 @@ def existing_branch(name, branches):
     if branches["remote"].get(name):
         return {"branch": name, "exists": branches["remote"][name],
                 "error": f"{branches['remote'][name][0]} exists; select it under Existing branches."}
+    # Typed with a space or other capitals, such as fix a or FIX/A for fix/a, a checked-out
+    # branch's name still means it, unless a listed branch's name is just as close.
+    loose = [b for b in branches["checked_out"] if matching.exact(name, b)]
+    others = (set(branches["local"]) | set(branches["remote"])) - set(branches["checked_out"])
+    listed = any(matching.exact(name, b) for b in others)
+    if len(loose) == 1 and not listed:
+        return existing_branch(loose[0], branches)
     return None
 
 

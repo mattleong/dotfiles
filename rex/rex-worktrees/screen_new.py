@@ -53,6 +53,8 @@ def plan_lines(lines, width, limit, short=None):
 
 
 TAB_CUE = ui.TAB_CUE
+MIN_BRANCH = 20  # The branch column keeps this much before the rows turn compact (see branch_rows).
+MIN_SOURCE = 10  # A remote's name in the FROM column keeps this much, with its icon.
 
 
 def plan_rows(lines, width, limit, short=None, cue=False):
@@ -68,12 +70,24 @@ def plan_rows(lines, width, limit, short=None, cue=False):
     return rows, cut
 
 
-def note_rows(text, icon, tone, width, nudge=False):
-    """A note below the create row, in up to two rows. nudge, when enter was pressed but can't
-    go anywhere, draws attention to it: a dim note turns yellow, and the note bold."""
+def note_rows(text, icon, tone, width, nudge=False, cue=False, limit=2):
+    """A note below the create row, in up to limit rows. nudge, when enter was pressed but can't
+    go anywhere, draws attention to it: a dim note turns yellow, and the note bold. With cue, a
+    note cut to fit ends in a dim hint that tab shows it all, for when the footer has no room to
+    say so."""
     tone = "yellow" if nudge and tone == "dim" else tone
-    lines = ui.clip(ui.hang(util.ICONS[icon], text, width - 2), 2, width - 2)
-    return [[("  " + line, ui.style(tone) | (ui.style("bold") if nudge else 0))] for line in lines]
+    attr = ui.style(tone) | (ui.style("bold") if nudge else 0)
+    lines = ui.clip(ui.hang(util.ICONS[icon], text, width - 2), limit, width - 2)
+    rows = [[("  " + line, attr)] for line in lines]
+    if cue and note_cut(text, icon, width):
+        last = lines[-1][:width - 2 - len(TAB_CUE) - 1].rstrip() + "…"
+        rows[-1] = [("  " + last, attr), (TAB_CUE, ui.style("dim"))]
+    return rows
+
+
+def note_cut(text, icon, width):
+    """Whether note_rows cuts the note short."""
+    return len(ui.hang(util.ICONS[icon], text, width - 2)) > 2
 
 
 def error_rows(error, width, limit, nudge=False):
@@ -87,11 +101,12 @@ def destination(plan, setup):
 
 
 def tracks_note(tracks):
-    """For text such as fork/x that means the local branch x, at another commit than fork's: what
-    x tracks instead (see branching.other_upstream)."""
+    """For text such as fork/x that means the local branch x, at another commit than fork's: that
+    they differ first, so it shows however long the remotes' names are, then what x tracks instead
+    (see branching.other_upstream)."""
     upstream, remote = tracks
-    return (f"The local branch tracks {upstream}; {remote}'s differs." if upstream
-            else f"The local branch differs from {remote}'s.")
+    return (f"{remote}'s version differs; the local branch tracks {upstream}." if upstream
+            else f"{remote}'s version differs from the local branch.")
 
 
 def exists_note(create):
@@ -99,8 +114,8 @@ def exists_note(create):
     if not create.get("tracks"):
         return "This branch exists; enter checks it out."
     upstream, remote = create["tracks"]
-    return ("Enter checks out the local branch, which tracks " + upstream if upstream
-            else "Enter checks out the local branch") + f"; {remote}'s differs."
+    return f"{remote}'s version differs; enter checks out the local branch" + (
+        f", which tracks {upstream}." if upstream else ".")
 
 
 TYPING_HELP = [
@@ -130,6 +145,7 @@ class NewScreens:
         flash = ui.Flash()
         nudge = False  # Enter was pressed where it can't go anywhere: the reason stands out.
         named = branching.named_remotes(suggestions)
+        preferred = branches.get("preferred", "origin")
         while True:
             keyboard.set_timeout(stdscr, flash.wait(-1))
             # items[0] creates a new branch; the rest are existing branches. Text such as origin/fix
@@ -141,9 +157,11 @@ class NewScreens:
             existing = [s for s in suggestions if scores[id(s)]]
             if text.strip():
                 # A branch the text names in full goes first, above longer names that start with it;
-                # fix/a just as typed goes above fix-a.
+                # fix/a just as typed goes above fix-a. Of the same name on several remotes, the one
+                # Git's checkout picks goes first (see branching.load_branches).
                 existing.sort(key=lambda s: (not matching.exact(queries[id(s)], s["name"]),
-                                             queries[id(s)].strip() != s["name"], -scores[id(s)]))
+                                             queries[id(s)].strip() != s["name"], -scores[id(s)],
+                                             s["kind"] == "remote" and branching.remote_of(s) != preferred))
             items = [None] + existing
             typed = branching.normalize_branch(text)
             create = None  # The plan for a new branch named by the text.
@@ -171,21 +189,27 @@ class NewScreens:
             # Enter can't go anywhere from a row whose plan has an error, except to open the worktree
             # a branch is checked out in.
             stuck = bool(plan and plan.get("error")) and not (not index and plan.get("open"))
-            note = []
+            said = None  # The note: (its text, icon, tone, and whether enter was pressed to no avail).
+            qualifies = False  # Whether the note is about another remote's version, which qualifies the plan.
             if create and create.get("error") and not (index and create.get("remote")):
                 if index and items[index]["ref"] in create.get("exists", ()):
-                    note = note_rows(exists_note(create), "info", "dim", space)
+                    said, qualifies = (exists_note(create), "info", "dim", False), bool(create.get("tracks"))
                 elif create.get("open"):
                     # Selected, the row and the plan say it; where it is goes in the plan, which tab
                     # shows in full.
                     if index:
-                        note = note_rows(create["error"] + ".", "info", "dim", space)
+                        said = (create["error"] + ".", "info", "dim", False)
                     elif create.get("tracks"):
-                        note = note_rows(tracks_note(create["tracks"]), "info", "dim", space)
+                        said, qualifies = (tracks_note(create["tracks"]), "info", "dim", False), True
                 elif create.get("hint"):  # A remote's name, on the way to origin/name.
-                    note = note_rows(create["error"], "info", "dim", space, nudge and not index)
+                    said = (create["error"], "info", "dim", nudge and not index)
                 else:
-                    note = note_rows(create["error"], "error", "red", space, nudge and not index)
+                    said = (create["error"], "error", "red", nudge and not index)
+            note = note_rows(*said[:3], space, said[3]) if said else []
+            # Tab shows a note cut to fit in full, and always the one about another remote's
+            # version, which qualifies what enter does.
+            note_hidden = bool(said) and note_cut(said[0], said[1], space)
+            noted = note_hidden or qualifies
             search, column = ui.search_row(text, tpos, True, space, "filter, or name a new branch")
             heading = [ui.header("New worktree", self.label), search, []]
             room = height - ui.margin(height) - len(heading) - len(status) - 1
@@ -213,10 +237,14 @@ class NewScreens:
             footer = ui.help_row(*([] if stuck else [("enter", "open" if not index and plan and plan.get("open")
                                                       else "select")]),
                                  *([("↑/↓", "move", 2 if moved else 3)] if existing else []),
-                                 *([("tab", "details", 3 if moved else 2)] if cut else []),
+                                 *([("tab", "details", 3 if moved else 2)] if cut or note_hidden else []),
                                  ("?", "help", 1), ("esc", "clear" if text else back))
-            if cut and "tab" not in [t for t, _ in ui.fit(footer, space)]:
-                action = plan_rows(lines, space, limit, short, cue=True)[0]  # The footer had no room for tab.
+            if (cut or note_hidden) and "tab" not in [t for t, _ in ui.fit(footer, space)]:
+                # The footer had no room for tab: what's cut says so itself.
+                if cut:
+                    action = plan_rows(lines, space, limit, short, cue=True)[0]
+                else:
+                    note = note_rows(*said[:3], space, said[3], cue=True)
             # The list's rows, sized to every branch so the plan below stays put while filtering.
             # The blank row above the plan goes first when they're short of rows.
             capacity = room - fixed - 1 - len(action)
@@ -231,8 +259,11 @@ class NewScreens:
                 possible = not (create and create.get("error"))
                 if create and create.get("open"):
                     label, possible = f"→ Open the worktree for “{create['branch']}”", True
-                elif create and (create.get("hint") or (not possible and branching.split_remote(text, branches))):
-                    label = "+ Create a new branch"  # A remote's name, or text such as origin/x: no branch to name.
+                elif create and (create.get("hint") or create.get("missing")
+                                 or (not possible and branching.split_remote(text, branches))):
+                    # A remote's name, text such as origin/x, or a branch checked out in a missing
+                    # folder: no branch to name.
+                    label = "+ Create a new branch"
                 else:
                     label = f"+ Create branch “{typed}”" if typed else "+ Create a new branch"
                     label += "…" if possible else ""
@@ -241,7 +272,7 @@ class NewScreens:
                 body = [ui.Selected(row) if index == 0 else row] + note + [[]]
                 visible = existing[top:top + capacity]
                 body += self.branch_rows(visible, top, index, [queries[id(s)] for s in visible], space, len(existing),
-                                         named)
+                                         named, existing)
                 if not existing:
                     body.append([("  No matching branches" if text.strip() else "  No other branches", ui.style("dim"))])
                 body += [[]] * (fixed + capacity - len(body)) + ([[]] if gap else []) + action
@@ -261,9 +292,11 @@ class NewScreens:
                     return False
                 text, tpos, index = "", 0, 0
             elif key == "\t":  # Never part of a branch name.
-                if lines:
-                    ui.page(stdscr, "New worktree — details",
-                            lambda width: [[]] + plan_rows(lines, width, 1000)[0])
+                if lines or noted:
+                    ui.page(stdscr, "New worktree — details", lambda width: [[]] + (
+                        plan_rows(lines, width, 1000)[0] if lines else []) + (
+                        ([[]] if lines else []) + note_rows(*said[:3], width, limit=1000)
+                        if noted else []))
             elif key == "?":  # Never part of a branch name.
                 self.new_help(root)
             elif key == "\x07":
@@ -300,17 +333,19 @@ class NewScreens:
 
     def new_help(self, root):
         ui.show_help(self.stdscr, "New worktree", [("Keys", [
-            ("typing", "filter the existing branches, or name a new branch; the first row stays "
-                       "selected unless what you type is a branch's name or the start of one of its words, "
-                       "and a whole name wins over longer ones that start with it; "
-                       "origin/name finds name among origin's branches"),
+            ("typing", "filter the existing branches, or name a new branch"),
+            ("first row", "stays selected while typing, unless the text is a branch's name or the "
+                          "start of one of its words"),
+            ("whole name", "wins over longer names that start with it"),
+            ("origin/name", "finds name among origin's branches only"),
             ("↑ / ↓", "move; also ctrl+p / ctrl+n"),
             ("pgup / pgdn", "a page up / down"),
             ("home / end", "the first / last row"),
             ("enter", "create a worktree for the selected branch; on the first row, name a new "
                       "branch and choose what it starts from, or for a branch that's checked out "
                       "already, open its worktree"),
-            ("tab", "what enter does, in full: the branch, its folder, and the setup command"),
+            ("tab", "what enter does, in full: the branch, its folder, and the setup command, and "
+                    "a note that's cut short"),
             ("ctrl+g", "open the selected branch's pull request in the browser"),
             ("esc", "clear the text; with none, " + ("quit" if root else "go back")),
             ("ctrl+c", "quit"),
@@ -326,19 +361,24 @@ class NewScreens:
                              "list names the selected branch in full"),
         ])])
 
-    def branch_rows(self, visible, top, index, queries, space, count, named=False):
+    def branch_rows(self, visible, top, index, queries, space, count, named=False, measured=None):
         """The existing branches' heading, column titles, and rows: the same columns as the
         worktree list: branch, age, pull request, then where it is. queries holds the text each
         visible branch matched, to highlight; named labels every remote by its name (see
-        branching.named_remotes). In a narrow pane, the branch column narrows, the pull
-        requests' labels shorten, then lose their state where the rows would otherwise turn compact:
-        the pull request's number and the source's icon."""
-        longest = max([len(s["name"]) for s in visible] + [10])
-        sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s, named) for s in visible]
+        branching.named_remotes). The columns are sized to measured, every branch that matches,
+        so they stay put while the list scrolls. In a narrow pane, the branch column narrows, the
+        pull requests' labels shorten, then lose their state, then a long remote's name is cut
+        short, where the rows would otherwise turn compact: the pull request's number and the
+        source's icon. The branch narrows further here than in the worktree list, since the plan
+        below names the selected one in full."""
+        measured = visible if measured is None else measured
+        longest = max([len(s["name"]) for s in measured] + [10])
+        sources = [util.ICONS[s["kind"]] + " " + branching.source_label(s, named) for s in measured]
         source_width = max([len(s) for s in sources] + [4])
+        least = min(MIN_BRANCH, longest)  # The branch keeps this much before rows turn compact.
 
         def layout(short):
-            prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}, short > 0) for s in visible]
+            prs = [ui.pr_cell({"pr": self.prs.get(s["name"])}, short > 0) for s in measured]
             if short > 1:  # Just the number, such as #12.
                 prs = [ui.short_cell(c) for c in prs]
             pr_width = max([ui.cell_width(c) for c in prs] + [0])
@@ -348,15 +388,24 @@ class NewScreens:
         prs, pr_width, rest = layout(0)
         if rest + longest > space:
             prs, pr_width, rest = layout(1)
-        if space - rest < min(ui.MIN_BRANCH, longest):  # Rather than turn compact, losing the source.
+        if space - rest < least:  # Rather than turn compact, losing the source.
+            prs, pr_width, rest = layout(2)
+        if space - rest < least and source_width > MIN_SOURCE:
+            # A long remote's name is cut short, keeping its start, where names differ most, rather
+            # than every row losing its source.
+            source_width = max(MIN_SOURCE, source_width - (least - (space - rest)))
+            sources = [s if len(s) <= source_width else s[:source_width - 1] + "…" for s in sources]
             prs, pr_width, rest = layout(2)
         ref_width = min(longest, space - rest)
-        compact = ref_width < min(ui.MIN_BRANCH, longest)
+        compact = ref_width < least
         if compact:
-            prs = [ui.short_cell(ui.pr_cell({"pr": self.prs.get(s["name"])})) for s in visible]
+            prs = [ui.short_cell(ui.pr_cell({"pr": self.prs.get(s["name"])})) for s in measured]
             sources = [s[:1] for s in sources]
             pr_width = max([ui.cell_width(c, 1) for c in prs] + [0])
             ref_width = max(6, min(longest, space - 2 - 2 - 5 - (pr_width + 2 if pr_width else 0) - 1))
+        shown = {id(s): i for i, s in enumerate(measured)}
+        prs = [prs[shown[id(s)]] for s in visible]
+        sources = [sources[shown[id(s)]] for s in visible]
         gap = 2 if compact else 3
         dim = ui.style("dim") | ui.style("bold")
         rows = [ui.section(f"Existing branches ({count})")]

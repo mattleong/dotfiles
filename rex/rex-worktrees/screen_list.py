@@ -79,7 +79,8 @@ class ListScreen:
                 finished = sum(1 for e in self.entries if worktrees.cleanup_reason(e) and e.get("dirty") is not True)
                 stale = sum(1 for e in self.entries if "prunable" in e)
                 # With nothing selected, only the actions that don't need a worktree.
-                footer = ui.footer(enter="new" if missing else "open", move=bool(shown), slash="filter", back="quit",
+                # With nothing matching, n, which the list names, starts the new worktree; enter does too.
+                footer = ui.footer(enter=None if missing else "open", move=bool(shown), slash="filter", back="quit",
                                    clear_filter=bool(query),
                                    actions=([("s", "split")] if selected else []) + [("n", "new")]
                                    + ([("dd", "remove")] if selected else [])
