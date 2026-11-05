@@ -80,17 +80,59 @@ local PICKER_LABEL = "worktrees"
 -- under a root-owned login wrapper, so its own working directory can't be read.
 local pickers = {}
 
--- Whether a block is a picker pane, even one opened before the config was last reloaded.
-local function is_picker(session_id, block_id)
-	local view = rex.session.view({ session_id = session_id })
-	for _, window in ipairs((view and view.windows) or {}) do
-		for _, layer in ipairs(window.layers or {}) do
-			for _, block in ipairs(layer.blocks or {}) do
-				if block.block_id == block_id then return block.label == PICKER_LABEL end
+-- Where a block is: its session, window, and label. The block is looked for in the given session
+-- first, then in every other session, in case a client reports a session other than the pane's.
+local function locate(session_id, block_id)
+	local ids = { session_id }
+	local list = rex.call("session.list")
+	for _, s in ipairs((list and list.sessions) or {}) do
+		if s.session_id ~= session_id then ids[#ids + 1] = s.session_id end
+	end
+	for _, id in ipairs(ids) do
+		local view = rex.session.view({ session_id = id })
+		for _, window in ipairs((view and view.windows) or {}) do
+			for _, layer in ipairs(window.layers or {}) do
+				for _, block in ipairs(layer.blocks or {}) do
+					if block.block_id == block_id then
+						return { session_id = id, window_id = window.window_id, label = block.label, block_id = block_id }
+					end
+				end
 			end
 		end
 	end
-	return false
+	return nil
+end
+
+local TERMINAL = "com.superlogical.terminal"
+
+-- The pane the invoking client is actually showing. Some clients, such as Rex's iPhone app, report
+-- the session's shared focused pane, which may be another device's, or a picker the phone has since
+-- swiped away from. Each terminal is owned by the client that last showed or used it, and records
+-- when each client last asked for a size, which a client does for the pane it's showing. So of the
+-- reported pane and each tab's focused pane, use the one this client owns and sized most recently.
+local function client_pane(session_id, block_id, client_id)
+	if not client_id then return block_id end
+	local candidates, seen = { block_id }, { [block_id] = true }
+	local view = rex.session.view({ session_id = session_id })
+	for _, window in ipairs((view and view.windows) or {}) do
+		local focused = window.focused_block_id
+		if focused and not seen[focused] then
+			seen[focused] = true
+			candidates[#candidates + 1] = focused
+		end
+	end
+	local best, best_at = nil, nil
+	for _, candidate in ipairs(candidates) do
+		local size = rex.block.call(TERMINAL, "size", { block_id = candidate })
+		if size and size.owner == client_id then
+			local at = ""
+			for _, d in ipairs(size.desired or {}) do
+				if d.client_id == client_id then at = d.updated_at or "" end
+			end
+			if not best or at > best_at then best, best_at = candidate, at end
+		end
+	end
+	return best or block_id
 end
 
 local function worktree_action(mode)
@@ -98,17 +140,21 @@ local function worktree_action(mode)
 		if not ctx.session_id or not ctx.block_id then
 			error("Worktrees require a focused terminal and session")
 		end
-		local cwd, origin = nil, ctx.block_id
-		local open = pickers[ctx.block_id]
+		local where = locate(ctx.session_id, ctx.block_id)
+		local session_id = (where and where.session_id) or ctx.session_id
+		local pane = client_pane(session_id, ctx.block_id, ctx.client_id)
+		if pane ~= ctx.block_id then where = locate(session_id, pane) or where end
+		local cwd, origin = nil, pane
+		local open = pickers[pane]
 		if open then
 			-- Invoked from inside a picker: replace it, opening the requested screen for the same folder.
-			pickers[ctx.block_id] = nil
-			rex.session.close_layer({ session_id = ctx.session_id, layer_id = open.layer_id })
+			pickers[pane] = nil
+			rex.session.close_layer({ session_id = session_id, layer_id = open.layer_id })
 			cwd, origin = open.cwd, open.origin
-		elseif is_picker(ctx.session_id, ctx.block_id) then
+		elseif where and where.label == PICKER_LABEL then
 			return -- A picker from before a config reload is already open and focused.
 		else
-			local process, err = rex.block.call("com.superlogical.terminal", "process", { block_id = ctx.block_id })
+			local process, err = rex.block.call(TERMINAL, "process", { block_id = pane })
 			if not process then error(err) end
 			cwd = (process.foreground and process.foreground.cwd) or (process.child and process.child.cwd)
 			if not cwd then
@@ -119,8 +165,11 @@ local function worktree_action(mode)
 		end
 		local home = os.getenv("HOME")
 		if not home then error("HOME is not set") end
+		-- Open the picker in the tab of the pane it was invoked from. Without window_id it would open in
+		-- the session's active tab, which on a phone needn't be the tab on screen.
 		local result, layer_err = rex.session.new_layer({
-			session_id = ctx.session_id,
+			session_id = session_id,
+			window_id = where and where.window_id,
 			bounds = { 0.25, 0.2, 0.5, 0.45 },
 			focus = true,
 			layout = rex.layout.block({
@@ -129,7 +178,7 @@ local function worktree_action(mode)
 				options = {
 					shell = "none",
 					cwd = "/",
-					command = { "python3", home .. "/.config/rex/rex-worktrees", mode, cwd, ctx.session_id, ctx.client_id or "", origin },
+					command = { "python3", home .. "/.config/rex/rex-worktrees", mode, cwd, session_id, ctx.client_id or "", origin },
 				},
 			}),
 		})
