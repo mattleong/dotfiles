@@ -81,7 +81,7 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
         base = list(ui.LAST_FRAME["rows"]) or [[]]
         try:
             while thread.is_alive():
-                spinner = [(SPINNER[frame % len(SPINNER)] + " " + label, ui.style("cyan"))]
+                spinner = [(SPINNER[frame % len(SPINNER)] + " " + label, ui.style("select"))]
                 ui.render(self.stdscr, base[:-1] + [spinner])
                 frame += 1
                 try:
@@ -174,12 +174,16 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
             self.terminals = self.busy("Checking open panes…", lambda: tabs.terminal_cwds(self.session))
         return self.terminals
 
-    def say(self, text, tone="red", flash=None):
-        """Show a status message. An error too long for the status line gets its own screen. An
-        error leads with what went wrong (see ui.tidy_error)."""
-        if tone == "red":
+    def say(self, text, tone="danger", flash=None):
+        """Show a status message, in a role (see ui.Flash). An error too long for the status line
+        gets its own screen. An error leads with what went wrong (see ui.tidy_error)."""
+        if tone == "danger":
             text = ui.tidy_error(text)
-        if tone == "red" and len(ui.hang(util.ICONS["error"], text, ui.space(self.stdscr))) > ui.Flash.LINES:
+        if tone == "danger" and len(ui.hang(util.ICONS["error"], text, ui.space(self.stdscr))) > ui.Flash.LINES:
             ui.show_error(self.stdscr, text)
             return
         (flash or self.flash).set(text, tone)
+
+    def refuse(self, text):
+        """Say why a key can't act now (see ui.Keys.refused)."""
+        self.say(text, "attention")

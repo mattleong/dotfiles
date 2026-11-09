@@ -10,7 +10,7 @@ running this directory with `python3`.
 | `screen_list.py` | The worktree list and commit preview |
 | `screen_new.py` | Creating worktrees from existing or new branches |
 | `screen_remove.py` | Removing, cleaning up, and pruning worktrees |
-| `ui.py` | Drawing: colors, columns, fitting screens to the pane, help, error, and confirmation screens |
+| `ui.py` | Drawing: color roles, labels, key hints, columns, fitting screens to the pane, help, error, and confirmation screens |
 | `keyboard.py` | Key input, focus reports, line editing, and Vim motions |
 | `matching.py` | Filtering and sorting |
 | `worktrees.py` | Git worktree state, status, and history |
@@ -52,9 +52,10 @@ the difference, and tab shows it in full. A remote's name alone
 can't be a new branch either, but it's most likely on the way to `origin/…`, so its note is a dim
 hint. When the text names a branch that exists, the note under the first row is dim too, not an
 error, because enter goes to that branch: it checks out the selected branch, or opens the worktree
-a checked-out one is in, and the first row then says `→ Open the worktree for “…”`. Red is for text
-that can't go anywhere, such as a branch checked out in a worktree whose folder is missing. Where
-enter can't go anywhere, the footer leaves it out, and pressing it makes the note stand out.
+a checked-out one is in, and the first row then says `→ Open the worktree for “…”`. Red, the danger
+role, is for text that can't go anywhere, such as a branch checked out in a worktree whose folder is
+missing. Where enter can't go anywhere, the footer leaves it out, and pressing it makes the note
+stand out.
 Branches only on a remote say so in the FROM column: `remote` for origin, or the remote's name,
 for every remote when more than one has branches. The columns are sized to every branch that
 matches, not just the rows in view, so they stay put while the list scrolls.
@@ -74,3 +75,54 @@ later lines start under its text, not its icon (see `ui.hang`).
 
 Rex runs the picker with the system `python3`, which can be as old as 3.9, so keep the code
 compatible with it.
+
+## Design rules
+
+Every screen follows these, so a color, a word, or a key means the same thing wherever it shows.
+
+Colors are roles. Screens ask `ui.style` for a role, never a color: only `ui.py` maps roles to
+colors (see `ui.ROLES`), and a test checks that no other module names one.
+
+| Role | Color | Used for |
+| --- | --- | --- |
+| select | cyan | the `›` pointer, input prompts, checkboxes, the spinner, the sort note |
+| live | green | the current worktree's `●`, `tab`, an open PR, success messages, the create row |
+| attention | yellow | uncommitted changes, warning headings, a key pressed where it can't act |
+| danger | red | a missing folder, errors, a closed PR, “Discard uncommitted changes” |
+| finished | magenta | a merged PR, a remote branch that's gone |
+| source | blue | the main checkout, remotes, and the tools that made worktrees, such as `rex` |
+| dim | dim | metadata: ages, paths, hints, a draft PR, `locked`, commit hashes and authors |
+
+Ahead and behind counts (`↑2 ↓3`) are plain text, since they're facts rather than states, and
+text that matches a filter is bold and underlined, with no color of its own.
+
+Each state has one label, the same at every width (see `ui.LABELS`); only the narrowest panes
+shorten them, to their icons. Help explains each one, and sentences such as the list's summary and
+messages use the same words: `2 with changes · 1 gone · 1 missing`.
+
+| State | Label |
+| --- | --- |
+| the main checkout | `main` |
+| a Rex pane is open in it | `tab` |
+| uncommitted changes | `changes` |
+| locked | `locked` |
+| its folder is missing | `missing` |
+| its remote branch was deleted | `gone` |
+| ahead / behind | `↑2` / `↓3` |
+
+Titles name the action, without a question mark, such as `Remove worktree` and `Clean up
+worktrees`, and a count of the same thing reads the same wherever it shows.
+
+Keys mean the same on every screen. enter is the primary action, and the footer names what it
+does right now, such as `open`, `create`, or `remove 2`. tab shows details in full. esc steps back
+a level, and q quits or cancels where letters are commands. (The list's filter still differs for
+now: tab stops typing there, and esc clears the filter as it stops.) The footer lists only the keys
+that would act right now; one it leaves out still says why when it's pressed. A screen decides
+this once for each frame, in a `ui.Keys`: each key it handles, with its footer label and whether
+it can act, and if not, why. The footer lists the ones that can, and the key handler asks
+`Keys.refused` before acting, so the two can't disagree. `test_footers_list_only_keys_that_can_act`
+holds the rule; give it a scenario when a screen's keys change.
+
+A message sits next to what it's about, such as a count beside its input or a hint under its
+checkbox. The status line above the footer is for the result of an action, such as `Removed x.`,
+and for errors.

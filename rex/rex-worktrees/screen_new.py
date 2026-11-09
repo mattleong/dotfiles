@@ -71,11 +71,11 @@ def plan_rows(lines, width, limit, short=None, cue=False):
 
 
 def note_rows(text, icon, tone, width, nudge=False, cue=False, limit=2):
-    """A note below the create row, in up to limit rows. nudge, when enter was pressed but can't
-    go anywhere, draws attention to it: a dim note turns yellow, and the note bold. With cue, a
-    note cut to fit ends in a dim hint that tab shows it all, for when the footer has no room to
-    say so."""
-    tone = "yellow" if nudge and tone == "dim" else tone
+    """A note below the create row, in up to limit rows, in tone, a role (see ui.ROLES). nudge,
+    when enter was pressed but can't go anywhere, draws attention to it: a dim note takes the
+    attention role, and the note turns bold. With cue, a note cut to fit ends in a dim hint that
+    tab shows it all, for when the footer has no room to say so."""
+    tone = "attention" if nudge and tone == "dim" else tone
     attr = ui.style(tone) | (ui.style("bold") if nudge else 0)
     lines = ui.clip(ui.hang(util.ICONS[icon], text, width - 2), limit, width - 2)
     rows = [[("  " + line, attr)] for line in lines]
@@ -91,7 +91,7 @@ def note_cut(text, icon, width):
 
 
 def error_rows(error, width, limit, nudge=False):
-    attr = ui.style("red") | (ui.style("bold") if nudge else 0)
+    attr = ui.style("danger") | (ui.style("bold") if nudge else 0)
     return [[(line, attr)] for line in ui.clip(ui.hang(util.ICONS["error"], error, width), limit, width)]
 
 
@@ -184,7 +184,7 @@ class NewScreens:
             space = ui.space(stdscr)
             status = flash.rows(space)
             # Why the typed name can't be a new branch, right below the row that would create it,
-            # whichever row is selected: in red, unless enter goes to the branch it names instead.
+            # whichever row is selected: as an error, unless enter goes to the branch it names instead.
             # Text such as origin/fi, partway to a remote branch, needs no note once one is selected.
             # Enter can't go anywhere from a row whose plan has an error, except to open the worktree
             # a branch is checked out in.
@@ -204,7 +204,7 @@ class NewScreens:
                 elif create.get("hint"):  # A remote's name, on the way to origin/name.
                     said = (create["error"], "info", "dim", nudge and not index)
                 else:
-                    said = (create["error"], "error", "red", nudge and not index)
+                    said = (create["error"], "error", "danger", nudge and not index)
             note = note_rows(*said[:3], space, said[3]) if said else []
             # Tab shows a note cut to fit in full, and always the one about another remote's
             # version, which qualifies what enter does.
@@ -234,12 +234,19 @@ class NewScreens:
                 action, cut = plan_rows(lines, space, limit, short) if lines else ([], False)
             # Once typing selected a branch, ↑ is the way back to the create row, so it outlasts tab.
             moved = moved and bool(index)
-            footer = ui.help_row(*([] if stuck else [("enter", "open" if not index and plan and plan.get("open")
-                                                      else "select")]),
-                                 *([("↑/↓", "move", 2 if moved else 3)] if existing else []),
-                                 *([("tab", "details", 3 if moved else 2)] if cut or note_hidden else []),
-                                 ("?", "help", 1), ("esc", "clear" if text else back))
-            if (cut or note_hidden) and "tab" not in [t for t, _ in ui.fit(footer, space)]:
+            keys = ui.Keys()
+            # Where enter can't go anywhere, the note or the plan says why, and pressing it makes
+            # them stand out.
+            keys.add("enter", "open" if not index and plan and plan.get("open") else "create", can=not stuck)
+            keys.add("↑/↓", "move", rank=2 if moved else 3, can=bool(existing))
+            # Tab shows what enter does whenever there's a plan or a note; listed when they're cut.
+            keys.add("tab", "details" if cut or note_hidden else "", rank=3 if moved else 2,
+                     can=bool(lines or noted))
+            keys.add("?", "help", rank=1)
+            keys.add("esc", "clear" if text else back)
+            keys.add("ctrl+g", why="" if index else "Select an existing branch to open its pull request.")
+            footer = keys.row()
+            if (cut or note_hidden) and not keys.fits("tab", space):
                 # The footer had no room for tab: what's cut says so itself.
                 if cut:
                     action = plan_rows(lines, space, limit, short, cue=True)[0]
@@ -267,7 +274,7 @@ class NewScreens:
                 else:
                     label = f"+ Create branch “{typed}”" if typed else "+ Create a new branch"
                     label += "…" if possible else ""
-                row = [ui.pointer(index == 0), (label, (ui.style("green") if possible else ui.style("dim"))
+                row = [ui.pointer(index == 0), (label, (ui.style("live") if possible else ui.style("dim"))
                                                 | (ui.style("bold") if index == 0 else 0))]
                 body = [ui.Selected(row) if index == 0 else row] + note + [[]]
                 visible = existing[top:top + capacity]
@@ -292,7 +299,7 @@ class NewScreens:
                     return False
                 text, tpos, index = "", 0, 0
             elif key == "\t":  # Never part of a branch name.
-                if lines or noted:
+                if not keys.refused("tab"):
                     ui.page(stdscr, "New worktree — details", lambda width: [[]] + (
                         plan_rows(lines, width, 1000)[0] if lines else []) + (
                         ([[]] if lines else []) + note_rows(*said[:3], width, limit=1000)
@@ -300,12 +307,13 @@ class NewScreens:
             elif key == "?":  # Never part of a branch name.
                 self.new_help(root)
             elif key == "\x07":
-                if index:
+                if not keys.refused("ctrl+g", lambda why: flash.set(why, "attention")):
                     self.open_pr({"pr": self.prs.get(items[index]["name"])}, flash)
-                else:
-                    flash.set("Select an existing branch to open its pull request.", "dim")
                 keyboard.set_timeout(stdscr, flash.wait(-1))
             elif key in keyboard.ENTER:
+                if keys.refused("enter"):
+                    nudge = True  # The note or the plan's rows say why; they stand out.
+                    continue
                 if plan is None or (not index and not plan.get("error")):
                     if self.new_branch_screen(cwd, branches, text, setup):
                         return True
@@ -314,9 +322,6 @@ class NewScreens:
                 if not index and plan.get("open"):
                     if self.open_checked_out(plan, flash):
                         return True
-                    continue
-                if plan.get("error"):
-                    nudge = True  # The note or the plan's rows say why; they stand out.
                     continue
                 try:
                     self.create_and_open(cwd, plan)
@@ -351,11 +356,13 @@ class NewScreens:
             ("ctrl+c", "quit"),
         ]), ("Editing", TYPING_HELP), ("Labels", [
             ("3d", "time since the branch's last commit"),
-            (util.ICONS["pr"] + " #12 open", "its pull request: open, draft, merged, or closed"),
-            (util.ICONS["local"] + " local", "a branch in this repository"),
-            (util.ICONS["remote"] + " remote", "only on a remote; enter creates a local branch tracking it"),
-            (util.ICONS["remote"] + " fork", "the remote's name, when it's not origin or there's more than one; "
-                                            "fork/ lists only its branches"),
+            (ui.pr_cell({"pr": {"number": 12, "state": "OPEN"}})[0],
+             "its pull request: open, draft, merged, or closed"),
+            ((util.ICONS["local"] + " local", ui.style("dim")), "a branch in this repository"),
+            ((util.ICONS["remote"] + " remote", ui.style("source")),
+             "only on a remote; enter creates a local branch tracking it"),
+            ((util.ICONS["remote"] + " fork", ui.style("source")),
+             "the remote's name, when it's not origin or there's more than one; fork/ lists only its branches"),
             ("narrow panes", "pull requests show just their number, then only the icons show, and the "
                              "branch is cut short; the plan below the "
                              "list names the selected branch in full"),
@@ -426,7 +433,7 @@ class NewScreens:
             if pr_width:
                 row += ui.joined(pr, " " if compact else " · ")
                 row.append((" " * (pr_width - ui.cell_width(pr, 1 if compact else 3) + gap), 0))
-            row.append((source, ui.style("blue") if item["kind"] == "remote" else ui.style("dim")))
+            row.append((source, ui.style("source") if item["kind"] == "remote" else ui.style("dim")))
             rows.append(ui.Selected(row) if i == index else row)
         return rows
 
@@ -464,9 +471,10 @@ class NewScreens:
             details, cut = [], False  # What tab shows: the plan in full, with the branch's name.
             if not text.strip():
                 hint = "Type a name; spaces become dashes."
-                action = [[(line, ui.style("yellow") if nudge else ui.style("dim"))] for line in ui.wrap(hint, space)]
+                tone = ui.style("attention") if nudge else ui.style("dim")
+                action = [[(line, tone)] for line in ui.wrap(hint, space)]
             elif plan.get("error"):
-                action = error_rows(plan["error"], space, limit)
+                action = error_rows(plan["error"], space, limit, nudge)
             else:
                 action, cut = plan_rows([plan["action"]] + destination(plan, setup), space, limit)
                 details = [f"create the branch {plan['branch']} from {bases[base]['label']}"] + destination(plan, setup)
@@ -474,9 +482,14 @@ class NewScreens:
                      ui.fixed(*action)]
             body = ui.fit_parts(parts, room)
             cut = cut or (bool(normalized) and normalized[0] not in body)
-            footer = ui.help_row(*([("↑/↓", "base", 3)] if len(bases) > 1 else []), ("enter", "create"),
-                                 *([("tab", "details", 2)] if cut else []), ("?", "help", 1),
-                                 ("esc", "clear" if text else "back"))
+            keys = ui.Keys()
+            keys.add("↑/↓", "base", rank=3, can=len(bases) > 1)
+            # With no name, the hint below says to type one, and pressing enter makes it stand out.
+            keys.add("enter", "create", can=bool(text.strip()) and not plan.get("error"))
+            keys.add("tab", "details" if cut else "", rank=2, can=bool(details))  # Listed when something's cut.
+            keys.add("?", "help", rank=1)
+            keys.add("esc", "clear" if text else "back")
+            footer = keys.row()
             rows = ui.compose(height, heading, body, status + [footer])
             ui.render(stdscr, rows, cursor=(ui.margin(height) + len(heading), 7 + column))
             key = keyboard.read_key(stdscr)
@@ -493,7 +506,7 @@ class NewScreens:
                     return False
                 text, tpos = "", 0
             elif key == "\t":  # Never part of a branch name.
-                if details:
+                if not keys.refused("tab"):
                     ui.page(stdscr, "New branch — details",
                             lambda width: [[]] + plan_rows(details, width, 1000)[0])
             elif key == "?":  # Never part of a branch name.
@@ -506,9 +519,9 @@ class NewScreens:
                     ("ctrl+c", "quit"),
                 ]), ("Editing", [("home / end", "the start / end of the name")] + TYPING_HELP)])
             elif key in keyboard.ENTER:
-                if not text.strip():
-                    nudge = True  # The hint turns yellow.
-                elif not plan.get("error"):
+                if keys.refused("enter"):
+                    nudge = True  # The hint, or the error, stands out.
+                else:
                     try:
                         self.create_and_open(cwd, plan)
                         return True
@@ -525,7 +538,7 @@ class NewScreens:
         entry = next((e for e in self.entries if e["worktree"] == path),
                      {"worktree": path, "name": plan["branch"], "branch": "refs/heads/" + plan["branch"]})
         if worktrees.missing(entry):
-            flash.set("That worktree's folder is missing; prune it with p in the list.", "yellow")
+            flash.set("That worktree's folder is missing; prune it with p in the list.", "attention")
             return False
         try:
             self.busy("Opening…", lambda: tabs.open_tab(self.session, entry, self.client, terminals=self.terminals))
