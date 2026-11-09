@@ -64,32 +64,38 @@ class ListScreen:
             widths = ui.column_widths(self.entries, space)
             index = shown.index(selected) if selected in shown else 0
 
-            # The status line: a message, the second key a half-typed dd, gg, or gp needs, or matches.
+            # The status line: a message, or the second key a half-typed dd, gg, or gp needs.
+            note = ""
             if pending == "d" and selected:
                 note = "d… press d again to remove " + selected["name"]
             elif pending == "g":
                 note = "g… then g for the first row, or p to open the pull request"
-            else:
-                note = f"{len(shown)} of {len(self.entries)} match" if query.strip() else ""
             status = self.flash.rows(space) or [[(note, ui.style("dim"))] if note else []]
             # With nothing matching, enter (while typing) or n starts a new worktree for the filter.
             missing = query.strip() if not shown else ""
+            # The main checkout alone: a first run, so a line under it says how to make a worktree.
+            first_run = len(self.entries) == 1 and bool(shown)
             keys = self.list_keys(selected, shown, query, filtering, missing)
             footer = keys.row()
-            search, column = ui.search_row(query, qpos, filtering, space)
             heading = [ui.header("Worktrees", self.label, self.summary(),
-                                 "" if self.sort == "git" else f"sorted by {self.sort}"), search, []]
+                                 "" if self.sort == matching.SORTS[0] else f"sorted by {self.sort}"), [], []]
             bottom = status + [footer]
             room = height - ui.margin(height) - len(heading) - 1 - len(bottom)  # Below the column headings.
             # Sized to every worktree, so the preview stays put while filtering.
-            capacity, preview_rows = list_layout(room, len(self.entries))
+            capacity, preview_rows = list_layout(room, len(self.entries) + first_run)
             top = ui.scroll_top(top, index, len(shown), capacity)
+            # Beside the filter: the selected row's place when the list scrolls, and how many match.
+            marks = ([f"{index + 1}/{len(shown)}"] if len(shown) > capacity else []) + (
+                [f"{len(shown)} of {len(self.entries)}"] if query.strip() else [])
+            heading[1], column = ui.search_row(query, qpos, filtering, space, mark=" · ".join(marks))
 
             if not keyboard.pending_input(stdscr):
-                heading[1] = ui.with_position(search, index, len(shown), capacity, space)
                 heading.append(ui.header_row(widths) if shown else [])  # No titles over an empty list.
                 body = [ui.entry_row(e, e is selected, widths, matching.match_entry(e, query) if query.strip() else None)
                         for e in shown[top:top + capacity]]
+                if first_run:
+                    body.append([("    No other worktrees yet: ", ui.style("dim")), ("n", ui.style("bold")),
+                                 (" creates one", ui.style("dim"))])
                 if not shown:
                     body.append([("    No matching worktrees", ui.style("dim"))])
                     if missing:
@@ -109,11 +115,8 @@ class ListScreen:
             if filtering:
                 if key in keyboard.ENTER:
                     filtering = False  # And open the selected worktree, below.
-                elif key == "\t":
-                    filtering = False
-                    continue
                 elif key == keyboard.ESCAPE:
-                    filtering, query, qpos = False, "", 0
+                    filtering = False  # Keeping the filter, so the list's keys act on what it found.
                     continue
                 elif key in keyboard.BACKSPACE and not query:
                     filtering = False
@@ -145,6 +148,8 @@ class ListScreen:
                     if self.remove(selected):
                         return
                     selected = self.reselect(paths, index)
+                    if self.emptied(shown, query):
+                        query, qpos = "", 0
                 else:
                     pending = "d"
                 continue
@@ -170,10 +175,14 @@ class ListScreen:
             elif key == "p":
                 self.prune()
                 selected = self.reselect(paths, index)
+                if self.emptied(shown, query):
+                    query, qpos = "", 0
             elif key == "c":
                 if self.cleanup():
                     return
                 selected = self.reselect(paths, index)
+                if self.emptied(shown, query):
+                    query, qpos = "", 0
                 if self.reveal in self.entries:  # The worktree cleanup's message is about.
                     if self.reveal not in matching.filter_entries(self.entries, query):
                         query, qpos = "", 0
@@ -181,7 +190,8 @@ class ListScreen:
                 self.reveal = None
             elif key == "S":
                 self.sort = matching.SORTS[(matching.SORTS.index(self.sort) + 1) % len(matching.SORTS)]
-                self.say(f"Sorted by {self.sort}" + (" order" if self.sort == "git" else "") + ".", "dim")
+                util.save_settings(sort=self.sort)  # Remembered for the next time the picker opens.
+                self.say(f"Sorted by {self.sort}.", "dim")
             elif key in ("y", "Y") and selected:
                 value = selected["worktree"] if key == "y" else selected["name"]
                 try:
@@ -204,6 +214,8 @@ class ListScreen:
                 if self.show_prs:
                     self.load_prs()
                 selected = next((e for e in self.entries if e["worktree"] == path), None)
+                if self.emptied(shown, query):
+                    query, qpos = "", 0
                 self.say("Refreshed.", "dim")
             elif key in ("s", "o") and selected:
                 if keys.refused(key, self.refuse):
@@ -250,8 +262,7 @@ class ListScreen:
         if filtering:
             keys.add("enter", "new" if missing else "open", why=enter)
             keys.add("↑/↓", "move", rank=2, can=bool(shown))
-            keys.add("tab", "done", rank=1)
-            keys.add("esc", "clear")
+            keys.add("esc", "done", rank=1)  # Stops typing and keeps the filter.
             return keys
         keys.add("j/k", "move", rank=8, can=bool(shown))
         keys.add("/", "filter")
@@ -274,6 +285,11 @@ class ListScreen:
             keys.add(key, why="" if selected else row)
         return keys
 
+    def emptied(self, shown, query):
+        """Whether an action took away every worktree the filter showed, such as by removing the
+        only one it matched, so the filter clears rather than leaving an empty list."""
+        return bool(shown and query.strip()) and not matching.filter_entries(self.entries, query)
+
     def reselect(self, paths, index):
         """The worktree at paths[index] after an action, or when it's gone, the next one still
         listed, else the one before it."""
@@ -292,16 +308,20 @@ class ListScreen:
             ("e", "open the worktree in your editor, in a new tab"),
             ("gp", "open its pull request in the browser"),
             ("y / Y", "copy its path / branch name"),
-            ("S", "sort: Git order, most recent, or by state"),
+            ("S", "sort: most recent, by state, or by name, with the main checkout first; "
+                  "remembered for next time"),
             ("r", "refresh"),
             ("q", "quit"),
         ]), ("Filter", [
-            ("/", "start typing a filter (fuzzy); while typing, every letter goes into it"),
+            ("/", "start typing a filter; while typing, every letter goes into it"),
+            ("matching", "a word matches a branch that contains it, or that has its letters in order, "
+                         "each right after the one before or at the start of a word: flf finds "
+                         "feat/login-flow; a word no branch matches can match the worktree's path"),
             ("enter", "open the selected worktree; when nothing matches, start a new worktree from the text"),
             ("↑ / ↓", "move while typing; also ctrl+p / ctrl+n"),
             ("home / end", "the first / last row while typing"),
-            ("tab", "stop typing and keep the filter, to use the keys above"),
-            ("esc", "clear the filter; with no filter, quit"),
+            ("esc", "stop typing and keep the filter, to use the keys above; then clear the filter; "
+                    "with no filter, quit"),
         ]), ("Labels", [
             (("●", ui.style("live")), "the worktree you opened this from"),
             ("3d", "time since the worktree's last commit"),

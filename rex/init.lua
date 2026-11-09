@@ -135,6 +135,73 @@ local function client_pane(session_id, block_id, client_id)
 	return best or block_id
 end
 
+-- The picker's floating pane is sized to its screens, which are designed for about 120 columns by 32
+-- rows, rather than to a share of the window, which leaves most of a large window empty. It's
+-- centred, and never more than 90% of the window either way. When the window's size in cells
+-- can't be worked out, it takes the share it always had.
+local FLOAT_COLUMNS, FLOAT_ROWS, FLOAT_MOST = 120, 32, 0.9
+local FLOAT_FALLBACK = { 0.25, 0.2, 0.5, 0.45 }
+
+local function cells(n)
+	return type(n) == "number" and n >= 1 and n < math.huge
+end
+
+-- Bounds { x, y, w, h }, as fractions of a window columns by rows cells, for the picker's float.
+local function float_bounds(columns, rows)
+	if not (cells(columns) and cells(rows)) then return FLOAT_FALLBACK end
+	local w = math.min(FLOAT_COLUMNS / columns, FLOAT_MOST)
+	local h = math.min(FLOAT_ROWS / rows, FLOAT_MOST)
+	return { (1 - w) / 2, (1 - h) / 2, w, h }
+end
+
+-- A block's rect { x, y, w, h } in a layout tree, as fractions of its layer, or nil.
+local function layout_rect(node, block_id)
+	if type(node) ~= "table" then return nil end
+	if node.block_id == block_id then return node.rect end
+	for _, child in pairs(node) do
+		local rect = layout_rect(child, block_id)
+		if rect then return rect end
+	end
+	return nil
+end
+
+-- A window's size in cells, estimated from one of its panes: the pane's size, in columns and rows,
+-- over its share of the window, which is its rect in its layer's layout times the layer's bounds, or
+-- all of the window when it's zoomed. nil when that can't be worked out.
+local function window_cells(window, block_id, columns, rows)
+	if type(window) ~= "table" or not (cells(columns) and cells(rows)) then return nil end
+	for _, layer in ipairs(window.layers or {}) do
+		local rect = layout_rect(layer.layout, block_id)
+		if rect then
+			local bounds = layer.bounds or {}
+			local w, h = (rect[3] or 0) * (bounds[3] or 1), (rect[4] or 0) * (bounds[4] or 1)
+			if window.zoomed_block_id == block_id then w, h = 1, 1 end
+			if not (w > 0 and h > 0) then return nil end
+			return columns / w, rows / h
+		end
+	end
+	return nil
+end
+
+-- The picker's bounds in the window the pane is in, sized for the client that invoked it: its own
+-- size for the pane, when it has asked for one, else the pane's.
+local function picker_bounds(session_id, window_id, pane, client_id)
+	local ok, columns, rows = pcall(function()
+		local size = rex.block.call(TERMINAL, "size", { block_id = pane })
+		if not size then return nil end
+		local columns, rows = size.columns, size.rows
+		for _, d in ipairs(size.desired or {}) do
+			if client_id and d.client_id == client_id then columns, rows = d.columns, d.rows end
+		end
+		local view = rex.session.view({ session_id = session_id })
+		for _, window in ipairs((view and view.windows) or {}) do
+			if window.window_id == window_id then return window_cells(window, pane, columns, rows) end
+		end
+		return nil
+	end)
+	return float_bounds(ok and columns, ok and rows)
+end
+
 local function worktree_action(mode)
 	return function(ctx)
 		if not ctx.session_id or not ctx.block_id then
@@ -145,6 +212,8 @@ local function worktree_action(mode)
 		local pane = client_pane(session_id, ctx.block_id, ctx.client_id)
 		if pane ~= ctx.block_id then where = locate(session_id, pane) or where end
 		local cwd, origin = nil, pane
+		-- Sized from the pane before a picker it's in closes, below, while its size is still known.
+		local bounds = picker_bounds(session_id, where and where.window_id, pane, ctx.client_id)
 		local open = pickers[pane]
 		if open then
 			-- Invoked from inside a picker: replace it, opening the requested screen for the same folder.
@@ -170,7 +239,7 @@ local function worktree_action(mode)
 		local result, layer_err = rex.session.new_layer({
 			session_id = session_id,
 			window_id = where and where.window_id,
-			bounds = { 0.25, 0.2, 0.5, 0.45 },
+			bounds = bounds,
 			focus = true,
 			layout = rex.layout.block({
 				flavor = "com.superlogical.terminal.shell",

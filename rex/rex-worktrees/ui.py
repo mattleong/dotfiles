@@ -483,6 +483,7 @@ def middle(text, width, hits=()):
 
 
 CELLS = [("PR", pr_cell), ("SYNC", sync_cell), ("STATE", state_cell)]
+MAX_BRANCH = 40  # So one long branch can't push the other columns away; the preview shows it whole.
 MIN_BRANCH = 28  # The branch keeps this much before the labels turn into icons.
 MIN_FOLDER = 12  # Narrower than this, the folder column is hidden.
 
@@ -510,23 +511,32 @@ def folder_name(entry, prefix=""):
 
 def column_widths(entries, space=None):
     """Widths for the list's columns, sized to every worktree so they don't shift while filtering.
-    A column that's empty for every worktree gets width 0 and is hidden. Given the space available,
-    the branch column gets all it needs and the folder column, which comes last, gets what's left,
-    or is hidden when that's under MIN_FOLDER. When the labels don't fit beside the whole branch,
-    the branch narrows, to MIN_BRANCH at most. When even that isn't enough, rows turn compact: the
-    branch, its age, and the labels' icons. Folders leave out the main checkout's folder name,
-    which the others' often start with, and are left blank when they just repeat the branch."""
-    longest = max([len(e["name"]) for e in entries] + [6])
+    A column that's empty for every worktree gets width 0 and is hidden. The branch column gets
+    what its longest name needs, up to MAX_BRANCH; longer names lose their middle (see middle).
+    Given the space available, the folder column, which comes last, gets what's left, or is hidden
+    when that's under MIN_FOLDER. When the labels don't fit beside the branch, it narrows, to
+    MIN_BRANCH at most. When even that isn't enough, rows turn compact: the branch, its age, and
+    the labels' icons. Folders leave out the main checkout's folder name, which the others' often
+    start with, and are left blank when they just repeat the branch. The folder column starts
+    with the tool that made each worktree, if any, in a narrow column of its own."""
+    longest = min(MAX_BRANCH, max([len(e["name"]) for e in entries] + [6]))
     widths = {"BRANCH": longest, "compact": False}
     for title, cell in CELLS:
         width = max([cell_width(cell(e)) for e in entries] + [0])
         widths[title] = max(width, len(title)) if width else 0
     widths["SOURCE"] = max([len(worktrees.worktree_source(e)) for e in entries] + [0])
     widths["PREFIX"] = folder_prefix(entries)
-    folder = max([len(folder_name(e, widths["PREFIX"])[0]) for e in entries] + [0])
-    if folder or widths["SOURCE"]:  # Else every folder just repeats its branch: no column.
-        folder = max(len("FOLDER"), (widths["SOURCE"] + 1 if widths["SOURCE"] else 0) + folder)
-    widths["FOLDER"] = folder
+    names = max([len(folder_name(e, widths["PREFIX"])[0]) for e in entries] + [0])
+    tags = widths["SOURCE"] + 1 if widths["SOURCE"] else 0
+    # The heading goes over the folders' names, after the tools' column; with no names to show,
+    # just the tools, over them. With neither, every folder just repeats its branch: no column.
+    if names:
+        folder = tags + max(names, len("FOLDER"))
+    elif tags:
+        folder = max(widths["SOURCE"], len("FOLDER"))
+    else:
+        folder = 0
+    widths["FOLDER"], widths["FOLDER_AT"] = folder, tags if names else 0
     if space is None:
         return widths
 
@@ -554,16 +564,17 @@ def header_row(widths):
         if widths[title]:
             row.append((title.ljust(widths[title] + 3), dim))
     if widths["FOLDER"]:
-        row.append(("FOLDER", dim))
+        row.append((" " * widths.get("FOLDER_AT", 0) + "FOLDER", dim))  # Over the names, past the tools.
     return row
 
 
 def entry_row(entry, selected, widths, match=None):
     _, name_hits, folder_hits = match or (0, set(), set())
     width = widths["BRANCH"]
-    name = entry["name"] if len(entry["name"]) <= width else entry["name"][:width - 1] + "…"
+    # A long name loses its middle, keeping its start and its end, where similar names differ.
+    name, name_hits = middle(entry["name"], width, name_hits)
     row = [pointer(selected), ("● " if entry.get("current") else "  ", style("live"))]
-    row += highlighted(name, {h for h in name_hits if h < len(name)}, style("bold") if selected else 0)
+    row += highlighted(name, name_hits, style("bold") if selected else 0)
     row.append((" " * (width - len(name) + 2), 0))
     row.append((short_age(entry.get("time")).rjust(3) + "  ", style("dim")))
     if widths["compact"]:
@@ -705,8 +716,16 @@ def help_row(*items):
     return row
 
 
-def search_row(text, pos, filtering, width, placeholder="type to filter"):
-    """A filter input, scrolled to keep the cursor in view. Returns (row, cursor column or None)."""
+SEARCH_MIN = 12  # The columns a filter's text keeps before a mark beside it drops out.
+
+
+def search_row(text, pos, filtering, width, placeholder="type to filter", mark=""):
+    """A filter input, scrolled to keep the cursor in view, with mark, such as how many rows
+    match, dim at its right while the text keeps SEARCH_MIN columns. Returns (row, cursor column
+    or None)."""
+    if mark and width - len(mark) - 2 >= SEARCH_MIN:
+        row, column = search_row(text, pos, filtering, width - len(mark) - 2, placeholder)
+        return with_mark(row, mark, width), column
     if not filtering and not text:
         return [("/ to filter", style("dim"))], None
     prompt = ("/ ", style("select") | style("bold") if filtering else style("dim"))

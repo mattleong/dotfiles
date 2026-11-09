@@ -6,6 +6,7 @@ import actions
 import branching
 import github
 import keyboard
+import matching
 import screen_list
 import screen_new
 import screen_remove
@@ -35,7 +36,10 @@ class Manager(screen_list.ListScreen, screen_new.NewScreens, screen_remove.Remov
         self.flash = ui.Flash()
         self.reveal = None  # A worktree for the list to select next, such as one a message names.
         self.commits = {}
-        self.prs, self.prs_loading, self.sort = {}, False, "git"
+        self.prs, self.prs_loading = {}, False
+        self.sort = util.load_settings().get("sort")  # The list's order, as it was left last time.
+        if self.sort not in matching.SORTS:
+            self.sort = matching.SORTS[0]
         self.show_prs = github.pull_requests_enabled(self.repo)
         if self.show_prs:
             self.prs = github.load_cached_prs(self.repo)  # Shown at once, then refreshed in the background.

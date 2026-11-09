@@ -1,7 +1,10 @@
 # rex-worktrees
 
 The Git worktree picker for Rex. `Ctrl+B, w` (see `../init.lua`) opens it in a floating pane by
-running this directory with `python3`.
+running this directory with `python3`. The float is sized for the picker's screens, about 120
+columns by 32 rows, centred, and never more than 90% of the window either way; `init.lua` works
+out the window's size in cells from the pane the picker was opened from (its size over its share
+of the window's layout), and falls back to a fixed share of the window when it can't.
 
 | Module | Contents |
 | --- | --- |
@@ -18,7 +21,7 @@ running this directory with `python3`.
 | `tabs.py` | Rex sessions, tabs, and panes: finding, opening, and closing them |
 | `actions.py` | Operations that combine Git and Rex |
 | `github.py` | Pull request status from `gh`, with a cache |
-| `util.py` | Running commands, Git calls, paths, and shared state |
+| `util.py` | Running commands, Git calls, paths, shared state, and choices remembered across runs |
 
 Run the tests from this directory:
 
@@ -33,9 +36,36 @@ screen or change how one fits.
 The list's letters are commands, so its filter starts only with `/`. Screens built around a text
 input (the list's filter while typing, New worktree, and New branch) take every printable key as
 text, and move their list with keys that can't be text: the arrows and ctrl+n/p, plus page up/down
-and home/end where the list scrolls. esc clears the text, then goes back. Keep new keys within
-that split. In New worktree and New branch, tab, which can't be text either, shows what enter
-would do in full; confirmations use it the same way.
+and home/end where the list scrolls. In New worktree and New branch, esc clears the text, then goes
+back. In the list's filter, esc stops typing and keeps the filter, so the list's keys act on what
+it found (the footer says `esc done`); with the filter kept, esc clears it, and with no filter, esc
+quits. Keep new keys within that split. In New worktree and New branch, tab, which can't be text
+either, shows what enter would do in full; confirmations use it the same way.
+
+The list puts the main checkout first, then the rest by their latest commit, newest first. `S`
+cycles that (`recent`) with `state` (changes, open pull requests, the rest, finished ones, then
+missing ones) and `name`, keeping the main checkout first in each; the header notes any order but
+the first. The choice is remembered in `$XDG_STATE_HOME/rex/worktrees.json` (by default under
+`~/.local/state`); a missing or broken file just means the default order, and one that can't be
+written is forgotten quietly (see `util.load_settings`). The list's ages load with the list itself,
+in one Git call, so it never reorders as it appears.
+
+The BRANCH column is at most `ui.MAX_BRANCH` (40) wide, so one long name can't push the other
+columns away; a longer name loses its middle (see `ui.middle`), keeping its start and its end,
+where similar names differ, and the preview below the list shows it in full. FOLDER sits over the
+folders' names; the tool that made a worktree, such as `claude`, is in an untitled column before it.
+While a filter has text, how many worktrees it matches, such as `3 of 11`, shows at the right of its
+row. When an action, such as removing one, leaves a filter matching nothing it matched before, the
+filter clears, rather than leaving an empty list. When the main checkout is the only worktree, a
+line under it says `n` creates one.
+
+The list's filter and New worktree's branch filter match each word typed against a name the same
+way (see `matching.fuzzy`): the word appears in the name, or its letters appear in order, each right
+after the one before or at the start of a word (after `/`, `-`, `_`, `.`, or a space, or a capital
+after a lowercase letter). So `flf` finds `feat/login-flow`, and `log` finds `fix/login`, but `dark`
+doesn't find `dependabot/npm_and_yarn/webpack-5.94.0`. Matches score higher for letters that follow
+each other and ones that start words, so whole words rank first. The list also matches a word no
+branch matches against the worktree's path, but only as a plain substring, since paths are long.
 
 While you type in New worktree, its first row, which creates a branch from the text, stays
 selected unless the text is an existing branch's name or the start of a word in one (see
@@ -115,9 +145,8 @@ worktrees`, and a count of the same thing reads the same wherever it shows.
 
 Keys mean the same on every screen. enter is the primary action, and the footer names what it
 does right now, such as `open`, `create`, or `remove 2`. tab shows details in full. esc steps back
-a level, and q quits or cancels where letters are commands. (The list's filter still differs for
-now: tab stops typing there, and esc clears the filter as it stops.) The footer lists only the keys
-that would act right now; one it leaves out still says why when it's pressed. A screen decides
+a level, one level a press, and q quits or cancels where letters are commands. The footer lists
+only the keys that would act right now; one it leaves out still says why when it's pressed. A screen decides
 this once for each frame, in a `ui.Keys`: each key it handles, with its footer label and whether
 it can act, and if not, why. The footer lists the ones that can, and the key handler asks
 `Keys.refused` before acting, so the two can't disagree. `test_footers_list_only_keys_that_can_act`

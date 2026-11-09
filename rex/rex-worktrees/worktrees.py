@@ -82,29 +82,29 @@ def current_entry(entries, cwd):
 
 
 def base_entries(cwd, raw=None, details=True):
-    """List worktrees quickly; status fields start as PENDING. With details=False, ages and
-    ahead/behind are left for fill_details, so the list can appear sooner."""
+    """List worktrees quickly, with their ages, which the list is sorted by, so it doesn't reorder
+    once it shows; status fields start as PENDING. With details=False, ahead/behind is left for
+    fill_details, so the list can appear sooner."""
     raw = worktrees(cwd) if raw is None else raw
     if not raw:
         raise RuntimeError("No worktrees found")
     raw[0]["main"] = True
     entries = [e for e in raw if "bare" not in e]
     current = current_entry(entries, cwd)
+    times = commit_times(cwd, [e["HEAD"] for e in entries if e.get("HEAD")])  # One quick Git call.
     for entry in entries:
         entry.update(name=branch_name(entry), current=entry is current, dirty=util.PENDING, open=util.PENDING,
-                     track=[], time=None)
+                     track=[], time=times.get(entry.get("HEAD")))
     if details:
         fill_details(cwd, entries)
     return entries
 
 
 def fill_details(cwd, entries):
-    """Ages and ahead/behind, from one for-each-ref and one show."""
+    """Ahead/behind, from one for-each-ref."""
     tracks = tracking(cwd)
-    times = commit_times(cwd, [e["HEAD"] for e in entries if e.get("HEAD")])
     for entry in entries:
         entry["track"] = tracks.get(entry.get("branch"), [])
-        entry["time"] = times.get(entry.get("HEAD"))
 
 
 def commit_times(cwd, shas):

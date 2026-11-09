@@ -103,6 +103,10 @@ class WorktreeTests(unittest.TestCase):
         home = patch.object(Path, "home", return_value=Path(self.tmp.name) / "home")
         home.start()
         self.addCleanup(home.stop)
+        # Remembered choices, such as the list's sort, go here rather than in your own state folder.
+        state = patch.dict(os.environ, {"XDG_STATE_HOME": str(Path(self.tmp.name) / "state")})
+        state.start()
+        self.addCleanup(state.stop)
 
     def add(self, name, branch):
         path = Path(self.tmp.name) / name
@@ -204,13 +208,13 @@ class WorktreeTests(unittest.TestCase):
                     "open": False, "dirty": True, "track": ["2 behind"]}]
         widths = ui.column_widths(entries)
         self.assertEqual(widths["PR"], 0)
-        self.assertEqual(widths["BRANCH"], len(entries[1]["name"]))  # The full name, given the room.
+        self.assertEqual(widths["BRANCH"], ui.MAX_BRANCH)  # Not the full name, which would push the others away.
         self.assertEqual(widths["SYNC"], len("SYNC"))  # Wider than ↓2.
         rows = [ui.entry_row(e, False, widths) for e in entries]
         text = ["".join(t for t, _ in row) for row in rows]
         header = "".join(t for t, _ in ui.header_row(widths))
         self.assertNotIn("PR", header)
-        self.assertTrue(text[1][4:].startswith(entries[1]["name"] + "  "))
+        self.assertTrue(text[1][4:].startswith(ui.middle(entries[1]["name"], ui.MAX_BRANCH)[0] + "  "))
         self.assertTrue(header.rstrip().endswith("FOLDER"))
         # Every column starts at the same position in each row and in the header.
         for label in ("SYNC", "STATE"):
@@ -229,13 +233,13 @@ class WorktreeTests(unittest.TestCase):
         labels = util.ICONS["main"] + " main · " + util.ICONS["tab"] + " tab · " + util.ICONS["dirty"] + " changes"
         # The labels read the same at every width: first they keep the whole branch beside them.
         wide = ui.column_widths(entries, 110)
-        self.assertEqual((wide["compact"], wide["BRANCH"]), (False, len(name)))
+        self.assertEqual((wide["compact"], wide["BRANCH"]), (False, ui.MAX_BRANCH))
         self.assertIn(util.ICONS["pr"] + " #1234 merged", text(entries[1], wide))
         self.assertIn(labels, text(entries[0], wide))
         # Then the branch narrows, to MIN_BRANCH at most, and only then do the labels turn into icons.
         narrowed = ui.column_widths(entries, 95)
         self.assertFalse(narrowed["compact"])
-        self.assertTrue(ui.MIN_BRANCH <= narrowed["BRANCH"] < len(name))
+        self.assertTrue(ui.MIN_BRANCH <= narrowed["BRANCH"] < ui.MAX_BRANCH)
         self.assertIn(labels, text(entries[0], narrowed))
         compact = ui.column_widths(entries, 80)
         self.assertTrue(compact["compact"])
@@ -325,10 +329,13 @@ class WorktreeTests(unittest.TestCase):
                    {"name": "dirty", "time": 3, "dirty": True, "worktree": "/c"},
                    {"name": "open", "time": 4, "worktree": "/d", "pr": {"state": "OPEN", "number": 2}}]
         names = lambda mode: [e["name"] for e in matching.sort_entries(entries, mode)]
-        self.assertEqual(names("git"), ["main", "old", "dirty", "open"])
-        self.assertEqual(names("recent"), ["open", "dirty", "old", "main"])
+        # The main checkout stays first, whatever the order.
+        self.assertEqual(names("recent"), ["main", "open", "dirty", "old"])
+        self.assertEqual(names("name"), ["main", "dirty", "old", "open"])
+        self.assertEqual(names("unknown"), names("recent"))
+        entries.append({"name": "older-dirty", "time": 0, "dirty": True, "worktree": "/e"})
         with patch.object(worktrees, "missing", return_value=False):
-            self.assertEqual(names("state"), ["main", "dirty", "open", "old"])
+            self.assertEqual(names("state"), ["main", "dirty", "older-dirty", "open", "old"])  # Newest first in each.
 
     def test_pull_request_cache_round_trip(self):
         with patch.dict(os.environ, {"XDG_CACHE_HOME": str(Path(self.tmp.name) / "cache")}):
@@ -373,10 +380,16 @@ class WorktreeTests(unittest.TestCase):
 
     def test_base_entries_can_defer_details(self):
         raw = worktrees.worktrees(str(self.repo))
+        git(self.repo, "remote", "add", "origin", "https://example.invalid/repo.git")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "branch", "--set-upstream-to=origin/main", "main")
+        git(self.repo, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "ahead")
         quick = worktrees.base_entries(str(self.repo), raw, details=False)
-        self.assertEqual((quick[0]["time"], quick[0]["track"]), (None, []))
-        worktrees.fill_details(str(self.repo), quick)
+        # Ages come at once, since the list is sorted by them; ahead/behind can wait.
         self.assertIsNotNone(quick[0]["time"])
+        self.assertEqual(quick[0]["track"], [])
+        worktrees.fill_details(str(self.repo), quick)
+        self.assertEqual(quick[0]["track"], ["1 ahead"])
 
     def test_flash_messages_fade_and_wrap(self):
         flash = ui.Flash()
@@ -602,8 +615,8 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual([e["name"] for e in matching.filter_entries(ranked, "log")], ["logs", "l-x-o-x-g"])
         self.assertEqual([e["name"] for e in matching.filter_entries(entries, "flog")], ["fix/login-bug", "feature/login"])
         self.assertEqual(matching.filter_entries(entries, "zzz"), [])
-        score, name_hits, path_hits = matching.match_entry(entries[2], "mn")
-        self.assertEqual(name_hits, {0, 3})
+        score, name_hits, path_hits = matching.match_entry(entries[2], "ain")
+        self.assertEqual(name_hits, {1, 2, 3})
         self.assertIsNotNone(matching.match_entry(entries[2], "w/c"))  # Matches the full path...
         self.assertEqual(matching.match_entry({"name": "x", "worktree": "/w/sinch-email"}, "inch")[2], {1, 2, 3, 4})  # ...highlights the folder.
 
@@ -793,7 +806,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(ui.with_position([("x", 0)], 0, 3, 5, 30), [("x", 0)])  # Only when the list scrolls.
 
     def test_folder_column_hides_before_the_branch_shortens(self):
-        entries = [{"name": "experiment/a-long-branch-name-that-is-distinctive", "worktree": str(self.repo),
+        entries = [{"name": "experiment/a-long-branch-name-that-is", "worktree": str(self.repo),
                     "open": False, "dirty": False, "track": []}]
         wide = ui.column_widths(entries, 120)
         self.assertEqual((wide["BRANCH"], wide["FOLDER"]), (len(entries[0]["name"]), len("repo with spaces")))
@@ -848,7 +861,7 @@ class WorktreeTests(unittest.TestCase):
         picker = object.__new__(app.Manager)
         picker.stdscr, picker.label, picker.origin_cwd, picker.repo = screen, "repo", str(self.repo), str(self.repo)
         picker.entries = entries or []
-        picker.flash, picker.sort, picker.prs, picker.show_prs = ui.Flash(), "git", {}, False
+        picker.flash, picker.sort, picker.prs, picker.show_prs = ui.Flash(), "recent", {}, False
         picker.prs_loading = picker.details_loading = False
         picker.commits, picker.default, picker.terminals, picker.reveal = {}, None, None, None
         return picker
@@ -857,12 +870,13 @@ class WorktreeTests(unittest.TestCase):
         entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False, "track": []}]
         screen = FakeScreen(["f", "x", "/", "q", "#", "\x1b", "q"], (24, 80))
         picker = self.picker(screen, entries)
-        drive(screen, picker.list_screen)  # The last q quits.
+        drive(screen, picker.list_screen)  # esc stops typing, keeping the filter; the last q quits.
         frames = [screen.text(i) for i in range(len(screen.frames))]
         self.assertTrue(any("Press / to filter" in "".join(f) for f in frames))
-        self.assertFalse(any(line.startswith("/ f") for f in frames for line in f))  # Letters didn't start a filter.
-        self.assertTrue(any(line.startswith("/ q#") for f in frames for line in f))  # After /, q types.
+        self.assertFalse(any(self.search_text(f).startswith("f") for f in frames))  # Letters didn't start a filter.
+        self.assertTrue(any(self.search_text(f) == "q#" for f in frames))  # After /, q types.
         self.assertIn("    No matching worktrees", [line for f in frames for line in f])
+        self.assertEqual(self.search_text(frames[-1]), "q#")
 
     def test_new_worktree_types_every_letter(self):
         cwd, branches = self.setup_branches()
@@ -1242,7 +1256,7 @@ class WorktreeTests(unittest.TestCase):
 
     def test_list_without_a_selection_hides_and_explains_row_actions(self):
         entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False, "track": []}]
-        screen = FakeScreen(["/"] + list("zzz") + ["\t", "s", "q"], (24, 100))
+        screen = FakeScreen(["/"] + list("zzz") + ["\x1b", "s", "q"], (24, 100))
         picker = self.picker(screen, entries)
         drive(screen, picker.list_screen)
         frames = [screen.text(i) for i in range(len(screen.frames))]
@@ -1555,7 +1569,7 @@ class WorktreeTests(unittest.TestCase):
                            {"name": name, "worktree": "/w/a", "track": ["remote deleted"], "dirty": True,
                             "open": False}]
                 # Filtered to main, so c has to clear the filter to select the candidate.
-                screen = FakeScreen(["/", "m", "a", "i", "n", "\t", "c", "d", "d"], size)
+                screen = FakeScreen(["/", "m", "a", "i", "n", "\x1b", "c", "d", "d"], size)
                 picker = self.picker(screen, entries)
                 for e in entries:
                     picker.commits[(e["worktree"], None)] = ("Recent commits", [])
@@ -1840,7 +1854,7 @@ class WorktreeTests(unittest.TestCase):
                                 "open": False, "track": []}]
                     entries += [{"name": n, "worktree": "/w/" + str(j), "track": ["remote deleted"], "dirty": True,
                                  "open": j % 2 == 0, "time": 0} for j, n in enumerate(picks[:i % 9 + 1])]
-                    screen = FakeScreen(["j", "G", "c", "/", *name[:3], "\t", "?", "q", "q"], (height, width))
+                    screen = FakeScreen(["j", "G", "c", "/", *name[:3], "\x1b", "?", "q", "q"], (height, width))
                     picker = self.picker(screen, entries)
                     picker.terminals = []
                     for e in entries:
@@ -2143,13 +2157,165 @@ class WorktreeTests(unittest.TestCase):
 
     def test_list_with_no_matches_offers_new_once(self):
         entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False, "track": []}]
-        screen = FakeScreen(["/"] + list("zzz") + ["\t", "q"], (24, 100))
+        screen = FakeScreen(["/"] + list("zzz") + ["\x1b", "q"], (24, 100))
         drive(screen, self.picker(screen, entries).list_screen)
         footer = screen.text()[-1]
         self.assertEqual(footer.count("new"), 1, footer)
         self.assertIn("n new", footer)
         typing = next(screen.text(i) for i in range(len(screen.frames)) if self.search_text(screen.text(i)) == "zzz")
         self.assertEqual(typing[-1].count("new"), 1, typing[-1])
+
+    def list_entries(self, names, **state):
+        """Worktrees for the list: the main checkout, then one per name, newest first."""
+        entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False,
+                    "track": [], "time": 1}]
+        return entries + [{"name": n, "worktree": "/w/" + str(i), "dirty": False, "open": False, "track": [],
+                           "time": 1000 - i, **state} for i, n in enumerate(names)]
+
+    def run_list(self, keys, entries, size=(24, 100)):
+        screen = FakeScreen(keys, size)
+        picker = self.picker(screen, entries)
+        picker.terminals = []
+        for e in entries:
+            picker.commits[(e["worktree"], None)] = ("Recent commits", [])
+        with patch.object(worktrees, "missing", return_value=False):
+            drive(screen, picker.list_screen)
+        return picker, [screen.text(i) for i in range(len(screen.frames))]
+
+    def test_fuzzy_letters_follow_each_other_or_start_words(self):
+        self.assertEqual(matching.fuzzy("flf", "feat/login-flow")[1], [0, 5, 11])
+        self.assertEqual(matching.fuzzy("logfl", "feat/login-flow")[1], [5, 6, 7, 11, 12])
+        self.assertIsNone(matching.fuzzy("dark", "dependabot/npm_and_yarn/webpack-5.94.0"))
+        self.assertIsNone(matching.fuzzy("ef", "feat/login-flow"))  # e is inside a word, and no gap ends at f.
+        self.assertEqual(matching.fuzzy("ogin", "feat/login-flow")[1], [6, 7, 8, 9])  # A substring always matches.
+        self.assertEqual(matching.fuzzy("flb", "fixLoginBug")[1], [0, 3, 8])  # Capitals start words too.
+        self.assertIsNone(matching.fuzzy("mn", "main"))
+        entries = [{"name": n, "worktree": "/w/" + str(i)} for i, n in enumerate(
+            ["dependabot/npm_and_yarn/webpack-5.94.0", "feat/dark-mode", "feat/login-flow"])]
+        self.assertEqual([e["name"] for e in matching.filter_entries(entries, "dark")], ["feat/dark-mode"])
+        self.assertEqual([e["name"] for e in matching.filter_entries(entries, "flf")], ["feat/login-flow"])
+
+    def test_long_branches_lose_their_middle_and_keep_the_columns_close(self):
+        long_name = "feature/payments/refactor-checkout-flow-to-support-multi-currency-invoices"
+        entries = self.list_entries(["fix/a", long_name], dirty=True)
+        widths = ui.column_widths(entries, 117)
+        self.assertEqual(widths["BRANCH"], ui.MAX_BRANCH)
+        row = "".join(t for t, _ in ui.entry_row(entries[2], False, widths))
+        shown = ui.middle(long_name, ui.MAX_BRANCH)[0]
+        self.assertTrue(row[4:].startswith(shown + "  ") and shown.endswith("multi-currency-invoices"), row)
+        self.assertIn("…", shown)
+        # Filter hits move with the cut, and only the ones still showing are kept.
+        hits = matching.match_entry(entries[2], "invoices")[1]
+        with patch.dict(ui.COLORS, {"bold": 1 << 21, "underline": 1 << 22}):
+            segments = ui.entry_row(entries[2], False, widths, (0, hits, set()))
+        self.assertEqual("".join(t for t, a in segments if a == 3 << 21), "invoices")
+        # The preview names it in full.
+        _, frames = self.run_list(["j", "j", "q"], entries, (24, 120))
+        self.assertTrue(any(long_name in line for line in frames[-1]), frames[-1])
+
+    def test_list_counts_matches_beside_the_filter(self):
+        entries = self.list_entries(["fix/login", "feat/login-flow", "docs/readme"])
+        _, frames = self.run_list(["/"] + list("login") + ["\x1b", "q"], entries)
+        typed = next(f for f in frames if self.search_text(f) == "login")
+        filter_row = next(line for line in typed[:3] if line.startswith("/ login"))
+        self.assertTrue(filter_row.rstrip().endswith("2 of 4"), filter_row)
+        self.assertFalse(any("match" in line for line in typed[-3:]), typed[-3:])  # Not on the status line.
+        # With nothing matching it says so too, and in a narrow pane the text keeps its room.
+        _, frames = self.run_list(["/"] + list("zzz") + ["\x1b", "q"], entries, (16, 50))
+        self.assertTrue(any(line.rstrip().endswith("0 of 4") for f in frames for line in f[:3]))
+        _, frames = self.run_list(["/"] + list("a-long-filter-text") + ["\x1b", "q"], entries, (16, 22))
+        rows = [line for f in frames for line in f[:3] if line.startswith("/ ")]
+        self.assertTrue(rows and all(len(line.rstrip()) <= 19 for line in rows), rows)
+
+    def test_list_esc_stops_typing_then_clears_then_quits(self):
+        entries = self.list_entries(["fix/login", "docs/readme"])
+        picker, frames = self.run_list(["/"] + list("login") + ["\x1b", "\x1b", "\x1b", "q"], entries)
+        typing, done, cleared = frames[6], frames[7], frames[8]
+        self.assertIn("esc done", typing[-1])
+        self.assertNotIn("tab", typing[-1])
+        self.assertEqual(self.search_text(done), "login")  # Kept, with the list's keys back.
+        self.assertIn("esc clear filter", done[-1])
+        self.assertIn("› ", "".join(line for line in done if "fix/login" in line))
+        self.assertIn("/ to filter", cleared)
+        self.assertEqual(len(frames), 9)  # The third esc quit; the q was never read.
+        # tab doesn't stop typing.
+        _, frames = self.run_list(["/"] + list("log") + ["\t", "x", "\x1b", "\x1b", "\x1b"], entries)
+        self.assertTrue(any(self.search_text(f) == "logx" for f in frames))
+
+    def test_list_offers_n_when_the_main_checkout_is_alone(self):
+        alone = self.list_entries([])
+        for size in ((16, 50), (24, 100)):
+            _, frames = self.run_list(["q"], alone, size)
+            with self.subTest(size=size):
+                main_row = next(i for i, line in enumerate(frames[0]) if line.startswith("› ● main")
+                                or line.startswith("›   main"))
+                self.assertEqual(frames[0][main_row + 1].strip(), "No other worktrees yet: n creates one")
+        _, frames = self.run_list(["q"], self.list_entries(["fix/a"]))
+        self.assertFalse(any("No other worktrees" in line for line in frames[0]))
+
+    def test_sort_cycles_and_is_remembered(self):
+        entries = self.list_entries(["b/old", "a/new"])
+        entries[1]["time"], entries[2]["time"] = 10, 20
+        names = lambda frame: [line[4:].split()[0] for line in frame if line[4:].startswith(("main", "a/", "b/"))]
+        picker, frames = self.run_list(["S", "S", "q"], entries)
+        self.assertEqual(names(frames[0]), ["main", "a/new", "b/old"])  # Most recent first, by default.
+        self.assertNotIn("sorted by", frames[0][1])
+        self.assertIn("sorted by state", frames[1][1])
+        self.assertIn("sorted by name", frames[2][1])
+        self.assertEqual(util.load_settings(), {"sort": "name"})
+        manager = lambda: app.Manager(SimpleNamespace(), str(self.repo), "session:1", "")
+        with patch.object(app.Manager, "reload"), patch.object(app.threading, "Thread"), \
+                patch.object(github, "pull_requests_enabled", return_value=False):
+            self.assertEqual(manager().sort, "name")  # The next run starts sorted by name.
+            # A broken or odd file never stops the picker: it just starts with the default.
+            for content in ("{not json", "[1, 2]", '{"sort": "size"}', '{"sort": ["name"]}', ""):
+                util.settings_path().write_text(content)
+                self.assertEqual(manager().sort, "recent", content)
+            util.settings_path().unlink()
+            self.assertEqual(manager().sort, "recent")
+        with patch.dict(os.environ, {"XDG_STATE_HOME": "relative/state"}):
+            self.assertEqual(util.settings_path(), Path(os.path.expanduser("~/.local/state/rex/worktrees.json")))
+        unwritable = Path(self.tmp.name) / "file"
+        unwritable.write_text("")
+        with patch.dict(os.environ, {"XDG_STATE_HOME": str(unwritable)}):
+            util.save_settings(sort="state")  # A folder that can't be made: forgotten, not an error.
+            self.assertEqual(util.load_settings(), {})
+
+    def test_filter_clears_once_its_only_match_is_removed(self):
+        entries = self.list_entries(["fix/login", "docs/readme"])
+        screen = FakeScreen(["/"] + list("login") + ["\x1b", "d", "d", "q"], (24, 100))
+        picker = self.picker(screen, entries)
+        picker.terminals = []
+
+        def remove(entry):
+            picker.entries.remove(entry)
+            return False
+
+        picker.remove = remove
+        with patch.object(worktrees, "missing", return_value=False):
+            drive(screen, picker.list_screen)
+        frames = [screen.text(i) for i in range(len(screen.frames))]
+        self.assertIn("/ to filter", frames[-1])
+        self.assertFalse(any("No matching worktrees" in line for line in frames[-1]))
+        # A filter that still matches something stays.
+        entries = self.list_entries(["fix/login", "feat/login-flow"])
+        screen = FakeScreen(["/"] + list("login") + ["\x1b", "d", "d", "q"], (24, 100))
+        picker = self.picker(screen, entries)
+        picker.terminals, picker.remove = [], remove
+        with patch.object(worktrees, "missing", return_value=False):
+            drive(screen, picker.list_screen)
+        self.assertEqual(self.search_text(screen.text()), "login")
+
+    def test_folder_heading_sits_over_the_folder_names(self):
+        entries = [{"name": "main", "worktree": "/w/repo", "main": True, "track": []},
+                   {"name": "fix/a", "worktree": "/w/repo-login", "track": []},
+                   {"name": "fix/b", "worktree": "/repo/.claude/worktrees/payments", "track": []}]
+        widths = ui.column_widths(entries, 120)
+        header = "".join(t for t, _ in ui.header_row(widths))
+        rows = ["".join(t for t, _ in ui.entry_row(e, False, widths)) for e in entries]
+        at = header.index("FOLDER")
+        self.assertEqual([row[at:].split()[0] for row in rows], ["repo", "login", "payments"])
+        self.assertEqual(rows[2][at - len("claude "):at], "claude ")  # The tool, in its own column.
 
     def test_remove_says_why_the_branch_is_kept(self):
         other = self.add("ahead", "ahead")
@@ -2321,6 +2487,11 @@ class WorktreeTests(unittest.TestCase):
         scenarios += [
             ("list filter on a missing folder", run_list(everything), ["/"] + list("docs"), "enter", ["\n"], True),
             ("list filter", run_list(everything), ["/"] + list("plain"), "enter", ["\n"], False),
+            ("list filter, typing", run_list(everything), ["/"] + list("plain"), "esc", ["\x1b"], False),
+            ("list filter, done typing", run_list(everything), ["/"] + list("plain") + ["\x1b"], "esc", ["\x1b"],
+             False),
+            ("list filter, done typing on a missing folder", run_list(everything), ["/"] + list("docs") + ["\x1b"],
+             "s", ["s"], True),
             ("remove, discard unchecked", run_remove, [], "enter", ["\n"], True),
             ("remove, discard checked", run_remove, [" "], "enter", ["\n"], False),
             ("cleanup, on a dirty row", run_cleanup, [], "space", [" "], True),

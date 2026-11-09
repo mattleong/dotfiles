@@ -5,14 +5,16 @@ import util
 import worktrees
 
 
-SORTS = ["git", "recent", "state"]
+# How the list can be ordered, in the order S cycles through them; the first is the default.
+SORTS = ["recent", "state", "name"]
 
 
 def sort_entries(entries, mode):
-    """Order worktrees by Git's order, most recent commit first, or grouped by state: the main
-    checkout, uncommitted changes, open pull requests, the rest, finished ones, then missing ones."""
-    if mode == "recent":
-        return sorted(entries, key=lambda e: -(e.get("time") or 0))
+    """Order worktrees with the main checkout first, then the rest by their latest commit, newest
+    first; by state: uncommitted changes, open pull requests, the rest, finished ones, then
+    missing ones, each newest first; or by branch name. An unknown mode means the default."""
+    def recent(entry):
+        return -(entry.get("time") or 0)
 
     def group(entry):
         pr = (entry.get("pr") or {}).get("state")
@@ -29,24 +31,39 @@ def sort_entries(entries, mode):
         return 3
 
     if mode == "state":
-        return sorted(entries, key=group)
-    return list(entries)
+        key = lambda e: (group(e), recent(e))
+    elif mode == "name":
+        key = lambda e: (not e.get("main"), e["name"].lower(), e["name"])
+    else:
+        key = lambda e: (not e.get("main"), recent(e))
+    return sorted(entries, key=key)
 
 
 SEPARATORS = "/-_. "
 
 
+def word_starts(text):
+    """Whether each position in text starts a word: the first letter, one after a separator, or a
+    capital after a lowercase letter, as in fixLogin."""
+    return [p == 0 or text[p - 1] in SEPARATORS or (text[p].isupper() and text[p - 1].islower())
+            for p in range(len(text))]
+
+
 def fuzzy(token, text):
-    """Match token as a subsequence of text, scoring the best of every way it matches: each
-    letter scores 1, plus 3 when it follows the letter before it and 2 at the start of a word, and
-    a match with no gaps scores 2 more. So "old" finds the word in chore/old-thing rather than the
-    o in chore. Returns (score, positions) or None."""
+    """Match token in text: as a substring, or with each letter either right after the one before
+    it or at the start of a word (see word_starts), so flf finds feat/login-flow but dark doesn't
+    find dependabot/npm_and_yarn/webpack. Of every way it matches, the best scores: each letter
+    scores 1, plus 3 when it follows the letter before it and 2 at the start of a word, and a match
+    with no gaps scores 2 more. So "old" finds the word in chore/old-thing rather than letters
+    inside other words. Returns (score, positions) or None."""
     lower, size = text.lower(), len(text)
     if not token:
         return 0, []
-    starts = [p == 0 or text[p - 1] in SEPARATORS for p in range(size)]
-    # best[i][p]: the best (score, previous position) with token[i] matched at position p.
-    previous = [(1 + 2 * starts[p], -1) if lower[p] == token[0] else None for p in range(size)]
+    starts = word_starts(text)
+    gains = [1 + 2 * start for start in starts]
+    # best[i][p]: the best (score, previous position) with token[i] matched at position p. A
+    # letter can come after a gap only at the start of a word, and so can the first.
+    previous = [(gains[p], -1) if lower[p] == token[0] and starts[p] else None for p in range(size)]
     best = [previous]
     for char in token[1:]:
         row, before, at = [None] * size, None, -1  # The best match of the letters so far, ending before p - 1.
@@ -55,25 +72,33 @@ def fuzzy(token, text):
                 before, at = previous[p - 2][0], p - 2
             if lower[p] != char:
                 continue
-            gain = 1 + 2 * starts[p]
-            if before is not None:
-                row[p] = (before + gain, at)
-            if p and previous[p - 1] and (row[p] is None or previous[p - 1][0] + gain + 3 >= row[p][0]):
-                row[p] = (previous[p - 1][0] + gain + 3, p - 1)
+            if before is not None and starts[p]:
+                row[p] = (before + gains[p], at)
+            if p and previous[p - 1] and (row[p] is None or previous[p - 1][0] + gains[p] + 3 >= row[p][0]):
+                row[p] = (previous[p - 1][0] + gains[p] + 3, p - 1)
         best.append(row)
         previous = row
+    found = None
     ends = [p for p in range(size) if previous[p]]
-    if not ends:
-        return None
-    pos = max(ends, key=lambda p: previous[p][0])
-    score, positions = previous[pos][0], []
-    for row in reversed(best):
-        positions.append(pos)
-        pos = row[pos][1]
-    positions.reverse()
-    if positions[-1] - positions[0] == len(positions) - 1 > 0:
-        score += 2
-    return score, positions
+    if ends:
+        pos = max(ends, key=lambda p: previous[p][0])
+        score, positions = previous[pos][0], []
+        for row in reversed(best):
+            positions.append(pos)
+            pos = row[pos][1]
+        positions.reverse()
+        if positions[-1] - positions[0] == len(positions) - 1 > 0:
+            score += 2
+        found = score, positions
+    # A substring that starts inside a word, such as ogin in login, matches too.
+    at = lower.find(token)
+    while at >= 0:
+        span = range(at, at + len(token))
+        score = sum(gains[p] for p in span) + 3 * (len(token) - 1) + (2 if len(token) > 1 else 0)
+        if found is None or score > found[0]:
+            found = score, list(span)
+        at = lower.find(token, at + 1)
+    return found
 
 
 def plain(text):
