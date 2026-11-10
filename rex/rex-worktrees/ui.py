@@ -23,8 +23,11 @@ ROLES = {
     "attention": "yellow",  # Uncommitted changes, warning headings, a key pressed where it can't act.
     "danger": "red",  # A missing folder, a broken worktree, errors, a closed PR, “Discard uncommitted changes”.
     "finished": "magenta",  # A merged PR, a remote branch that's gone.
-    "source": "blue",  # The main checkout, remotes, and the tools that made worktrees, such as rex.
-    "dim": "dim",  # Metadata: ages, paths, hints, a draft PR, locked, commit hashes and authors.
+    "source": "blue",  # The main checkout, remotes, the tools that made worktrees, a commit's author.
+    "dim": "dim",  # Metadata: ages, paths, hints, a draft PR, locked.
+    # A commit's hash, the color git log gives it. It shows only in commit lists, where nothing
+    # else is yellow, so it can't be taken for a warning.
+    "hash": "yellow",
 }
 
 

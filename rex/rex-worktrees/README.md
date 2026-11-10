@@ -215,8 +215,12 @@ colors (see `ui.ROLES`), and a test checks that no other module names one.
 | attention | yellow | uncommitted changes, warning headings, a key pressed where it can't act |
 | danger | red | a missing folder, a broken worktree, errors, a closed PR, “Discard uncommitted changes” |
 | finished | magenta | a merged PR, a remote branch that's gone |
-| source | blue | the main checkout, remotes, and the tools that made worktrees, such as `rex` |
-| dim | dim | metadata: ages, paths, hints, a draft PR, `locked`, commit hashes and authors |
+| source | blue | the main checkout, remotes, the tools that made worktrees, such as `rex`, a commit's author |
+| dim | dim | metadata: ages, paths, hints, a draft PR, `locked` |
+| hash | yellow | a commit's hash, the color `git log` gives it |
+
+Yellow has that second meaning only in commit lists, where nothing else is yellow, so a hash can't
+be taken for a warning.
 
 Ahead and behind counts (`↑2 ↓3`) are plain text, since they're facts rather than states, and
 text that matches a filter is bold and underlined, with no color of its own.

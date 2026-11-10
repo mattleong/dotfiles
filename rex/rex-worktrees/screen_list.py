@@ -58,11 +58,12 @@ def dd_verb(entry):
 
 def commit_rows(commits, space):
     """A row per commit: its hash, age, and subject, with its author when there's room for them and
-    a readable subject. The subject stands out; the rest is metadata, dim."""
+    a readable subject. They're colored as git log colors them, so the columns can be told apart at
+    a glance: the hash yellow, the author blue, the age dim."""
     dim = ui.style("dim")
     author_width = min(16, max([len(c[2]) for c in commits] + [6])) if space >= 72 else 0
-    return [[(sha, dim), ("  " + ui.short_age(stamp).rjust(3), dim)]
-            + ([("  " + author[:author_width].ljust(author_width), dim)] if author_width else [])
+    return [[(sha, ui.style("hash")), ("  " + ui.short_age(stamp).rjust(3), dim)]
+            + ([("  " + author[:author_width].ljust(author_width), ui.style("source"))] if author_width else [])
             + [("  " + subject, 0)] for sha, subject, author, stamp in commits]
 
 
