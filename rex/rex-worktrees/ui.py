@@ -1,4 +1,4 @@
-"""Drawing: colors, rows, columns, and shared screens such as help and confirmation."""
+"""Drawing: colors, rows, columns, and shared screens such as help, details, and errors."""
 import curses
 import os
 import re
@@ -856,38 +856,6 @@ def abridged(parts, full, room, width):
     rows = all_rows(parts)
     return (cut(parts, room) or any(len(row_text(r)) > width for r in rows)
             or [row_text(r) for r in rows] != [row_text(r) for r in all_rows(full)])
-
-
-def confirm(stdscr, title, repo, parts, keys, enter, help_items):
-    """Show body parts (see fit_parts), given by a function of the pane's width and whether to
-    show them in full (see show_details), and wait for one of keys (a dict of key -> result). q
-    and esc cancel; tab shows everything, in full."""
-    keyboard.set_timeout(stdscr, -1)
-    while True:
-        height = stdscr.getmaxyx()[0]
-        width = space(stdscr)
-        body_parts = parts(width)
-        room = height - margin(height) - 4
-        details = abridged(body_parts, parts(width, True), room, width)
-        hints = Keys().add("enter", enter).add("tab", "details" if details else "", rank=1)
-        hints.add("?", "help", rank=2).add("q", "cancel")
-        top, bottom = [header(title, repo), []], [[], hints.row()]
-        render(stdscr, compose(height, top, fit_parts(body_parts, room), bottom))
-        key = keyboard.read_key(stdscr)
-        if key in keyboard.CLOSE:
-            return None
-        if key == "?":
-            show_help(stdscr, title, [("Keys", help_items + [DETAILS_HELP, CLOSE_HELP])])
-            continue
-        if key == "\t":
-            show_details(stdscr, title, parts)
-            continue
-        if key in keyboard.ENTER:
-            key = "\n"
-        if key in keys:
-            result = keys[key]()
-            if result is not None:
-                return result
 
 
 def pointer(selected):

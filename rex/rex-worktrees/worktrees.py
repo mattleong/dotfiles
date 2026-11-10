@@ -145,13 +145,15 @@ def recent_commits(path, count=5, base=None):
 
 
 def removal_problem(entry):
-    """Reasons a worktree can't be removed at all, even with force."""
+    """Reasons a worktree can't be removed or pruned at all, even with force. One whose folder is
+    missing can be: dd prunes it."""
     if entry.get("main"):
         return "The main worktree can't be removed."
     if "locked" in entry:
+        if missing(entry):
+            # As for a folder on a drive that isn't mounted: the lock is what keeps Git from pruning it.
+            return "This worktree is locked, so Git keeps it though its folder is missing; unlock it to prune it."
         return "This worktree is locked."
-    if missing(entry):
-        return "This worktree's folder is missing; press p to prune it."
     return None
 
 
@@ -198,10 +200,6 @@ def cleanup_reason(entry):
     if REMOTE_DELETED in (entry.get("track") or []):
         return REMOTE_DELETED
     return None
-
-
-def prune_worktrees(repo):
-    util.git(repo, "worktree", "prune")
 
 
 def worktree_source(entry):

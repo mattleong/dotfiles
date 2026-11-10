@@ -235,7 +235,7 @@ def existing_branch(name, branches):
         path = branches["checked_out"][local]
         if path in branches.get("missing", ()):
             return {"branch": local, "missing": path,
-                    "error": "It's checked out in a worktree whose folder is missing; prune it with p in the list."}
+                    "error": "It's checked out in a worktree whose folder is missing; prune it with dd in the list."}
         return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path,
                 "short": "its worktree"}
     if local in branches["local"]:

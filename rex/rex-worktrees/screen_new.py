@@ -558,7 +558,7 @@ class NewScreens:
         entry = next((e for e in self.entries if e["worktree"] == path),
                      {"worktree": path, "name": plan["branch"], "branch": "refs/heads/" + plan["branch"]})
         if worktrees.missing(entry):
-            flash.set("That worktree's folder is missing; prune it with p in the list.", "attention")
+            flash.set("That worktree's folder is missing; prune it with dd in the list.", "attention")
             return False
         try:
             self.busy("Opening…", lambda: tabs.open_tab(self.session, entry, self.client, terminals=self.terminals))

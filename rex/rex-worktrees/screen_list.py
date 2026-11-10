@@ -30,10 +30,16 @@ def list_layout(room, count):
     return rows, room - rows
 
 
-MISSING = "This worktree's folder is missing; press p to prune it."
+MISSING = "This worktree's folder is missing; press dd to prune it."
 NONE_SELECTED = "No worktree selected."
 # Keys that act on the selected worktree, by the names the list's Keys give them.
 ROW_KEYS = {"s": "s", "o": "o", "e": "e", "y": "y", "Y": "Y", "d": "dd"}
+
+
+def missing_note(entry):
+    """What a worktree whose folder is missing needs: pruning, with dd, unless it's locked, which
+    keeps Git from pruning it."""
+    return worktrees.removal_problem(entry) or MISSING
 
 
 def commit_rows(commits, space):
@@ -67,7 +73,8 @@ class ListScreen:
             # The status line: a message, or the second key a half-typed dd, gg, or gp needs.
             note = ""
             if pending == "d" and selected:
-                note = "d… press d again to remove " + selected["name"]
+                verb = "prune" if worktrees.missing(selected) else "remove"
+                note = f"d… press d again to {verb} " + selected["name"]
             elif pending == "g":
                 note = "g… then g for the first row, or p to open the pull request"
             status = self.flash.rows(space) or [[(note, ui.style("dim"))] if note else []]
@@ -104,7 +111,8 @@ class ListScreen:
                 if preview_rows:  # Right below the list's rows.
                     body += [[]] * (capacity - len(body))
                     body += self.preview(selected, space, widths["compact"], preview_rows,
-                                         said=self.flash.left() is not None and self.flash.text == MISSING)
+                                         said=self.flash.left() is not None
+                                         and self.flash.text == missing_note(selected or {}))
                 cursor = (ui.margin(height) + 1, column) if column is not None else None
                 ui.render(stdscr, ui.compose(height, heading, body, bottom), cursor=cursor)
 
@@ -172,11 +180,6 @@ class ListScreen:
                 if self.new_screen(text=missing):
                     return
                 keyboard.set_timeout(stdscr, -1)
-            elif key == "p":
-                self.prune()
-                selected = self.reselect(paths, index)
-                if self.emptied(shown, query):
-                    query, qpos = "", 0
             elif key == "c":
                 if self.cleanup():
                     return
@@ -256,7 +259,7 @@ class ListScreen:
         While typing in the filter, only the keys that can't be text. missing is the filter's
         text when nothing matches it, so enter and n start a new worktree from it."""
         keys = ui.Keys()
-        row = NONE_SELECTED if selected is None else MISSING if worktrees.missing(selected) else ""
+        row = NONE_SELECTED if selected is None else missing_note(selected) if worktrees.missing(selected) else ""
         # With nothing selected, enter starts a new worktree for the filter that matched nothing.
         enter = row if selected else ""
         if filtering:
@@ -270,12 +273,14 @@ class ListScreen:
         keys.add("enter", "" if missing else "open", why=enter)
         keys.add("s", "split", rank=3, why=row)
         keys.add("n", "new", rank=4)
-        keys.add("dd", "remove", rank=5, why=(worktrees.removal_problem(selected) or "") if selected else row)
-        # c and p are refused by the same tests cleanup and prune use to say they have nothing to do.
+        # On a worktree whose folder is missing, dd prunes it: drops Git's record of it.
+        prune = selected is not None and worktrees.missing(selected)
+        keys.add("dd", "prune" if prune else "remove", rank=5,
+                 why=(worktrees.removal_problem(selected) or "") if selected else row)
+        # c counts what cleanup would remove or prune as it opens, and is refused by the same test
+        # cleanup uses to say it has nothing to do.
         finished = len(screen_remove.cleanable(self.entries))
         keys.add("c", f"clean up {finished}", rank=6, can=bool(finished))
-        stale = len(screen_remove.prunable(self.entries))
-        keys.add("p", f"prune {stale}", rank=7, can=bool(stale))
         keys.add("?", "help")
         keys.add("esc", "clear filter", rank=2, can=bool(query))
         keys.add("q", "quit", rank=1)
@@ -302,9 +307,10 @@ class ListScreen:
             ("s", "open the worktree in a split beside your pane"),
             ("o", "open its tab in the background and stay here"),
             ("n", "new worktree; when nothing matches the filter, starting from its text"),
-            ("dd", "remove the worktree, and close the panes inside it"),
-            ("c", "clean up worktrees whose pull request merged or whose remote branch is gone"),
-            ("p", "prune missing worktrees"),
+            ("dd", "remove the worktree, and close the panes inside it; when its folder is missing, prune it: "
+                   "drop Git's record of it, keeping its branch"),
+            ("c", "clean up: remove worktrees whose pull request merged or whose remote branch is gone, and "
+                  "prune the ones whose folder is missing"),
             ("e", "open the worktree in your editor, in a new tab"),
             ("gp", "open its pull request in the browser"),
             ("y / Y", "copy its path / branch name"),
@@ -332,8 +338,9 @@ class ListScreen:
             (ui.label("main"), "the main checkout, the repository's own folder; it can't be removed"),
             (ui.label("tab"), "a Rex pane is open in the worktree"),
             (ui.label("dirty"), "the worktree has uncommitted changes"),
-            (ui.label("locked"), "the worktree is locked (git worktree lock), so it can't be removed"),
-            (ui.label("missing"), "the worktree's folder is gone; press p to prune it"),
+            (ui.label("locked"), "the worktree is locked (git worktree lock), so it can't be removed, or pruned when "
+                                 "its folder is missing, as on a drive that isn't mounted"),
+            (ui.label("missing"), "the worktree's folder is gone; dd prunes it, as does c with the others"),
             (("herdr, t3, claude, rex", ui.style("source")), "before the folder: the tool that created the worktree"),
             ("narrow panes", "only the labels' icons show, and the preview spells out the selected worktree's"),
         ])])
@@ -390,7 +397,7 @@ class ListScreen:
                 rows.append([(ui.middle(path, space)[0], dim)])
         if worktrees.missing(entry):
             if not said and len(rows) < size:
-                note = ui.clip(ui.hang(util.ICONS["missing"], MISSING, space), size - len(rows), space)
+                note = ui.clip(ui.hang(util.ICONS["missing"], missing_note(entry), space), size - len(rows), space)
                 rows += [[(line, ui.style("danger"))] for line in note]
             return rows[:size]
         if len(rows) >= size:

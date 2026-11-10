@@ -12,8 +12,8 @@ of the window's layout), and falls back to a fixed share of the window when it c
 | `app.py` | `Manager`: the picker's state and background loading |
 | `screen_list.py` | The worktree list and commit preview |
 | `screen_new.py` | Creating worktrees from existing or new branches |
-| `screen_remove.py` | Removing, cleaning up, and pruning worktrees |
-| `ui.py` | Drawing: color roles, labels, key hints, columns, fitting screens to the pane, help, error, and confirmation screens |
+| `screen_remove.py` | Removing worktrees, pruning missing ones, and cleaning up |
+| `ui.py` | Drawing: color roles, labels, key hints, columns, fitting screens to the pane, help, details, and error screens |
 | `keyboard.py` | Key input, focus reports, line editing, and Vim motions |
 | `matching.py` | Filtering and sorting |
 | `worktrees.py` | Git worktree state, status, and history |
@@ -114,6 +114,34 @@ checks the folder is still free, since Git would create the new branch before fi
 Branches only on a remote say so in the FROM column: `remote` for origin, or the remote's name,
 for every remote when more than one has branches. The columns are sized to every branch that
 matches, not just the rows in view, so they stay put while the list scrolls.
+
+Two keys remove worktrees. `dd` removes the selected one once you confirm, closing the panes
+inside it. `c` cleans up: it offers every worktree whose pull request merged or whose remote branch
+is gone, and every one whose folder is missing, each with its reason, in the list's order. Each
+starts checked unless it has uncommitted changes, and cleanup never discards changes, so those
+can't be checked: `dd` removes one, once “Discard uncommitted changes” is checked. The list's
+`c clean up 3` counts what enter would remove as cleanup opens. Neither key removes the main
+checkout or a locked worktree; `dd` isn't offered there, and pressing it says why.
+
+A worktree whose folder is missing is pruned rather than removed, by `dd` (the footer reads
+`dd prune` on it) or by cleanup. Pruning drops only Git's record of the worktree: its branch is
+kept, and nothing closes. It runs `git worktree remove` on that one worktree, which, when its folder
+is gone, deletes just its record, without `--force` (checked with Git 2.50, and held by
+`test_prune_drops_only_the_one_missing_worktree`), where `git worktree prune` would drop every
+missing worktree at once. A folder that's back at the path isn't pruned, since removing the
+worktree would delete it (see `actions.prune_worktree`). Git keeps a locked worktree whose folder
+is missing, as for one on a drive that isn't mounted, and so does the picker.
+
+Removing and pruning confirm in the same layout: what will go, then what that costs (uncommitted
+changes and the panes that will close), then the options. A note under the options, such as “The
+branch will be kept: …”, is dim and starts where the options' labels start, after a blank row, so
+it can't be read as an option, or as being about the option above it. The hint for “Discard
+uncommitted changes” sits right under that checkbox, and enter pressed without it checked makes the
+hint stand out and moves to it. Cleanup lists what will go, each row with what removing it closes,
+then its option to delete branches, which never applies to the pruned ones, then the selected row
+in full. When only part of a removal works, the message says what was done, then what wasn't: Git
+can drop a worktree from its list and still fail to delete some of its folder, and a branch can
+fail to delete, or a pane to close (see `actions.remove_worktree` and `actions.remove_many`).
 
 Every screen keeps its key hints pinned to the bottom of the pane, and lists shorten or scroll to
 fit (see `compose` and `fit_parts` in `ui.py`), so check changes in a short pane, such as 50×16, as

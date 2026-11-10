@@ -63,24 +63,55 @@ def copy_to_clipboard(text):
     raise RuntimeError("No clipboard command found (pbcopy, wl-copy, or xclip).")
 
 
+def prune_worktree(repo, entry):
+    """Drop Git's record of a worktree whose folder is missing, and nothing else: its branch, and
+    the other missing worktrees, stay. git worktree remove does just that for a missing folder,
+    without --force, where git worktree prune would drop every missing worktree at once. A folder
+    that's back at the path is refused, since removing the worktree would delete it."""
+    if os.path.lexists(entry["worktree"]):
+        raise RuntimeError("its folder is back; press r to refresh the list.")
+    util.git(repo, "worktree", "remove", "--", entry["worktree"])
+
+
+def take_out(repo, entry, force=False):
+    """Have Git remove a worktree, or prune it when its folder is missing (see prune_worktree).
+    Raises RuntimeError when Git still lists it, so nothing was done. Returns what went wrong when
+    Git dropped it but couldn't delete all of its folder, else ""."""
+    if worktrees.missing(entry):
+        prune_worktree(repo, entry)
+        return ""
+    try:
+        util.git(repo, "worktree", "remove", *(["--force"] if force else []), "--", entry["worktree"])
+    except RuntimeError as error:
+        # Git can drop a worktree from its list and still fail to delete its folder.
+        if registered(repo, entry["worktree"]):
+            raise
+        return (f"its folder couldn't be deleted entirely: {error}" if os.path.lexists(entry["worktree"])
+                else str(error))
+    return ""
+
+
 def remove_worktree(repo, session, entry, closing, force=False, delete_branch=False):
-    """Remove a worktree from the main worktree's repository, then close the panes inside it
-    (closing, from tabs.panes_to_close)."""
-    util.git(repo, "worktree", "remove", *(["--force"] if force else []), "--", entry["worktree"])
-    problems = []
+    """Remove a worktree from the main worktree's repository (see take_out), delete its branch
+    when asked, then close the panes inside it (closing, from tabs.panes_to_close). Raises
+    RuntimeError when Git still lists the worktree, so nothing was done. Otherwise returns whether
+    the branch was deleted, and what else went wrong, as clauses such as "its branch wasn't
+    deleted: …", so a message can say what did and didn't happen."""
+    problem = take_out(repo, entry, force)
+    problems, deleted = [problem] if problem else [], False
     if delete_branch:
         try:
             # Callers only offer this after merged_into() confirmed the branch is merged.
             util.git(repo, "branch", "-D", "--", entry["name"])
+            deleted = True
         except RuntimeError as error:
-            problems.append(f"branch not deleted: {error}")
+            problems.append(f"its branch wasn't deleted: {error}")
     try:
         if closing:
             tabs.close_panes(session, closing)
     except (RuntimeError, OSError) as error:
-        problems.append(f"a pane could not be closed: {error}")
-    if problems:
-        raise RuntimeError("Worktree removed, but " + "; ".join(problems))
+        problems.append(f"a pane couldn't be closed: {error}")
+    return deleted, problems
 
 
 def registered(repo, path):
@@ -94,33 +125,32 @@ def registered(repo, path):
 
 
 def remove_many(repo, session, items, terminals=None):
-    """Remove several worktrees, closing their panes at the end so the picker's own tab closes
-    last. items holds (entry, delete_branch) pairs. Returns (removed names, failure messages); a
-    worktree counts as removed once Git no longer lists it, even if its folder couldn't be deleted."""
-    removed, failures, paths = [], [], []
+    """Remove several worktrees, and prune the ones whose folder is missing, keeping their branches
+    (see prune_worktree). The panes inside the removed ones close at the end, so the picker's own
+    tab closes last. items holds (entry, delete_branch) pairs. Returns (the names removed, the
+    names pruned, how many branches were deleted, sentences saying what didn't happen). A worktree
+    counts as removed once Git no longer lists it, even if some of its folder is left; a sentence
+    says so."""
+    removed, pruned, deleted, failures, paths = [], [], 0, [], []
     if terminals is None:
         try:
             terminals = tabs.terminal_cwds(session)
         except (RuntimeError, ValueError, OSError):
             terminals = []
     for entry, delete_branch in items:
+        prune = worktrees.missing(entry)
         try:
-            remove_worktree(repo, session, entry, [], delete_branch=delete_branch)
-            removed.append(entry["name"])
-            paths.append(entry["worktree"])
+            gone, problems = remove_worktree(repo, session, entry, [], delete_branch=delete_branch and not prune)
         except (RuntimeError, OSError) as error:
-            # Git can drop a worktree from its list and still fail to delete its folder.
-            if registered(repo, entry["worktree"]):
-                failures.append(f"{entry['name']} wasn't removed: {error}")
-                continue
-            removed.append(entry["name"])
+            failures.append(f"{entry['name']} wasn't {'pruned' if prune else 'removed'}: {error}")
+            continue
+        (pruned if prune else removed).append(entry["name"])
+        if not prune:
             paths.append(entry["worktree"])
-            if os.path.isdir(entry["worktree"]):
-                failures.append(f"couldn't delete the folder of {entry['name']}: {error}")
-            else:
-                failures.append(f"{entry['name']}: {error}")
+        deleted += gone
+        failures += [f"{entry['name']} was removed, but {problem}" for problem in problems]
     try:
         tabs.close_panes(session, tabs.panes_to_close(terminals, paths))
     except (RuntimeError, OSError) as error:
-        failures.append(f"a pane could not be closed: {error}")
-    return removed, failures
+        failures.append(f"a pane couldn't be closed: {error}")
+    return removed, pruned, deleted, failures
