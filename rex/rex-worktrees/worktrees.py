@@ -64,11 +64,30 @@ def tracking(cwd):
 
 
 def missing(entry):
-    return "prunable" in entry or not os.path.isdir(entry["worktree"])
+    """Whether a worktree's folder is gone, as when it was deleted, or is on a drive that isn't
+    mounted: dd and cleanup prune it."""
+    return not os.path.isdir(entry["worktree"])
+
+
+def broken(entry):
+    """Whether Git can't use a worktree whose folder is there: it calls it prunable, as its .git
+    file is gone. dd repairs it (see actions.repair_worktree); pruning would drop Git's record and
+    leave the folder, and removing is refused by Git."""
+    return "prunable" in entry and not entry.get("main") and os.path.isdir(entry["worktree"])
+
+
+def unlinked(entry):
+    """Whether a worktree's folder is there without its .git file: every one git worktree repair
+    writes the file for (see actions.repair_worktree), broken or locked, as Git doesn't call a
+    locked worktree prunable."""
+    path = entry["worktree"]
+    return not entry.get("main") and os.path.isdir(path) and not os.path.lexists(os.path.join(path, ".git"))
 
 
 def is_dirty(entry):
-    if missing(entry):
+    # Git can't read a broken worktree's status, and in a folder inside another checkout, such as
+    # one Claude made, it would read that checkout's instead.
+    if missing(entry) or broken(entry):
         return None
     try:
         return bool(util.git(entry["worktree"], "status", "--porcelain", "--untracked-files=normal"))
@@ -145,8 +164,8 @@ def recent_commits(path, count=5, base=None):
 
 
 def removal_problem(entry):
-    """Reasons a worktree can't be removed or pruned at all, even with force. One whose folder is
-    missing can be: dd prunes it."""
+    """Reasons dd can't act on a worktree at all, even with force. One whose folder is missing can
+    be pruned, and a broken one repaired."""
     if entry.get("main"):
         return "The main worktree can't be removed."
     if "locked" in entry:
@@ -191,8 +210,9 @@ def merged_into(cwd, entry):
 
 
 def cleanup_reason(entry):
-    """Why a worktree looks finished: its pull request merged or its remote branch was deleted."""
-    if entry.get("main") or "locked" in entry or missing(entry):
+    """Why a worktree looks finished: its pull request merged or its remote branch was deleted.
+    Never a broken one: removing it is refused by Git, and pruning it would leave its folder."""
+    if entry.get("main") or "locked" in entry or missing(entry) or broken(entry):
         return None
     pr = entry.get("pr")
     if pr and pr.get("state") == "MERGED":

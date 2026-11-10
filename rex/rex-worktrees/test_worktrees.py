@@ -83,13 +83,33 @@ class FakeScreen:
         return ["".join(t for t, *_ in row) for row in self.frames[frame]]
 
 
-def drive(screen, run):
-    """Run a screen with the fake window, drawing into screen.frames."""
+def drive(screen, run, waiting=lambda: False):
+    """Run a screen with the fake window, drawing into screen.frames. waiting says whether keys
+    are queued (see keyboard.pending_input): by default never, as if each key came after the
+    screen was drawn."""
     with patch.object(ui, "render", lambda stdscr, rows, cursor=None: screen.frames.append(rows)), \
             patch.object(keyboard, "unget", lambda key: screen.keys.insert(0, key)), \
-            patch.object(keyboard, "pending_input", lambda stdscr: False), \
+            patch.object(keyboard, "pending_input", lambda stdscr: waiting()), \
             patch.object(curses, "flushinp", lambda: None):
         return run()
+
+
+PAUSE = "pause"  # Among a Typed screen's keys: the end of a burst, as when someone reads the screen.
+
+
+class Typed(FakeScreen):
+    """Keys that arrive in bursts, as pasted text does: a key in a burst is already queued while
+    the frame before it is drawn. PAUSE ends a burst."""
+    def get_wch(self):
+        while self.keys and self.keys[0] == PAUSE:
+            self.keys.pop(0)
+        return super().get_wch()
+
+    def waiting(self):
+        return bool(self.keys) and self.keys[0] != PAUSE
+
+    def drive(self, run):
+        return drive(self, run, self.waiting)
 
 
 class WorktreeTests(unittest.TestCase):
@@ -461,10 +481,16 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual((local["verb"], local["action"]), ("Checks out", "existing"))  # Named in full.
         remote = branching.plan_branch(cwd, branches, "", self.suggestion(branches, "origin/remote-only"))
         self.assertEqual((remote["verb"], remote["action"]), ("Creates", "remote-only tracking origin/remote-only"))
-        # Half typed, a name that Git couldn't end that way isn't created without what's left out.
-        for typed in ("fix/", "v2.", "fix /"):
+        # Half typed, a name that normalizing would end without what was typed last isn't created
+        # without it: such as fix- on the way to fix-login, which would otherwise create fix.
+        for typed in ("fix/", "v2.", "fix /", "fix-", "fix~", "fix:", "fix?", "fix@{", "fix*", "fix - "):
             plan = branching.plan_branch(cwd, branches, typed)
-            self.assertTrue(plan["hint"] and plan["error"].startswith("Type the rest of the name"), typed)
+            self.assertTrue(plan.get("hint") and plan["error"].startswith("Type the rest of the name"), (typed, plan))
+        self.assertEqual(branching.plan_branch(cwd, branches, "fix-")["error"],
+                         "Type the rest of the name; it can't end with a dash.")
+        self.assertIn("“@{”", branching.plan_branch(cwd, branches, "fix@{")["error"])
+        for typed in ("fix ", "fix_", "fix@", "x.lock", "HEAD"):  # Spaces at the end, or names kept whole.
+            self.assertNotIn("error", branching.plan_branch(cwd, branches, typed), typed)
         # Another base changes only where the branch starts.
         other = branching.from_base(new, {"ref": "origin/main", "label": "origin/main"})
         self.assertEqual((other["action"], other["args"][-1], other["path"]), ("test-branch from origin/main",
@@ -529,9 +555,11 @@ class WorktreeTests(unittest.TestCase):
         self.assertIn("main worktree", worktrees.removal_problem(main))
         self.assertIsNone(worktrees.removal_problem(dirty_entry))
         self.assertIn("locked", worktrees.removal_problem({**clean_entry, "locked": ""}))
-        self.assertIsNone(worktrees.removal_problem({**clean_entry, "prunable": ""}))  # dd prunes it.
+        gone = {**clean_entry, "worktree": str(clean) + "-gone", "prunable": ""}
+        self.assertIsNone(worktrees.removal_problem(gone))  # dd prunes it.
+        self.assertIsNone(worktrees.removal_problem({**clean_entry, "prunable": ""}))  # Broken: dd repairs it.
         # Locked, as a worktree on a drive that isn't mounted is: Git keeps it, and so does dd.
-        self.assertIn("unlock it to prune it", worktrees.removal_problem({**clean_entry, "prunable": "", "locked": ""}))
+        self.assertIn("unlock it to prune it", worktrees.removal_problem({**gone, "locked": ""}))
         self.assertEqual(worktrees.changed_files(dirty_entry), ["?? untracked"])
         self.assertEqual(worktrees.changed_files(clean_entry), [])
         self.assertTrue(dirty.exists() and clean.exists())
@@ -899,7 +927,7 @@ class WorktreeTests(unittest.TestCase):
             for item in items:
                 self.assertLessEqual(len(row(item, 47).rstrip()), 47)
             detail = screen_remove.RemovalScreens.cleanup_detail(items, 1, closes, 100)
-            self.assertEqual([r[0][0] for r in detail],
+            self.assertEqual([r[0][0].strip() for r in detail],
                              ["Its remote branch is gone. Closes 1 of 2 panes in Shell (this tab).", "fix/done"])
 
     def picker(self, screen, entries=None):
@@ -1118,7 +1146,7 @@ class WorktreeTests(unittest.TestCase):
             detail = screen_remove.RemovalScreens.cleanup_detail([dirty], 0, {}, 47, 3)
         text = ["".join(t for t, _ in row) for row in detail]
         self.assertEqual(len(text), 3)
-        self.assertTrue(text[0].startswith("Has uncommitted changes"))
+        self.assertTrue(text[0].startswith(" " * screen_remove.LABEL_AT + "Has uncommitted changes"))
         self.assertTrue(text[-1].endswith("distinctive-final-suffix") and "…" in text[-1])
 
     def test_closing_rows_keep_their_detail(self):
@@ -1354,7 +1382,10 @@ class WorktreeTests(unittest.TestCase):
             drive(screen, picker.cleanup)
         rows = screen.text(0)
         option = next(i for i, line in enumerate(rows) if "Also delete its branch" in line)  # Just one.
-        self.assertTrue(rows[option + 2].startswith("Its remote branch is gone."))
+        label = rows[option].index("Also delete")
+        self.assertEqual(label, screen_remove.LABEL_AT)
+        # The selected row's detail starts where the options' labels do, as the option's own note does.
+        self.assertTrue(rows[option + 2].startswith(" " * label + "Its remote branch is gone."), rows)
 
     def test_prune_shows_the_whole_folder_and_keeps_the_branch(self):
         stale = {"name": "chore/bump-deps", "worktree": "/private/tmp/rexwt-review-opus-r3/reviewopusr3-gone",
@@ -1523,25 +1554,27 @@ class WorktreeTests(unittest.TestCase):
                 drive(screen, picker.list_screen if listed else picker.cleanup)
             return screen, picker
 
-        # The list's c counts what cleanup removes or prunes as it opens: the clean finished one and the missing one.
+        # The list's c counts what cleanup removes as it opens: the clean finished one, but not the
+        # missing one, which starts unchecked, since its folder may be away only for now.
         everything = [main, done, dirty, gone, kept]
         screen, _ = run(everything, ["q"], (24, 140), listed=True)
-        self.assertIn("c clean up 2", screen.text(0)[-1])
-        # Cleanup offers the missing one with its own reason, checked, and enter's count agrees.
-        screen, _ = run(everything, ["j", "j", "q"])
+        self.assertIn("c clean up 1", screen.text(0)[-1])
+        # Cleanup offers the missing one with its own reason, unchecked, and enter's count agrees.
+        screen, _ = run(everything, ["j", "j", " ", "q"])
         rows = screen.text(0)
-        self.assertTrue(any("docs/gone" in line and line.rstrip().endswith("missing") for line in rows), rows)
+        self.assertTrue(any("[ ] docs/gone" in line and line.rstrip().endswith("missing") for line in rows), rows)
         self.assertFalse(any("ext/unmounted" in line for line in rows))
-        self.assertIn("enter remove 2", rows[-1])
+        self.assertIn("enter remove 1", rows[-1])
         self.assertTrue(any(line.startswith("Their remote branches are gone, or their folders are missing.")
                             for line in rows), rows)
-        on_missing = " ".join(screen.text(2))  # Its detail says what pruning does.
-        self.assertIn(screen_remove.PRUNE_TEXT + " Its branch is kept.", on_missing)
+        on_missing = " ".join(" ".join(screen.text(2)).split())  # Its detail says what pruning does.
+        self.assertIn(screen_remove.PRUNE_TEXT + " Its branch is kept. " + screen_remove.UNCHECKED_TEXT, on_missing)
         self.assertNotIn("closes", on_missing)
+        self.assertIn("enter remove 2", screen.text(3)[-1])  # Checked, it counts.
         # Enter removes the finished one and prunes the missing one, never deleting the pruned one's branch.
         with patch.object(actions, "remove_many", return_value=(["fix/done"], ["docs/gone"], 1, [])) as many, \
                 patch.object(worktrees, "merged_into", return_value="main"):
-            _, picker = run(everything, ["G", " ", "\n"])
+            _, picker = run(everything, ["j", "j", " ", "G", " ", "\n"])
         self.assertEqual([(e["name"], delete) for e, delete in many.call_args[0][2]],
                          [("fix/done", True), ("docs/gone", False)])
         self.assertEqual(picker.flash.text, "Removed 1 worktree and its branch. Pruned 1 missing worktree.")
@@ -1549,11 +1582,17 @@ class WorktreeTests(unittest.TestCase):
         with patch.object(actions, "remove_many", return_value=([], ["docs/gone"], 0, ["fix/done wasn't removed: no"])):
             _, picker = run(everything, ["\n"])
         self.assertEqual(picker.flash.text, "Pruned 1 missing worktree. fix/done wasn't removed: no.")
-        # Only missing ones: no branches to delete, and enter prunes.
-        screen, _ = run([main, gone], ["q"])
+        # Only missing ones: no branches to delete, nothing checked, so enter has nothing to do and
+        # the title says so, and c has no count; checked, enter prunes.
+        screen, _ = run([main, gone], [" ", "q"])
         rows = screen.text(0)
         self.assertFalse(any("Also delete" in line for line in rows), rows)
-        self.assertIn("enter prune 1", rows[-1])
+        self.assertNotIn("enter", rows[-1])
+        self.assertTrue(rows[1].startswith("Clean up worktrees") and "nothing checked yet" in rows[1], rows)
+        self.assertIn("enter prune 1", screen.text(1)[-1])
+        self.assertNotIn("nothing checked", screen.text(1)[1])
+        screen, _ = run([main, gone], ["q"], (24, 140), listed=True)
+        self.assertRegex(screen.text(0)[-1], r"c clean up   \? help")
         # With nothing to clean up, c says what it looks for.
         _, picker = run([main, kept], ["q"])
         self.assertIn("or a missing folder", picker.flash.text)
@@ -1624,7 +1663,8 @@ class WorktreeTests(unittest.TestCase):
         picker.session, picker.terminals = "s", []
         with patch.object(worktrees, "missing", return_value=False):
             drive(screen, picker.cleanup)
-        self.assertIn("Also delete their branches", "".join(screen.text(0)))
+        # Its, since the other has uncommitted changes, so its branch can't be deleted here.
+        self.assertIn("Also delete its branch ", "".join(screen.text(0)))
         details = next(screen.text(i) for i in range(len(screen.frames)) if "Clean up worktrees — details" in screen.text(i)[0])
         self.assertIn(name, "".join(line.strip() for line in details))
         self.assertTrue(all(len(line.rstrip()) <= 47 for line in details))
@@ -2279,7 +2319,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertFalse(any("merged" in line for line in listed), listed)
 
     def test_list_filter_with_no_matches_offers_no_move(self):
-        entries = [{"name": "main", "worktree": str(self.repo), "main": True, "dirty": False, "open": False, "track": []}]
+        entries = self.list_entries(["fix/mm"])
         screen = FakeScreen(["/", "m", "z", "\x1b", "\x1b", "q"], (24, 80))
         drive(screen, self.picker(screen, entries).list_screen)
         texts = [screen.text(i) for i in range(len(screen.frames))]
@@ -2300,7 +2340,7 @@ class WorktreeTests(unittest.TestCase):
             for i, frame in enumerate(screen.frames):
                 rows = ["".join(t for t, _ in ui.fit(row, size[1] - 3)) for row in frame]  # As drawn.
                 with self.subTest(size=size, frame=i):
-                    self.assertEqual(ui.TAB_CUE.strip() in rows, cue, rows)
+                    self.assertEqual(ui.TAB_CUE.strip() in [row.strip() for row in rows], cue, rows)
                     self.assertNotIn("tab details", rows[-1])  # No room at 50 columns; nothing's cut at 100.
                     self.assertTrue(all(any(name[:10] in line for line in rows) for name in names), rows)
 
@@ -2536,8 +2576,13 @@ class WorktreeTests(unittest.TestCase):
         _, frames = self.run_list(["/"] + list("login") + ["\x1b", "q"], entries)
         typed = next(f for f in frames if self.search_text(f) == "login")
         filter_row = next(line for line in typed[:3] if line.startswith("/ login"))
-        self.assertTrue(filter_row.rstrip().endswith("2 of 4"), filter_row)
+        self.assertEqual(filter_row.rstrip(), "/ login  2 of 4")  # Right after the text, not at the far right.
         self.assertFalse(any("match" in line for line in typed[-3:]), typed[-3:])  # Not on the status line.
+        # While the list scrolls, the selected row's place goes at the right, apart from the count.
+        many = self.list_entries([f"fix/login-{i}" for i in range(20)])
+        _, frames = self.run_list(["/"] + list("login") + ["\x1b", "q"], many, (16, 100))
+        row = next(line for f in frames for line in f[:3] if line.startswith("/ login"))
+        self.assertTrue(row.startswith("/ login  20 of 21 ") and row.rstrip().endswith(" 1/20"), row)
         # With nothing matching it says so too, and in a narrow pane the text keeps its room.
         _, frames = self.run_list(["/"] + list("zzz") + ["\x1b", "q"], entries, (16, 50))
         self.assertTrue(any(line.rstrip().endswith("0 of 4") for f in frames for line in f[:3]))
@@ -2715,11 +2760,13 @@ class WorktreeTests(unittest.TestCase):
 
     def test_footers_list_only_keys_that_can_act(self):
         """The keys rule (see the README's design rules): a footer lists only the keys that would
-        act now, and pressing one it leaves out is refused, saying why, or for New worktree's
-        enter, making the reason on screen stand out. Each scenario is a screen
-        reached by some keys, then a key's name, the keys that press it, and whether it's refused
-        there: the footer before the press lists the key exactly when the press isn't refused.
-        Add scenarios as screens change."""
+        act now, and pressing one it leaves out is refused, saying why, or for enter on a
+        confirmation or in New worktree, making the reason on screen stand out; a move with
+        nowhere to go just doesn't move. Each scenario is a screen reached by some keys, then a
+        key's name, the keys that press it, and whether it's refused there: the footer before the
+        press lists the key exactly when the press isn't refused. tab can act without being
+        listed, where nothing is cut. Every screen presses its moves and tab. Add scenarios as
+        screens change."""
         said = []
         set_flash = ui.Flash.set
 
@@ -2744,6 +2791,8 @@ class WorktreeTests(unittest.TestCase):
                       entry("fix/dirty-done", track=["remote deleted"], dirty=True),
                       entry("ext/unmounted", locked="", prunable="gone")]  # Locked, so kept though missing.
         few = [everything[0], everything[5]]  # Nothing to clean up.
+        alone = [everything[0]]  # The main checkout only: nothing to move to.
+        missing = patch.object(worktrees, "missing", side_effect=lambda e: "prunable" in e)
 
         def run_list(entries):
             def run(keys):
@@ -2753,41 +2802,42 @@ class WorktreeTests(unittest.TestCase):
                 picker.remove = picker.new_screen = lambda *args, **kwargs: False
                 for e in picker.entries:
                     picker.commits[(e["worktree"], None)] = ("Recent commits", [])
-                with patch.object(worktrees, "missing", side_effect=lambda e: "prunable" in e), \
-                        patch.object(tabs, "open_tab"), patch.object(tabs, "open_split"):
+                with missing, patch.object(tabs, "open_tab"), patch.object(tabs, "open_split"):
                     drive(screen, picker.list_screen)
                 return screen.frames, bool(said)
             return run
 
-        def run_remove(keys, prune=False):
-            """Remove's confirmation, or prune's: a key is refused when the screen says why, or,
-            for enter, when the screen is cancelled after it rather than confirmed."""
-            screen = FakeScreen(keys + ["q", "q"], (24, 100))
+        def run_remove(keys, mode="remove", options=1):
+            """Remove's confirmation, with Discard and maybe deleting the branch, or prune's or
+            repair's: a key is refused when the screen says why, or, for enter, when the screen
+            is cancelled after it rather than confirmed."""
+            screen = FakeScreen(keys + ["q", "q", "q"], (24, 100))
             picker = self.picker(screen)
             picker.session = "s"
-            if prune:
-                run = lambda: picker.removal_options(entry("docs/missing", prunable="gone"), [], [], None, [], prune=True)
+            if mode != "remove":
+                run = lambda: picker.removal_options(entry("docs/x", prunable="gone"), [], [], None, [], mode=mode)
             else:
-                options = [{"id": "force", "checked": False, "label": [("Discard uncommitted changes", 0)]}]
-                run = lambda: picker.removal_options(entry("fix/x"), ["?? a.txt"], [], None, options)
+                choices = [{"id": "force", "checked": False, "label": [("Discard uncommitted changes", 0)]},
+                           {"id": "delete_branch", "checked": False, "label": [("Also delete the branch", 0)]}]
+                run = lambda: picker.removal_options(entry("fix/x"), ["?? a.txt"], [], "main" if options > 1 else None,
+                                                     choices[:options])
             return screen.frames, bool(said) or drive(screen, run) is None
 
-        run_prune = lambda keys: run_remove(keys, prune=True)  # noqa: E731
-
-        def run_cleanup(keys):
-            screen = FakeScreen(keys + ["q", "q"], (24, 100))
-            picker = self.picker(screen, [entry("fix/dirty", track=["remote deleted"], dirty=True),
-                                          entry("fix/done", track=["remote deleted"])])
-            picker.session, picker.terminals, picker.reload = "s", [], lambda: None
-            with patch.object(worktrees, "missing", return_value=False), \
-                    patch.object(actions, "remove_many", return_value=([], [], 0, [])):
-                drive(screen, picker.cleanup)
-            return screen.frames, bool(said)
+        def run_cleanup(entries=None):
+            def run(keys):
+                screen = FakeScreen(keys + ["q", "q", "q"], (24, 100))
+                picker = self.picker(screen, entries or [entry("fix/dirty", track=["remote deleted"], dirty=True),
+                                                         entry("fix/done", track=["remote deleted"])])
+                picker.session, picker.terminals, picker.reload = "s", [], lambda: None
+                with missing, patch.object(actions, "remove_many", return_value=([], [], 0, [])):
+                    drive(screen, picker.cleanup)
+                return screen.frames, bool(said)
+            return run
 
         cwd, branches = self.setup_branches()
 
         def run_new(keys, branches=branches):
-            screen = FakeScreen(keys + ["\x1b"] * 3, (24, 100))
+            screen = FakeScreen(keys + ["\x1b"] * 3 + ["q"] * 2, (24, 100))
             picker = self.picker(screen)
             picker.branches = lambda: branches
             picker.create_and_open = picker.open_checked_out = act
@@ -2799,8 +2849,9 @@ class WorktreeTests(unittest.TestCase):
         bases = [{"ref": "HEAD", "label": "origin/main", "note": "default branch"},
                  {"ref": "HEAD", "label": "main", "note": "current branch"}]
         run_new_two = lambda keys: run_new(keys, {**branches, "bases": bases})  # noqa: E731
+        run_new_none = lambda keys: run_new(keys, {**branches, "suggestions": []})  # noqa: E731
 
-        presses = {"enter": ["\n"], "s": ["s"], "dd": ["d", "d"], "c": ["c"]}
+        presses = {"enter": ["\n"], "s": ["s"], "dd": ["d", "d"], "c": ["c"], "j/k": ["j", "k"]}
         # The list's keys refused on each row: with every kind of worktree, then with nothing
         # cleanup can act on. dd prunes a missing folder, unless it's locked.
         refusals = [{"dd"}, set(), {"dd"}, {"enter", "s"}, set(), set(), {"enter", "s", "dd"}, {"dd", "c"}, {"c"}]
@@ -2809,8 +2860,14 @@ class WorktreeTests(unittest.TestCase):
                       key, keys, key in refused) for (entries, i), refused in zip(rows, refusals)
                      for key, keys in presses.items()]
         scenarios += [
+            ("list, the main checkout alone", run_list(alone), [], "j/k", ["j", "k"], True),
+            ("list, the main checkout alone", run_list(alone), [], "dd", ["d", "d"], True),
             ("list filter on a missing folder", run_list(everything), ["/"] + list("docs"), "enter", ["\n"], True),
             ("list filter", run_list(everything), ["/"] + list("plain"), "enter", ["\n"], False),
+            ("list filter, one match", run_list(everything), ["/"] + list("plain"), "↑/↓",
+             [curses.KEY_DOWN, curses.KEY_UP], True),
+            ("list filter, two matches", run_list(everything), ["/"] + list("fix"), "↑/↓",
+             [curses.KEY_DOWN, curses.KEY_UP], False),
             ("list filter, typing", run_list(everything), ["/"] + list("plain"), "esc", ["\x1b"], False),
             ("list filter, done typing", run_list(everything), ["/"] + list("plain") + ["\x1b"], "esc", ["\x1b"],
              False),
@@ -2819,15 +2876,35 @@ class WorktreeTests(unittest.TestCase):
             ("remove, discard unchecked", run_remove, [], "enter", ["\n"], True),
             ("remove, discard checked", run_remove, [" "], "enter", ["\n"], False),
             ("remove, discard unchecked, toggled twice", run_remove, [" ", " "], "enter", ["\n"], True),
-            ("prune", run_prune, [], "enter", ["\n"], False),
-            ("prune, no options", run_prune, [], "space", [" "], True),
-            ("cleanup, on a dirty row", run_cleanup, [], "space", [" "], True),
-            ("cleanup, on a clean row", run_cleanup, ["j"], "space", [" "], False),
-            ("cleanup, one checked", run_cleanup, [], "enter", ["\n"], False),
-            ("cleanup, none checked", run_cleanup, ["j", " "], "enter", ["\n"], True),
+            ("remove, one option", run_remove, [], "j/k", ["j", "k"], True),
+            ("remove, two options", lambda keys: run_remove(keys, options=2), [], "j/k", ["j", "k"], False),
+            ("remove", run_remove, [], "tab", ["\t"], False),
+            ("prune", lambda keys: run_remove(keys, "prune"), [], "enter", ["\n"], False),
+            ("prune, no options", lambda keys: run_remove(keys, "prune"), [], "space", [" "], True),
+            ("prune, no options", lambda keys: run_remove(keys, "prune"), [], "j/k", ["j", "k"], True),
+            ("prune", lambda keys: run_remove(keys, "prune"), [], "tab", ["\t"], False),
+            ("repair", lambda keys: run_remove(keys, "repair"), [], "enter", ["\n"], False),
+            ("repair, no options", lambda keys: run_remove(keys, "repair"), [], "space", [" "], True),
+            ("cleanup, on a dirty row", run_cleanup(), ["k"], "space", [" "], True),
+            ("cleanup, on a clean row", run_cleanup(), [], "space", [" "], False),
+            ("cleanup, one checked", run_cleanup(), [], "enter", ["\n"], False),
+            ("cleanup, none checked", run_cleanup(), [" "], "enter", ["\n"], True),
+            ("cleanup", run_cleanup(), [], "j/k", ["j", "k"], False),
+            ("cleanup", run_cleanup(), [], "tab", ["\t"], False),
+            ("cleanup, one finished, and its branch", run_cleanup([entry("fix/done", track=["remote deleted"])]), [],
+             "j/k", ["j", "k"], False),
+            ("cleanup, one missing, no branch to delete", run_cleanup([entry("docs/gone", prunable="gone")]), [],
+             "j/k", ["j", "k"], True),
+            ("cleanup, one missing, unchecked", run_cleanup([entry("docs/gone", prunable="gone")]), [],
+             "enter", ["\n"], True),
             ("new worktree, no text", run_new, [], "enter", ["\n"], True),
             ("new worktree, no text, on a branch", run_new, [curses.KEY_DOWN], "enter", ["\n"], False),
+            ("new worktree, no text", run_new, [], "↑/↓", [curses.KEY_DOWN, curses.KEY_UP], False),
+            ("new worktree, no text", run_new, [], "tab", ["\t"], True),
+            ("new worktree, no text, on a branch", run_new, [curses.KEY_DOWN], "tab", ["\t"], False),
+            ("new worktree, no branches", run_new_none, [], "↑/↓", [curses.KEY_DOWN, curses.KEY_UP], True),
             ("new worktree, a new name", run_new_two, list("fix it"), "enter", ["\n"], False),
+            ("new worktree, a new name", run_new_two, list("fix it"), "tab", ["\t"], False),
             ("new worktree, a new name from the second base", run_new_two, list("fix it") + [curses.KEY_DOWN],
              "enter", ["\n"], False),
             ("new worktree, a branch", run_new, list("existing"), "enter", ["\n"], False),
@@ -2835,18 +2912,232 @@ class WorktreeTests(unittest.TestCase):
              ["\n"], True),
             ("new worktree, checked out", run_new, list("main"), "enter", ["\n"], False),
             ("new worktree, can't be created", run_new, list("origin/new-idea"), "enter", ["\n"], True),
+            ("new worktree, can't be created", run_new, list("origin/new-idea"), "tab", ["\t"], True),
             ("new worktree, half typed", run_new, list("fix/"), "enter", ["\n"], True),
+            ("new worktree, half typed with a dash", run_new, list("fix-"), "enter", ["\n"], True),
             ("new worktree, nothing usable", run_new, list("///"), "enter", ["\n"], True),
             ("new worktree, ctrl+g on the create row", run_new, [], "ctrl+g", ["\x07"], True),
         ]
+
+        def text(frame):
+            return ["".join(segment[0] for segment in row) for row in frame]
+
         with patch.object(ui.Flash, "set", record):
             for name, run, before, key, keys, expected in scenarios:
                 del said[:], acted[:]
                 frames, refused = run(before + keys)
                 listed = self.footer_keys(frames[len(before)])
+                after = frames[len(before) + 1:]
+                moves = key in ("j/k", "↑/↓")
+                if moves:  # It acts when either way moves something.
+                    refused = text(frames[len(before)]) == text(after[0]) == text(after[1])
+                elif key == "tab":  # It acts when it shows the details.
+                    refused = not any("— details" in line for frame in after[:1] for line in text(frame)[:2])
                 with self.subTest(name, key=key):
                     self.assertEqual(refused, expected, (listed, said))
-                    self.assertEqual(key in listed, not refused, (listed, said))
+                    if key == "tab" and not refused:
+                        pass  # Listed only when something's cut, which none of these are.
+                    else:
+                        self.assertEqual(key in listed, not refused, (listed, said))
+                    if refused and key in ("tab", "space", "dd", "s", "c"):
+                        self.assertTrue(said, "refused without saying why")
+                    if key == "dd" and refused:  # Refused at the first d, not after a second.
+                        self.assertFalse(any("press d again" in line for line in text(after[0])), text(after[0]))
+
+
+    def test_enter_acts_only_on_a_frame_that_was_drawn(self):
+        """Pasted text ending in a newline, such as "login\n", isn't drawn while it arrives; its
+        enter draws the frame instead of acting on it, so the enter pressed after seeing it acts.
+        The confirmations drop an enter that was waiting before they were drawn, too."""
+        git(self.repo, "branch", "feat/login-flow")
+        cwd, branches = self.setup_branches()
+
+        def new(keys):
+            screen = Typed(keys + [PAUSE, "\x1b", "\x1b"], (24, 100))
+            picker = self.picker(screen)
+            picker.branches = lambda: branches
+            made = []
+            picker.create_and_open = lambda cwd, plan: made.append(plan["branch"])
+            with patch.object(worktrees, "setup_command", return_value=""):
+                screen.drive(lambda: picker.new_screen(root=True))
+            return screen, made
+
+        screen, made = new(list("login") + ["\n"])
+        self.assertEqual(made, [])  # Nothing was checked out unseen,
+        rows = screen.text(0)  # and the first frame drawn is the one enter would have acted on.
+        self.assertEqual(self.search_text(rows), "login")
+        self.assertTrue(any(line.startswith("› feat/login-flow") for line in rows), rows)
+        self.assertIn("Checks out".ljust(screen_new.PLAN_COLUMN) + "feat/login-flow", rows)
+        self.assertEqual(new(list("login") + ["\n", PAUSE, "\n"])[1], ["feat/login-flow"])  # Seen, then pressed.
+        self.assertEqual(new(list("login") + ["\n", "\n"])[1], [])  # Every enter in a paste is dropped.
+
+        entry = {"name": "fix/x", "worktree": str(self.repo), "branch": "refs/heads/fix/x"}
+
+        def remove(keys):
+            screen = Typed(keys + [PAUSE, "q"], (24, 100))
+            picker = self.picker(screen)
+            picker.session = "s"
+            options = [{"id": "force", "checked": False, "label": [("Discard uncommitted changes", 0)]}]
+            return screen.drive(lambda: picker.removal_options(entry, ["?? a.txt"], [], None, options))
+
+        self.assertIsNone(remove([" ", "\n"]))  # Checked and confirmed in one burst: the q after cancels.
+        self.assertEqual(remove([" ", PAUSE, "\n"]), {"force"})
+        finished = [{"name": "fix/done", "worktree": "/w/done", "track": ["remote deleted"], "dirty": False}]
+
+        def clean(keys):
+            screen = Typed(keys + [PAUSE, "q"], (24, 100))
+            picker = self.picker(screen, finished)
+            picker.session, picker.terminals, picker.reload = "s", [], lambda: None
+            with patch.object(worktrees, "missing", return_value=False), \
+                    patch.object(actions, "remove_many", return_value=(["fix/done"], [], 0, [])) as many:
+                screen.drive(picker.cleanup)
+            return many.called
+
+        self.assertFalse(clean(["\n"]))  # As c opened it, such as from "c\n" typed at once.
+        self.assertTrue(clean([PAUSE, "\n"]))
+
+    def test_remove_keeps_a_branch_that_gained_commits_while_the_screen_was_open(self):
+        other = self.add("merged", "merged")
+        entry = {**worktrees.worktrees(str(self.repo))[1], "name": "merged"}
+        self.assertEqual(worktrees.merged_into(str(self.repo), entry), "main")  # So the screen offered it.
+        git(other, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "late")
+        with patch.object(tabs, "close_panes"):
+            deleted, problems = actions.remove_worktree(str(self.repo), "s", entry, [], delete_branch=True)
+        self.assertFalse(other.exists())
+        self.assertFalse(deleted)
+        self.assertEqual(problems, ["its branch was kept: it has commits not in main now"])
+        git(self.repo, "rev-parse", "--verify", "refs/heads/merged")  # The late commit is still there.
+        # The confirmation's message says what was done, then that.
+        screen = FakeScreen([" ", "\n"], (24, 100))
+        again = self.add("merged-too", "merged-too")
+        entry = {**next(e for e in worktrees.worktrees(str(self.repo)) if e.get("branch") == "refs/heads/merged-too"),
+                 "name": "merged-too"}
+        picker = self.picker(screen, [entry])
+        picker.session, picker.terminals, picker.reload = "s", [], lambda: None
+
+        def late(*args, **kwargs):  # A commit lands as the screen asks.
+            git(again, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "late")
+            return original(*args, **kwargs)
+
+        original = screen_remove.RemovalScreens.removal_options
+        with patch.object(screen_remove.RemovalScreens, "removal_options", late), patch.object(tabs, "close_panes"):
+            drive(screen, lambda: picker.remove(entry))
+        self.assertEqual(picker.flash.text,
+                         "Removed merged-too, but its branch was kept: it has commits not in main now.")
+        git(self.repo, "rev-parse", "--verify", "refs/heads/merged-too")
+
+    def test_a_new_branch_starts_from_the_branch_its_row_names(self):
+        cwd, branches = self.two_bases()
+        current = branches["bases"][1]
+        self.assertEqual((current["label"], current["ref"]), ("main", "refs/heads/main"))
+        main = git(cwd, "rev-parse", "main").stdout
+        # The main checkout moves to another branch after the screen loaded: the row still says
+        # main, so the new branch starts there, not where HEAD is when enter is pressed.
+        git(cwd, "checkout", "-q", "-b", "elsewhere")
+        git(cwd, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "elsewhere")
+        plan = branching.from_base(branching.plan_branch(cwd, branches, "from-current", None, branches["bases"][0]),
+                                   current)
+        branching.create_worktree(cwd, plan)
+        self.assertEqual(git(cwd, "rev-parse", "from-current").stdout, main)
+        # A tag named like the branch doesn't stand in for it.
+        git(cwd, "tag", "main", "elsewhere")
+        plan = branching.from_base(branching.plan_branch(cwd, branches, "after-tag", None, branches["bases"][0]),
+                                   current)
+        branching.create_worktree(cwd, plan)
+        self.assertEqual(git(cwd, "rev-parse", "after-tag").stdout, main)
+        # Detached, it's the commit, by its whole hash.
+        git(cwd, "checkout", "-q", "--detach", "elsewhere")
+        bases = branching.load_branches(cwd, worktrees.worktrees(cwd))["bases"]
+        sha = git(cwd, "rev-parse", "HEAD").stdout.decode().strip()
+        self.assertEqual((bases[-1]["ref"], bases[-1]["label"], bases[-1]["note"]), (sha, sha[:len(bases[-1]["label"])],
+                                                                                      "current commit"))
+
+    def test_a_worktree_whose_git_file_is_gone_is_broken_and_dd_repairs_it(self):
+        lost, lost_too = self.add("lost", "fix/lost"), self.add("lost-too", "fix/lost-too")
+        gone = self.add("gone", "fix/gone")
+        for path in (lost, lost_too):
+            (path / ".git").unlink()  # Git calls each prunable, though its folder is there.
+        (lost / "work.txt").write_text("keep")
+        shutil.rmtree(gone)
+        entries = worktrees.base_entries(str(self.repo), details=False)
+        named = {e["name"]: e for e in entries}
+        self.assertTrue(all("prunable" in named[n] for n in ("fix/lost", "fix/lost-too", "fix/gone")))
+        self.assertEqual([n for n, e in named.items() if worktrees.broken(e)], ["fix/lost", "fix/lost-too"])
+        self.assertEqual([n for n, e in named.items() if worktrees.missing(e)], ["fix/gone"])  # Its folder is gone.
+        self.assertIsNone(worktrees.is_dirty(named["fix/lost"]))  # Git can't read its status.
+        for e in entries:
+            e.update(dirty=worktrees.is_dirty(e), open=False, time=10 if e["name"] == "fix/lost" else 1)
+        # Not cleanup's: Git refuses to remove it, and pruning would leave its folder.
+        self.assertEqual([e["name"] for e in screen_remove.candidates(entries)], ["fix/gone"])
+        # The list labels it, says what's wrong, and offers dd to repair it, but not enter or s.
+        screen = FakeScreen(["j", "d", "q", "q"], (24, 140))
+        picker = self.picker(screen, entries)
+        picker.terminals = []
+        drive(screen, picker.list_screen)
+        rows = screen.text(1)
+        self.assertTrue(any(line.startswith("› ") and "fix/lost " in line and "broken" in line for line in rows),
+                        rows)
+        self.assertIn("1 missing · 2 broken", rows[1])
+        self.assertIn(screen_list.BROKEN, " ".join(" ".join(rows).split()))
+        footer = self.footer_keys(screen.frames[1])
+        self.assertTrue("dd" in footer and "enter" not in footer and "s" not in footer, footer)
+        self.assertIn("dd repair", rows[-1])
+        self.assertIn("c clean up", rows[-1])  # For the missing one, though not for these.
+        self.assertIn("d… press d again to repair fix/lost", screen.text(2))
+        # The confirmation lists the other one Git repairs at the same time; enter repairs both,
+        # keeping the folder's files.
+        screen = FakeScreen(["\n"], (24, 100))
+        picker = self.picker(screen, entries)
+        picker.reload = lambda: None
+        drive(screen, lambda: picker.remove(named["fix/lost"]))
+        rows = screen.text(0)
+        self.assertTrue(rows[1].startswith("Repair worktree"))
+        self.assertIn("ALSO REPAIRED (1)", " ".join(rows))
+        self.assertIn("  fix/lost-too", rows)
+        self.assertIn("enter repair", rows[-1])
+        self.assertEqual(picker.flash.text, "Repaired fix/lost and 1 other worktree; Git can use them again.")
+        self.assertEqual((lost / "work.txt").read_text(), "keep")
+        listed = {e.get("branch"): e for e in worktrees.worktrees(str(self.repo))}
+        self.assertEqual([b for b, e in listed.items() if "prunable" in e], ["refs/heads/fix/gone"])
+        self.assertEqual(worktrees.changed_files({"worktree": str(lost)}), ["?? work.txt"])  # Git can use it.
+        # A missing one is still pruned rather than repaired, and its folder coming back is refused.
+        gone_entry = named["fix/gone"]
+        gone.mkdir()
+        self.assertTrue(worktrees.broken(gone_entry) and not worktrees.missing(gone_entry))
+        with self.assertRaisesRegex(RuntimeError, "folder is back"):
+            actions.prune_worktree(str(self.repo), gone_entry)
+
+    def test_new_worktree_pins_the_plan_above_the_footer(self):
+        git(self.repo, "branch", "feat/login-flow")
+        cwd, branches = self.setup_branches()
+        for size in ((32, 120), (22, 100), (16, 50)):
+            # A branch selected with every branch listed, then with only the one the text matches.
+            frames = self.new_worktree_frames([curses.KEY_DOWN] + list("login") + ["\x1b", "\x1b"], branches, size,
+                                              setup="make setup")
+            planned = [f for f in frames if self.plan_start(f) is not None]
+            gap = 1 if size[0] >= 22 else 0  # A blank row between the plan and the footer, with room.
+            with self.subTest(size=size):
+                self.assertEqual(len(planned), 6)
+                for rows in planned:  # Wherever the list ends, the plan ends right above the footer.
+                    self.assertTrue(rows[-2 - gap].startswith("Then runs"), rows)
+                    self.assertEqual(rows[-2:-1], [""] if gap else [rows[-2]], rows)
+                typed = next(f for f in frames if self.search_text(f) == "login")
+                self.assertIn(screen_new.PROMPT + "login  1 of 3", typed)  # How many match, right after the text.
+
+    def test_state_column_has_room_for_changes_and_stays_put_while_statuses_load(self):
+        loading = [{"name": "main", "worktree": "/w/repo", "main": True, "track": [], "dirty": util.PENDING,
+                    "open": util.PENDING},
+                   {"name": "fix/a", "worktree": "/w/repo-a", "track": [], "dirty": util.PENDING, "open": util.PENDING},
+                   {"name": "fix/b", "worktree": "/w/repo-b", "track": [], "dirty": util.PENDING, "open": util.PENDING}]
+        loaded = [{**loading[0], "dirty": False, "open": False}, {**loading[1], "dirty": True, "open": False},
+                  {**loading[2], "dirty": False, "open": False}]
+        with patch.object(worktrees, "missing", return_value=False):
+            # A row with a label doesn't add the loading mark, which would make the column wider.
+            self.assertEqual([t for t, _ in ui.state_cell(loading[0])], [ui.label("main")[0]])
+            self.assertEqual([t for t, _ in ui.state_cell(loading[1])], ["…"])
+            before, after = ui.column_widths(loading, 120), ui.column_widths(loading[:1] + loaded[1:], 120)
+            self.assertEqual(before["STATE"], ui.cell_width([ui.label("dirty")]))  # As wide as changes, no wider.
+            self.assertEqual(before, after)  # Nothing shifts when changes arrive.
 
 
 if __name__ == "__main__":

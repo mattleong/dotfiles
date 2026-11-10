@@ -27,6 +27,18 @@ def normalize_branch(value):
     return "HEAD-branch" if branch == "HEAD" else branch
 
 
+def left_out(text):
+    """The end of a half-typed name that normalize_branch leaves out, such as / in fix/, - in fix-,
+    or @{ in fix@{, on the way to a longer name; or "" when the name ends as typed. Trailing spaces
+    don't count. Creating the branch then would make one, fix, that wasn't meant."""
+    typed = text.strip()
+    name = normalize_branch(typed)
+    for size in (1, 2):  # @{ is left out as a pair.
+        if name and len(typed) > size and normalize_branch(typed[:-size]) == name:
+            return typed[-size:]
+    return ""
+
+
 @functools.lru_cache(maxsize=None)
 def worktree_root_key(cwd):
     common = util.git_text(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -63,6 +75,7 @@ def load_branches(cwd, entries, now=None):
     which it is."""
     checked_out = {e["branch"].removeprefix("refs/heads/"): e["worktree"] for e in entries if "branch" in e}
     missing = {e["worktree"] for e in entries if worktrees.missing(e)}
+    broken = {e["worktree"] for e in entries if worktrees.broken(e)}
 
     def refs(namespace):
         out = util.git_text(cwd, "for-each-ref", "--sort=-committerdate",
@@ -90,8 +103,12 @@ def load_branches(cwd, entries, now=None):
     detached = head == "HEAD"
     if detached:
         head = util.git_text(cwd, "rev-parse", "--short", "HEAD")
+    # A new branch starts from what its row names, read now, rather than from HEAD as it is when
+    # enter is pressed: the branch, by its full name, so a tag of the same name can't stand in for
+    # it, or the commit.
+    current = util.git_text(cwd, "rev-parse", "HEAD") if detached else "refs/heads/" + head
     # The default branch comes first, so new branches start from it unless you choose otherwise.
-    bases = [{"ref": "HEAD", "label": head, "note": "current commit" if detached else "current branch"}]
+    bases = [{"ref": current, "label": head, "note": "current commit" if detached else "current branch"}]
     default = worktrees.default_branch(cwd)
     if default and default != head:
         bases.insert(0, {"ref": default, "label": default, "note": "default branch"})
@@ -106,7 +123,7 @@ def load_branches(cwd, entries, now=None):
     suggestions = [s for s in available if s["time"] >= cutoff] + [s for s in remote_only if s["time"] >= cutoff]
     suggestions += older
     return {"local": local_names, "remote": remote, "remotes": remotes, "checked_out": checked_out,
-            "missing": missing, "suggestions": suggestions, "head": head, "bases": bases,
+            "missing": missing, "broken": broken, "suggestions": suggestions, "head": head, "bases": bases,
             "preferred": preferred}
 
 
@@ -174,13 +191,13 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
             # A local origin/x would make Git call origin/x ambiguous.
             return {"branch": name, "remote": split[0],
                     "error": f"A branch can't start with {split[0]}/, a remote's name; name it {split[1]}."}
-        end = text.strip()[-1:]
-        if end in ("/", "."):
-            # Half typed, such as fix/ on the way to fix/login. Git can't end a branch with either,
-            # and leaving it out would make a branch, fix, that wasn't meant; so a hint, as above.
-            return {"branch": name, "hint": True,
-                    "error": "Type the rest of the name; a branch can't end with " + (
-                        "a slash." if end == "/" else "a dot.")}
+        end = left_out(text)
+        if end:
+            # Half typed, such as fix/ on the way to fix/login, or fix- on the way to fix-login: the
+            # name leaves the end out, and would make a branch, fix, that wasn't meant; so a hint,
+            # as above.
+            what = {"/": "a slash", ".": "a dot", "-": "a dash"}.get(end, f"“{end}”")
+            return {"branch": name, "hint": True, "error": f"Type the rest of the name; it can't end with {what}."}
         clash = ref_clash(name, branches["local"])
         if clash:
             return {"branch": name, "error": f"{name} can't be a branch while {clash} exists."}
@@ -236,6 +253,9 @@ def existing_branch(name, branches):
         if path in branches.get("missing", ()):
             return {"branch": local, "missing": path,
                     "error": "It's checked out in a worktree whose folder is missing; prune it with dd in the list."}
+        if path in branches.get("broken", ()):  # Can't be opened either, as missing above.
+            return {"branch": local, "missing": path,
+                    "error": "It's checked out in a worktree whose .git file is gone; repair it with dd in the list."}
         return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path,
                 "short": "its worktree"}
     if local in branches["local"]:

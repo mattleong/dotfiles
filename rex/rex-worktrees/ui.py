@@ -21,7 +21,7 @@ ROLES = {
     "select": "cyan",  # The › pointer, input prompts, checkboxes, the spinner, the sort note.
     "live": "green",  # The current worktree's ●, tab, an open PR, success messages, the create row.
     "attention": "yellow",  # Uncommitted changes, warning headings, a key pressed where it can't act.
-    "danger": "red",  # A missing folder, errors, a closed PR, “Discard uncommitted changes”.
+    "danger": "red",  # A missing folder, a broken worktree, errors, a closed PR, “Discard uncommitted changes”.
     "finished": "magenta",  # A merged PR, a remote branch that's gone.
     "source": "blue",  # The main checkout, remotes, and the tools that made worktrees, such as rex.
     "dim": "dim",  # Metadata: ages, paths, hints, a draft PR, locked, commit hashes and authors.
@@ -375,7 +375,8 @@ def highlighted(text, hits, attr):
 # label's icon is util.ICONS under the same name. Sentences elsewhere, such as the list's summary,
 # use the same words (see word).
 LABELS = {"main": ("main", "source"), "tab": ("tab", "live"), "dirty": ("changes", "attention"),
-          "locked": ("locked", "dim"), "missing": ("missing", "danger"), "deleted": ("gone", "finished")}
+          "locked": ("locked", "dim"), "missing": ("missing", "danger"), "broken": ("broken", "danger"),
+          "deleted": ("gone", "finished")}
 
 
 def word(state):
@@ -417,9 +418,11 @@ def sync_cell(entry):
 def state_cell(entry):
     shown = [("main", entry.get("main")), ("tab", entry.get("open") is True),
              ("dirty", entry.get("dirty") is True), ("locked", "locked" in entry),
-             ("missing", worktrees.missing(entry))]
+             ("missing", worktrees.missing(entry)), ("broken", worktrees.broken(entry))]
     cell = [label(key) for key, on in shown if on]
-    if util.PENDING in (entry.get("dirty"), entry.get("open")):
+    # A row with nothing to show yet says its status is still loading; one with a label already
+    # doesn't, so the mark can't make the column wider for a moment (see column_widths).
+    if not cell and util.PENDING in (entry.get("dirty"), entry.get("open")):
         cell.append(("…", style("dim")))
     return cell
 
@@ -524,6 +527,14 @@ def column_widths(entries, space=None):
     for title, cell in CELLS:
         width = max([cell_width(cell(e)) for e in entries] + [0])
         widths[title] = max(width, len(title)) if width else 0
+    if widths["STATE"]:
+        # Room for changes, on purpose: it's the label that most often arrives after the list
+        # shows, and the columns after STATE would shift when it did. Otherwise STATE is as wide
+        # as its widest cell.
+        widths["STATE"] = max(widths["STATE"], cell_width([label("dirty")]))
+    # The tools that made worktrees, such as claude, get an untitled column of their own before
+    # the folders' names, on purpose, so the names line up under FOLDER even when only some rows
+    # have a tool; it's as wide as the longest tool's name, and left out when no row has one.
     widths["SOURCE"] = max([len(worktrees.worktree_source(e)) for e in entries] + [0])
     widths["PREFIX"] = folder_prefix(entries)
     names = max([len(folder_name(e, widths["PREFIX"])[0]) for e in entries] + [0])
@@ -719,14 +730,15 @@ def help_row(*items):
 SEARCH_MIN = 12  # The columns a filter's text keeps before a mark beside it drops out.
 
 
-def search_row(text, pos, filtering, width, placeholder="type to filter", mark="", prompt="/ "):
-    """A text input after its prompt, scrolled to keep the cursor in view, with mark, such as how
-    many rows match, dim at its right while the text keeps SEARCH_MIN columns. The list's prompt
-    is /, the key that starts its filter; a screen whose input takes every key, such as New
-    worktree, has a prompt that doesn't suggest pressing one. Returns (row, cursor column or
-    None)."""
+def search_row(text, pos, filtering, width, placeholder="type to filter", mark="", prompt="/ ", count=""):
+    """A text input after its prompt, scrolled to keep the cursor in view. count, such as how many
+    rows the text matches, goes right after the text, dim, so it reads with it, when the whole
+    text fits beside it; mark, such as the selected row's place in a list that scrolls, goes dim
+    at the right while the text keeps SEARCH_MIN columns. The list's prompt is /, the key that
+    starts its filter; a screen whose input takes every key, such as New worktree, has a prompt
+    that doesn't suggest pressing one. Returns (row, cursor column or None)."""
     if mark and width - len(mark) - len(prompt) >= SEARCH_MIN:
-        row, column = search_row(text, pos, filtering, width - len(mark) - 2, placeholder, prompt=prompt)
+        row, column = search_row(text, pos, filtering, width - len(mark) - 2, placeholder, prompt=prompt, count=count)
         return with_mark(row, mark, width), column
     if not filtering and not text:
         return [("/ to filter", style("dim"))], None
@@ -735,8 +747,10 @@ def search_row(text, pos, filtering, width, placeholder="type to filter", mark="
         room = max(1, width - len(prompt))
         placeholder = placeholder if len(placeholder) <= room else placeholder[:room - 1].rstrip() + "…"
         return [shown, (placeholder, style("dim"))], len(prompt)
+    # The text and the cursor after it come first: the count shows only where they fit whole.
+    tail = [("  " + count, style("dim"))] if count and len(prompt) + len(text) + 1 + 2 + len(count) <= width else []
     visible, column = input_view(text, pos, width - len(prompt))
-    return [shown, (visible, 0)], (len(prompt) + column if filtering else None)
+    return [shown, (visible, 0)] + tail, (len(prompt) + column if filtering else None)
 
 
 NAVIGATION_HELP = [

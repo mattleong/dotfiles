@@ -12,7 +12,8 @@ SORTS = ["recent", "state", "name"]
 def sort_entries(entries, mode):
     """Order worktrees with the main checkout first, then the rest by their latest commit, newest
     first; by state: uncommitted changes, open pull requests, the rest, finished ones, then
-    missing ones, each newest first; or by branch name. An unknown mode means the default."""
+    missing and broken ones, each newest first; or by branch name. An unknown mode means the
+    default."""
     def recent(entry):
         return -(entry.get("time") or 0)
 
@@ -20,7 +21,7 @@ def sort_entries(entries, mode):
         pr = (entry.get("pr") or {}).get("state")
         if entry.get("main"):
             return 0
-        if worktrees.missing(entry):
+        if worktrees.missing(entry) or worktrees.broken(entry):
             return 5
         if entry.get("dirty") is True:
             return 1

@@ -1,5 +1,5 @@
-"""Removing worktrees: one at a time, pruning one whose folder is missing, and cleaning up
-finished and missing ones."""
+"""Removing worktrees: one at a time, pruning one whose folder is missing, repairing a broken one,
+and cleaning up finished and missing ones."""
 import actions
 import keyboard
 import matching
@@ -106,11 +106,23 @@ def candidates(entries):
             or (worktrees.missing(e) and not worktrees.removal_problem(e))]
 
 
-def cleanable(entries):
-    """What cleanup removes or prunes if enter is pressed as it opens, which the list's c counts:
-    every candidate but the ones with uncommitted changes, which start unchecked and can't be
-    checked. With none, c says why rather than starting."""
+def checkable(entries):
+    """The candidates cleanup can check: every one but those with uncommitted changes, which it
+    never discards. With none, c says why rather than starting."""
     return [e for e in candidates(entries) if e.get("dirty") is not True]
+
+
+def starts_checked(entry):
+    """Whether cleanup starts with a candidate checked: not one with uncommitted changes, which
+    can't be checked, nor one whose folder is missing, which may be away only for now, as on a
+    drive that isn't mounted, so pruning it is left for you to choose."""
+    return entry.get("dirty") is not True and not worktrees.missing(entry)
+
+
+def cleanable(entries):
+    """What cleanup removes if enter is pressed as it opens, which the list's c counts: the
+    candidates that start checked (see starts_checked)."""
+    return [e for e in candidates(entries) if starts_checked(e)]
 
 
 def cleanup_label(entry):
@@ -131,11 +143,15 @@ def cleanup_role(entry):
 PRUNE_TEXT = "Its folder is missing, so pruning drops only Git's record of it."
 
 
+# Why cleanup starts with a missing worktree unchecked (see starts_checked).
+UNCHECKED_TEXT = "It starts unchecked, since its folder may be away only for now, as on a drive that isn't mounted."
+
+
 def cleanup_reason_text(entry):
     """Why a worktree is offered for cleanup, as a sentence; for a missing one, what pruning it
-    does."""
+    does, and why it starts unchecked."""
     if worktrees.missing(entry):
-        return PRUNE_TEXT + (" Its branch is kept." if "branch" in entry else "")
+        return PRUNE_TEXT + (" Its branch is kept." if "branch" in entry else "") + " " + UNCHECKED_TEXT
     reason = worktrees.cleanup_reason(entry) or ""
     if reason.endswith(" merged"):
         return f"Its pull request {reason}."
@@ -175,9 +191,15 @@ def cleanup_text(entry, closes, session="", label=""):
     return cleanup_reason_text(entry) + (" " + closing if closing else ""), ui.style("dim")
 
 
+def deletable(items):
+    """How many of cleanup's rows the option to delete branches can apply to: ones it can check
+    and remove, rather than prune. With none, it isn't offered."""
+    return sum(not worktrees.missing(i["entry"]) and i["entry"].get("dirty") is not True for i in items)
+
+
 def branch_option(count, prunes=False):
-    """The cleanup option to delete the branches, and what it does, for count candidates; prunes
-    says whether some are missing, whose branches pruning keeps."""
+    """The cleanup option to delete the branches, and what it does, for count rows it can apply to
+    (see deletable); prunes says whether some are missing, whose branches pruning keeps."""
     kept = "; pruned ones keep theirs." if prunes else "."
     if count == 1:
         return "Also delete its branch", "Deletes the worktree's branch when it has no unmerged commits."
@@ -250,13 +272,25 @@ def note_rows(text, width, indent, tone):
     return [[(" " * indent + line, tone)] for line in ui.wrap(text, width - indent)]
 
 
+# What repairing a broken worktree does (see actions.repair_worktree).
+REPAIR_TEXT = ("Its folder is there, but its .git file is gone, so Git can't use it. Repairing writes the file "
+               "again (git worktree repair); the folder's files stay as they are.")
+# What each kind of confirmation does, as its title, enter's label, the busy message, and a phrase
+# for saying it has no options (see removal_options).
+MODES = {"remove": ("Remove worktree", "remove", "removing it"),
+         "prune": ("Prune missing worktree", "prune", "pruning it"),
+         "repair": ("Repair worktree", "repair", "repairing it")}
+
+
 class RemovalScreens:
     def remove(self, entry):
         """Confirm and remove a worktree, one that worktrees.removal_problem allows (the list's
-        keys check it), or prune it when its folder is missing. Returns True if the picker should
-        exit."""
+        keys check it), or prune it when its folder is missing, or repair it when it's broken.
+        Returns True if the picker should exit."""
         if worktrees.missing(entry):
             return self.prune(entry)
+        if worktrees.broken(entry):
+            return self.repair(entry)
         try:
             files = worktrees.changed_files(entry)
             closing = tabs.panes_to_close(self.terminals_now(), [entry["worktree"]])
@@ -277,6 +311,7 @@ class RemovalScreens:
             return False
         name = entry["name"]
         try:
+            # The branch is deleted only if it's still merged then (see actions.remove_worktree).
             deleted, problems = self.busy(f"Removing {name}…", lambda: actions.remove_worktree(
                 self.repo, self.session, entry, closing, force="force" in checked,
                 delete_branch="delete_branch" in checked))
@@ -295,7 +330,7 @@ class RemovalScreens:
         """Confirm and prune a worktree whose folder is missing: drop Git's record of it, and
         nothing else, so its branch is kept (see actions.prune_worktree). Returns True if the
         picker should exit."""
-        if self.removal_options(entry, [], [], None, [], prune=True) is None:
+        if self.removal_options(entry, [], [], None, [], mode="prune") is None:
             return False
         try:
             self.busy(f"Pruning {entry['name']}…", lambda: actions.prune_worktree(self.repo, entry))
@@ -306,16 +341,39 @@ class RemovalScreens:
         self.reload()
         return False
 
-    def removal_options(self, entry, files, closing, merged, options, kept=None, prune=False):
-        """Confirm removing a worktree, or with prune, pruning one whose folder is missing. Returns
-        the set of checked option ids, or None if cancelled. Both read the same way: what will
-        go, then what that costs (its uncommitted changes and the panes that will close, lists that
-        shorten to fit), then the options and the notes under them, which always show, as do the
-        key hints. kept says why the branch is kept, when it can't be deleted (see kept_reason)."""
-        title = "Prune missing worktree" if prune else "Remove worktree"
-        stdscr, cursor, pending, nudged = self.stdscr, 0, None, False
+    def repair(self, entry):
+        """Confirm and repair a broken worktree: write its .git file again, so Git can use it, with
+        its files as they are (see actions.repair_worktree). Git repairs every other worktree
+        without its .git file too, so the confirmation lists them. Returns True if the picker
+        should exit."""
+        also = [e for e in self.entries
+                if e is not entry and e["worktree"] != entry["worktree"] and worktrees.unlinked(e)]
+        if self.removal_options(entry, [], [], None, [], mode="repair", also=also) is None:
+            return False
+        try:
+            self.busy(f"Repairing {entry['name']}…", lambda: actions.repair_worktree(self.repo, entry))
+        except (RuntimeError, OSError) as error:
+            self.say(f"{entry['name']} wasn't repaired: {error}")
+        else:
+            others = sum(not worktrees.unlinked(e) for e in also)
+            self.say(f"Repaired {entry['name']}" + (f" and {plural(others, 'other worktree')}; Git can use them again."
+                                                    if others else "; Git can use it again."), "live")
+        self.reload()
+        return False
+
+    def removal_options(self, entry, files, closing, merged, options, kept=None, mode="remove", also=()):
+        """Confirm removing a worktree, or pruning one whose folder is missing (mode "prune"), or
+        repairing a broken one (mode "repair"), which also repairs the worktrees in also. Returns
+        the set of checked option ids, or None if cancelled. Each reads the same way: what will
+        go, or change, then what that costs (its uncommitted changes and the panes that will close,
+        lists that shorten to fit), then the options and the notes under them, which always show,
+        as do the key hints. kept says why the branch is kept, when it can't be deleted (see
+        kept_reason). Enter acts only on what was on screen: one pressed before the screen was
+        drawn, such as in pasted text, is dropped."""
+        title, verb, doing = MODES[mode]
+        stdscr, cursor, pending, nudged, flash = self.stdscr, 0, None, False, ui.Flash()
         while True:
-            keyboard.set_timeout(stdscr, -1)
+            keyboard.set_timeout(stdscr, flash.wait(-1))
             height, _ = stdscr.getmaxyx()
             width = ui.space(stdscr)
             checked = {o["id"] for o in options if o["checked"]}
@@ -327,16 +385,23 @@ class RemovalScreens:
                 they don't all fit, each list keeps at least a line saying how many, and tab shows
                 them all, in full. cue marks a cut tab name (see closing_rows)."""
                 path = [[(line, ui.style("dim"))] for line in ui.wrap_path(util.tilde(entry["worktree"]), width)]
-                if prune:  # Labeled as in the list, after the path where it fits.
-                    tag, role = ui.label("missing")
+                if mode != "remove":  # Labeled as in the list, after the path where it fits.
+                    tag, role = ui.label("missing" if mode == "prune" else "broken")
                     if len(ui.row_text(path[-1])) + 2 + len(tag) <= width:
                         path[-1] = path[-1] + [("  " + tag, role)]
                     else:
                         path.append([(tag, role)])
                 body = [ui.fixed(*[[(line, ui.style("bold"))] for line in ui.wrap_path(entry["name"], width)]),
                         ui.extra(*path), ui.GAP]
-                if prune:
-                    body += [ui.fixed(*[[(line, 0)] for line in ui.wrap(PRUNE_TEXT, width)]), ui.GAP]
+                if mode != "remove":
+                    text = PRUNE_TEXT if mode == "prune" else REPAIR_TEXT
+                    body += [ui.fixed(*[[(line, 0)] for line in ui.wrap(text, width)]), ui.GAP]
+                if also:
+                    body += [ui.items([[("  " + line, 0)] for e in also for line in (
+                        ui.wrap_path(e["name"], width - 2) if full else [e["name"]])],
+                        heading=ui.section(f"Also repaired ({len(also)})", "Git repairs them all at once"),
+                        summary=summary_row(plural(len(also), "other worktree") + " repaired too"), hint=LIST_HINT),
+                        ui.GAP]
                 if files:
                     body += [ui.items(file_rows(files, width, full), heading=ui.section(
                         f"Uncommitted changes ({len(files)})", tone="attention"),
@@ -357,7 +422,9 @@ class RemovalScreens:
                         tone = ui.style("attention" if nudged and not option["checked"] else "dim")
                         option_rows += note_rows(DISCARD_CHECKED if option["checked"] else DISCARD_HINT,
                                                  width, LABEL_AT, tone)
-                notes = [kept or "The branch will be kept."] if not merged and "branch" in entry else []
+                # Repairing leaves the branch alone, so there's nothing to say about it.
+                about = not merged and "branch" in entry and mode != "repair"
+                notes = [kept or "The branch will be kept."] if about else []
                 notes = [row for note in notes for row in note_rows(note, width, LABEL_AT if options else 0,
                                                                     ui.style("dim"))]
                 # A blank row between the options and the notes, even in a short pane, so a note
@@ -367,14 +434,15 @@ class RemovalScreens:
                 return body + ([ui.fixed(*option_rows)] if option_rows else []) + ([ui.fixed(*notes)] if notes else [])
 
             top = [ui.header(title, self.label), []]
-            room = height - ui.margin(height) - len(top) - 1
+            status = flash.rows(width)  # Why a key can't act.
+            room = height - ui.margin(height) - len(top) - len(status) - 1
             body = parts(width)
             details = ui.abridged(body, parts(width, True), room, width)
             keys = ui.Keys()
             keys.add("j/k", "move", rank=3, can=len(options) > 1)
-            keys.add("space", "toggle", can=bool(options))
+            keys.add("space", "toggle", why="" if options else f"Nothing to check: {doing} has no options.")
             # With Discard unchecked, enter makes the hint under it stand out, rather than saying why.
-            keys.add("enter", "prune" if prune else "remove", can=not discard)
+            keys.add("enter", verb, can=not discard)
             keys.add("tab", "details" if details else "", rank=1)  # Always works; listed when something's cut.
             keys.add("?", "help", rank=2)
             keys.add("q", "cancel")
@@ -384,24 +452,32 @@ class RemovalScreens:
                 # taking a row for it only when no list says “(tab lists all)” already.
                 listed = any("(tab lists" in ui.row_text(row) for row in ui.fit_parts(body, room))
                 body = parts(width, cue=True if listed else "always")
-            ui.render(stdscr, ui.compose(height, top, ui.fit_parts(body, room), [footer]))
+            # Keys already waiting were pressed before this frame could be seen.
+            ahead = keyboard.pending_input(stdscr)
+            ui.render(stdscr, ui.compose(height, top, ui.fit_parts(body, room), status + [footer]))
             key = keyboard.read_key(stdscr)
             if key is None:
                 continue
             nudged = False
+            flash.clear()
             if key in keyboard.CLOSE:
                 return None
             new_cursor, pending = keyboard.motion(key, cursor, len(options), len(options), pending)
             if new_cursor is not None:
                 cursor = new_cursor
-            elif key == " " and not keys.refused("space"):
-                options[cursor]["checked"] = not options[cursor]["checked"]
+            elif key == " ":
+                if not keys.refused("space", lambda why: flash.set(why, "attention")):
+                    options[cursor]["checked"] = not options[cursor]["checked"]
             elif key == "\t":
                 ui.show_details(stdscr, title, parts)
             elif key == "?":
-                if prune:
+                if mode == "prune":
                     actions_help = [("enter", "prune: drop Git's record of the worktree, whose folder is missing; "
                                               "its branch is kept, and nothing else changes")]
+                elif mode == "repair":
+                    actions_help = [("enter", "repair: write the worktree's .git file again (git worktree repair), "
+                                              "so Git can use it; the folder's files stay as they are, and every "
+                                              "other worktree without its .git file is repaired too")]
                 else:
                     actions_help = [
                         ("j / k", "move between the options"),
@@ -411,6 +487,8 @@ class RemovalScreens:
                     ]
                 ui.show_help(stdscr, title, [("Keys", actions_help + [ui.DETAILS_HELP, ui.CLOSE_HELP])])
             elif key in keyboard.ENTER:
+                if ahead:  # Not confirmed by someone who saw the screen: it's drawn again instead.
+                    continue
                 if keys.refused("enter"):
                     nudged = True
                     cursor = next(i for i, o in enumerate(options) if o["id"] == "force")  # So space checks it.
@@ -419,15 +497,15 @@ class RemovalScreens:
 
     def cleanup(self):
         """Offer to remove every finished worktree, and prune every missing one, at once. Returns
-        True if the picker should exit. With nothing it can remove (see cleanable), it says why
-        instead."""
+        True if the picker should exit. With nothing it can check (see checkable), it says why
+        instead. Enter acts only on what was on screen, as in removal_options."""
         offered = candidates(matching.sort_entries(self.entries, self.sort))  # In the list's order.
         if not offered:
             note = " (pull requests are still loading)" if self.prs_loading else ""
             self.refuse("No worktrees to clean up: none has a merged pull request, a remote branch that's gone, "
                         "or a missing folder" + note + ".")
             return False
-        if not cleanable(offered):  # Every one has uncommitted changes.
+        if not checkable(offered):  # Every one has uncommitted changes.
             if len(offered) == 1:
                 self.reveal = offered[0]  # The list selects it, so dd removes it.
             self.refuse(dirty_refusal(offered, ui.space(self.stdscr)))
@@ -439,11 +517,14 @@ class RemovalScreens:
         # Pruning closes nothing: the folder is already gone, and only Git's record of it goes.
         closes = {e["worktree"]: [] if worktrees.missing(e) else tabs.panes_to_close(terminals, [e["worktree"]])
                   for e in offered}
-        stdscr, cursor, top, pending, flash = self.stdscr, 0, 0, None, ui.Flash()
-        # Worktrees with uncommitted changes start unchecked, and are never force-removed here.
-        items = [{"entry": e, "checked": e.get("dirty") is not True} for e in offered]
-        # The option to delete branches, for the worktrees removed rather than pruned, if any.
-        removes = sum(not worktrees.missing(i["entry"]) for i in items)
+        stdscr, top, pending, flash = self.stdscr, 0, None, ui.Flash()
+        # Worktrees with uncommitted changes start unchecked, and are never force-removed here;
+        # missing ones start unchecked too, since their folder may be away only for now.
+        items = [{"entry": e, "checked": starts_checked(e)} for e in offered]
+        # On the first row space can check, rather than one with uncommitted changes.
+        cursor = next(i for i, item in enumerate(items) if item["entry"].get("dirty") is not True)
+        # The option to delete branches, for the worktrees it can apply to (see deletable), if any.
+        branches = deletable(items)
         delete_branches = {"checked": False}
         while True:
             keyboard.set_timeout(stdscr, flash.wait(-1))
@@ -452,31 +533,35 @@ class RemovalScreens:
             index = len(items)  # The cursor's row for "Also delete their branches", when it's offered.
             box = "[x] " if delete_branches["checked"] else "[ ] "
             branch_row = [ui.pointer(cursor == index), (box, ui.style("select")),
-                          (branch_option(len(items))[0], 0),
-                          ("   (if it has no unmerged commits)" if len(items) == 1
+                          (branch_option(branches)[0], 0),
+                          ("   (if it has no unmerged commits)" if branches == 1
                            else "   (only ones with no unmerged commits)", ui.style("dim"), 1)]
             # The selected row's detail, in the same number of rows for every row, so the list
             # doesn't jump as the cursor moves.
             lines = max(1, min(4, (height - 8) // 2))
             details = [self.cleanup_detail(items, i, closes, width, lines, self.session, self.label)
-                       for i in range(len(items) + bool(removes))]
-            # Under the options, or a message in its place.
-            detail = list(flash.rows(width) or details[cursor])  # A copy: padding it mustn't change details.
+                       for i in range(len(items) + bool(branches))]
+            # Under the options, or a message in its place, lined up with the options' labels too.
+            said = [[(" " * LABEL_AT + text, attr)] for (text, attr), in flash.rows(max(1, width - LABEL_AT))]
+            detail = list(said or details[cursor])  # A copy: padding it mustn't change details.
             detail += [[]] * (max(len(d) for d in details) - len(detail))
             checked = [i["entry"] for i in items if i["checked"]]
             count = len(checked)
-            heading = [ui.header("Clean up worktrees", self.label)]
+            # With nothing checked, as when only missing worktrees are offered, the title says so,
+            # since enter has nothing to do yet.
+            heading = [ui.header("Clean up worktrees", self.label)
+                       + ([] if count else [("   nothing checked yet", ui.style("attention"))])]
             intro = [(cleanup_intro(offered, width), ui.style("dim"))]
 
             def fit_list(detail):
                 """The list's rows, and whether there's room for a blank row below the list and,
                 with the branch option, below that too: below the list go those, the option, and
                 the detail."""
-                below = 3 if removes else 1
+                below = 3 if branches else 1
                 capacity = height - ui.margin(height) - len(heading) - 2 - below - len(detail) - 1
                 if capacity >= min(3, len(items)):
                     return capacity, True
-                return max(1, height - ui.margin(height) - len(heading) - bool(removes) - len(detail) - 1), False
+                return max(1, height - ui.margin(height) - len(heading) - bool(branches) - len(detail) - 1), False
 
             capacity, gaps = fit_list(detail)
             # Tab shows every candidate in full when the list scrolls, or a name or detail is cut.
@@ -494,7 +579,7 @@ class RemovalScreens:
                 check, or not; tab, which always works, listed or not. With nothing checked,
                 enter can't remove anything."""
                 keys = ui.Keys()
-                keys.add("j/k", "move", rank=3)
+                keys.add("j/k", "move", rank=3, can=len(items) + bool(branches) > 1)
                 keys.add("space", "toggle", why=CANT_CHECK if dirty else "")
                 keys.add("enter", f"{verb} {count}", why="" if count else NOTHING_CHECKED)
                 keys.add("tab", "details" if tab else "", rank=1)
@@ -509,7 +594,7 @@ class RemovalScreens:
             footer = keys.row()
             if abridged and not roomy:
                 # The footer has no room to say tab shows what's cut, so a row below the detail does.
-                detail.append([(ui.TAB_CUE.strip(), ui.style("dim"))])
+                detail.append([(" " * LABEL_AT + ui.TAB_CUE.strip(), ui.style("dim"))])
                 capacity, gaps = fit_list(detail)
             if not gaps:  # A short pane: the list keeps the rows.
                 intro = None
@@ -517,12 +602,14 @@ class RemovalScreens:
             top = ui.scroll_top(top, min(cursor, len(items) - 1), len(items), capacity)
             rows = [self.cleanup_row(item, i == cursor, items, closes, width) for i, item in enumerate(items)]
             body = rows[top:top + capacity] + ([[]] if gaps else [])
-            if removes:
+            if branches:
                 body.append(ui.Selected(branch_row) if cursor == index else branch_row)
                 body += [[]] if gaps else []
             body += detail
             first = ui.with_position(intro or heading[0], min(cursor, len(items) - 1), len(items), capacity, width)
             head = ([heading[0], first, []] if intro else [first])
+            # Keys already waiting were pressed before this frame could be seen.
+            ahead = keyboard.pending_input(stdscr)
             ui.render(stdscr, ui.compose(height, head, body, bottom))
             key = keyboard.read_key(stdscr)
             if key is None:
@@ -531,12 +618,12 @@ class RemovalScreens:
             if key in keyboard.CLOSE:
                 return False
             # The last row is the "Also delete their branches" option, when it's offered.
-            new_cursor, pending = keyboard.motion(key, cursor, len(items) + bool(removes), capacity, pending)
+            new_cursor, pending = keyboard.motion(key, cursor, len(items) + bool(branches), capacity, pending)
             if new_cursor is not None:
                 cursor = new_cursor
             elif key == "\t":
                 ui.page(stdscr, "Clean up worktrees — details", lambda width: self.cleanup_details(
-                    items, delete_branches["checked"] if removes else None, closes, width, self.session, self.label))
+                    items, delete_branches["checked"] if branches else None, closes, width, self.session, self.label))
             elif key == "?":
                 ui.show_help(stdscr, "Clean up worktrees", [("Move", ui.NAVIGATION_HELP), ("Actions", [
                     ("space", "check or uncheck the worktree or option"),
@@ -549,7 +636,8 @@ class RemovalScreens:
                      "uncommitted changes: it can't be cleaned up here; remove it with dd"),
                     ((util.ICONS["tab"], ui.style("dim")), "panes inside it will close"),
                     ((ui.word("missing"), ui.style("danger")),
-                     "its folder is missing: pruning drops only Git's record of it, and keeps its branch"),
+                     "its folder is missing: pruning drops only Git's record of it, and keeps its branch; it starts "
+                     "unchecked, since its folder may be away only for now, as on a drive that isn't mounted"),
                 ])])
             elif key == " ":
                 if keys.refused("space", lambda why: flash.set(why, "attention")):
@@ -559,11 +647,13 @@ class RemovalScreens:
                 else:
                     items[cursor]["checked"] = not items[cursor]["checked"]
             elif key in keyboard.ENTER:
+                if ahead:  # Not confirmed by someone who saw the screen: it's drawn again instead.
+                    continue
                 if keys.refused("enter", lambda why: flash.set(why, "attention")):
                     continue
                 break
 
-        asked = delete_branches["checked"] and bool(removes)
+        asked = delete_branches["checked"] and bool(branches)
 
         def work():
             # Only merged branches are deleted; pruning keeps branches (see actions.remove_many).
@@ -593,7 +683,7 @@ class RemovalScreens:
     def cleanup_details(items, delete_branches, closes, width, session="", label=""):
         """Every candidate in full, for tab: its checkbox and branch, wrapped, then why it's offered
         and what removing it closes; then the branch option, unless delete_branches is None, when
-        every candidate is missing, so none has a branch to delete."""
+        it isn't offered (see deletable)."""
         rows = []
         for item in items:
             entry = item["entry"]
@@ -605,7 +695,7 @@ class RemovalScreens:
             rows += [[("    " + line, tone)] for line in ui.wrap(text, width - 4)] + [[]]
         if delete_branches is None:
             return [[]] + rows[:-1]
-        label_text, explanation = branch_option(len(items), any(worktrees.missing(i["entry"]) for i in items))
+        label_text, explanation = branch_option(deletable(items), any(worktrees.missing(i["entry"]) for i in items))
         rows.append([("[x] " if delete_branches else "[ ] ", ui.style("select")), (label_text, 0)])
         rows += [[("    " + line, ui.style("dim"))] for line in ui.wrap(explanation, width - 4)]
         return [[]] + rows
@@ -643,17 +733,20 @@ class RemovalScreens:
     def cleanup_detail(items, cursor, closes, width, lines=3, session="", label=""):
         """The selected row explained in up to lines rows: why it can't be cleaned up, or why it's
         offered and what removing it closes; then its branch in full, or cut in the middle. On the
-        branch option, what it does, as a note under it, lined up with its label."""
+        branch option, what it does. Either way it's a note under the options, lined up with their
+        labels (see LABEL_AT)."""
         if cursor >= len(items):
-            explanation = branch_option(len(items), any(worktrees.missing(i["entry"]) for i in items))[1]
+            explanation = branch_option(deletable(items), any(worktrees.missing(i["entry"]) for i in items))[1]
             return note_rows(explanation, width, LABEL_AT, ui.style("dim"))[:lines]
         entry = items[cursor]["entry"]
         text, tone = cleanup_text(entry, closes, session, label)
-        reason = ui.wrap(text, width)
-        name = ui.wrap_path(entry["name"], width)
+        room = max(1, width - LABEL_AT)
+        reason = ui.wrap(text, room)
+        name = ui.wrap_path(entry["name"], room)
         if len(reason) + len(name) > lines:
-            name = [ui.middle(entry["name"], width)[0]] if lines > 1 else []
+            name = [ui.middle(entry["name"], room)[0]] if lines > 1 else []
         if len(reason) + len(name) > lines:
             reason = reason[:max(1, lines - len(name))]
-            reason[-1] = reason[-1][:width - 1] + "…"
-        return [[(line, tone)] for line in reason] + [[(line, ui.style("bold"))] for line in name]
+            reason[-1] = reason[-1][:room - 1] + "…"
+        indent = " " * LABEL_AT
+        return [[(indent + line, tone)] for line in reason] + [[(indent + line, ui.style("bold"))] for line in name]

@@ -242,7 +242,12 @@ class NewScreens:
         create row stays selected, or the one typing went on from, unless the text surely means
         an existing branch (see matching.strong). Returns True once a worktree is created or
         opened. root is True when the picker opened straight into this screen, so esc quits.
-        text starts the input, such as with the list's filter that found no worktrees."""
+        text starts the input, such as with the list's filter that found no worktrees.
+
+        Frames aren't drawn while keys are waiting, as when text is pasted, so the screen keeps up;
+        and enter acts only on a frame that was drawn with nothing waiting. One pressed before, as
+        at the end of pasted text, draws the frame instead and is dropped, so pressing enter again
+        acts on what's on screen."""
         stdscr = self.stdscr
         keyboard.set_timeout(stdscr, -1)
         cwd = self.cwd
@@ -256,6 +261,7 @@ class NewScreens:
         back = "quit" if root else "back"
         flash = ui.Flash()
         nudge = False  # Enter was pressed where it can't go anywhere: the reason stands out.
+        show = False  # Draw the next frame even with keys waiting: an enter was dropped for it.
         while True:
             keyboard.set_timeout(stdscr, flash.wait(-1))
             suggestions = branches["suggestions"]
@@ -340,6 +346,10 @@ class NewScreens:
             # Above the list: the rows for the text and the note, a blank row, the heading, and the
             # column titles, or the line saying nothing matches.
             fixed = len(tops) + len(note) + 3
+            # Tab shows what enter does whenever there's a plan or a note; else, why not.
+            no_tab = "Nothing more to show: it's all on screen."
+            if kind == "type":
+                no_tab = "Nothing to show yet: type a name, or select a branch, and tab shows what enter does."
             # What enter does, wrapped, below the list, with at least two of the list's rows left.
             limit = max(1, room - fixed - 1 - min(2, max(1, len(existing))))
             # Enter acts on a create row, the row opening a checked-out branch, or a branch whose
@@ -359,7 +369,7 @@ class NewScreens:
             keys.add("↑/↓", "move", rank=2 if moved else 3, can=len(items) > 1)
             # Tab shows what enter does whenever there's a plan or a note; listed when they're cut.
             keys.add("tab", "details" if cut or note_hidden else "", rank=3 if moved else 2,
-                     can=bool(lines or noted))
+                     why="" if lines or noted else no_tab)
             keys.add("?", "help", rank=1)
             keys.add("esc", "clear" if text else back)
             keys.add("ctrl+g", why="" if not on_head else "Select an existing branch to open its pull request.")
@@ -370,18 +380,25 @@ class NewScreens:
                     action = plan_rows(lines, space, limit, short, cue=True)[0]
                 else:
                     note = note_rows(*said[:3], space, said[3], cue=True)
-            # The list's rows, sized to every branch so the plan below stays put while filtering.
-            # The blank row above the plan goes first when they're short of rows.
-            capacity = room - fixed - 1 - len(action)
-            gap = capacity >= min(3, max(1, len(suggestions)))
-            capacity = max(1, min(max(1, len(suggestions)), capacity + (0 if gap else 1)))
+            # The plan is pinned to the bottom, right above the footer, so it never moves and
+            # reads with enter's hint; the list has the rows above it. Blank rows go between the
+            # list and the plan, then between the plan and the footer, when the list keeps at least
+            # three rows; the second goes first when they're short of rows.
+            spare = room - fixed - len(action) - min(3, max(1, len(suggestions)))
+            gaps = min(2, max(0, spare)) if action else 0
+            capacity = max(1, room - fixed - len(action) - gaps)
             list_index = index - len(tops)  # Negative on the rows for the text.
             top = ui.scroll_top(top, max(0, list_index), len(existing), capacity)
-            # Beside the input: the selected branch's place when the list scrolls.
+            # Beside the input: how many branches the text matches, right after it, and the
+            # selected branch's place at the right when the list scrolls.
             mark = f"{list_index + 1}/{len(existing)}" if list_index >= 0 and len(existing) > capacity else ""
-            heading[1], column = ui.search_row(text, tpos, True, space, PLACEHOLDER, mark, PROMPT)
+            count = f"{len(existing)} of {len(suggestions)}" if text.strip() else ""
+            heading[1], column = ui.search_row(text, tpos, True, space, PLACEHOLDER, mark, PROMPT, count)
 
-            if not keyboard.pending_input(stdscr):
+            # Keys already waiting were pressed before this frame could be seen.
+            ahead = keyboard.pending_input(stdscr)
+            if not ahead or show:
+                show = False
                 creates = create_rows(tops, typed, space, index)
                 body = [creates[i] if i in creates else head_row(head, typed, space, i == index, nudge and i == index)
                         for i, head in enumerate(tops)] + note + [[]]
@@ -392,7 +409,7 @@ class NewScreens:
                 else:  # One line, with no heading over it.
                     body.append([("  No matching branches" if text.strip() else "  No other branches",
                                   ui.style("dim"))])
-                body += [[]] * (fixed + capacity - len(body)) + ([[]] if gap else []) + action
+                body += [[]] * (fixed + capacity - len(body)) + [[]] * min(1, gaps) + action + [[]] * (gaps - 1)
                 cursor = (ui.margin(height) + 1, column) if column is not None else None
                 ui.render(stdscr, ui.compose(height, heading, body, status + [footer]), cursor=cursor)
             key = keyboard.read_key(stdscr)
@@ -408,7 +425,7 @@ class NewScreens:
                     return False
                 text, tpos, index, base = "", 0, None, 0
             elif key == "\t":  # Never part of a branch name.
-                if not keys.refused("tab"):
+                if not keys.refused("tab", lambda why: flash.set(why, "attention")):
                     ui.page(stdscr, "New worktree — details", lambda width: [[]] + (
                         plan_rows(lines, width, 1000)[0] if lines else []) + (
                         ([[]] if lines else []) + note_rows(*said[:3], width, limit=1000)
@@ -420,6 +437,9 @@ class NewScreens:
                     self.open_pr({"pr": self.prs.get(items[index]["name"])}, flash)
                 keyboard.set_timeout(stdscr, flash.wait(-1))
             elif key in keyboard.ENTER:
+                if ahead:  # Pressed before this frame could be seen: show it, and wait for another.
+                    show = True
+                    continue
                 if keys.refused("enter"):
                     nudge = True  # The row, the note, or the plan's error says why; it stands out.
                     continue
@@ -557,8 +577,9 @@ class NewScreens:
         path = plan["open"]
         entry = next((e for e in self.entries if e["worktree"] == path),
                      {"worktree": path, "name": plan["branch"], "branch": "refs/heads/" + plan["branch"]})
-        if worktrees.missing(entry):
-            flash.set("That worktree's folder is missing; prune it with dd in the list.", "attention")
+        if worktrees.missing(entry) or worktrees.broken(entry):
+            flash.set("That worktree's folder is missing; prune it with dd in the list." if worktrees.missing(entry)
+                      else "That worktree's .git file is gone; repair it with dd in the list.", "attention")
             return False
         try:
             self.busy("Opening…", lambda: tabs.open_tab(self.session, entry, self.client, terminals=self.terminals))

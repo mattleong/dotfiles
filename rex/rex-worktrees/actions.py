@@ -69,8 +69,23 @@ def prune_worktree(repo, entry):
     without --force, where git worktree prune would drop every missing worktree at once. A folder
     that's back at the path is refused, since removing the worktree would delete it."""
     if os.path.lexists(entry["worktree"]):
-        raise RuntimeError("its folder is back; press r to refresh the list.")
+        # The screens list the worktrees again after pruning, so the list shows it as it is now.
+        raise RuntimeError("its folder is back, and the list now shows it as it is.")
     util.git(repo, "worktree", "remove", "--", entry["worktree"])
+
+
+def repair_worktree(repo, entry):
+    """Write the .git file of a worktree whose folder is there without it (see worktrees.broken),
+    so Git can use the worktree again; its files stay as they are. git worktree repair does that
+    for every worktree without its .git file at once (see worktrees.unlinked), and it can only be
+    run for them all: given a path, it still repairs every one, then fails for the path, its .git
+    file being gone (checked with Git 2.50). Raises RuntimeError when this one wasn't repaired."""
+    if not os.path.isdir(entry["worktree"]):
+        raise RuntimeError("its folder is gone now.")
+    result = subprocess.run(["git", "-C", repo, "worktree", "repair"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Judged by the file, since Git fails for any worktree it can't repair, even when it repaired this one.
+    if not os.path.lexists(os.path.join(entry["worktree"], ".git")):
+        raise RuntimeError(result.stderr.decode(errors="replace").strip() or "Git didn't write its .git file.")
 
 
 def take_out(repo, entry, force=False):
@@ -93,19 +108,26 @@ def take_out(repo, entry, force=False):
 
 def remove_worktree(repo, session, entry, closing, force=False, delete_branch=False):
     """Remove a worktree from the main worktree's repository (see take_out), delete its branch
-    when asked, then close the panes inside it (closing, from tabs.panes_to_close). Raises
-    RuntimeError when Git still lists the worktree, so nothing was done. Otherwise returns whether
-    the branch was deleted, and what else went wrong, as clauses such as "its branch wasn't
-    deleted: …", so a message can say what did and didn't happen."""
+    when asked and it's still merged, then close the panes inside it (closing, from
+    tabs.panes_to_close). Raises RuntimeError when Git still lists the worktree, so nothing was
+    done. Otherwise returns whether the branch was deleted, and what else went wrong, as clauses
+    such as "its branch wasn't deleted: …", so a message can say what did and didn't happen."""
     problem = take_out(repo, entry, force)
     problems, deleted = [problem] if problem else [], False
     if delete_branch:
-        try:
-            # Callers only offer this after merged_into() confirmed the branch is merged.
-            util.git(repo, "branch", "-D", "--", entry["name"])
-            deleted = True
-        except RuntimeError as error:
-            problems.append(f"its branch wasn't deleted: {error}")
+        # Checked again right before deleting, though the screen offered it only for a merged
+        # branch: a commit can land on the branch while the screen is open, and -D would lose it.
+        target = worktrees.merged_into(repo, entry)
+        if not target:
+            default = worktrees.default_branch(repo)
+            problems.append("its branch was kept: " + (f"it has commits not in {default} now" if default
+                                                       else "it can't be checked against a default branch now"))
+        else:
+            try:
+                util.git(repo, "branch", "-D", "--", entry["name"])
+                deleted = True
+            except RuntimeError as error:
+                problems.append(f"its branch wasn't deleted: {error}")
     try:
         if closing:
             tabs.close_panes(session, closing)
@@ -141,7 +163,7 @@ def remove_many(repo, session, items, terminals=None):
         prune = worktrees.missing(entry)
         try:
             gone, problems = remove_worktree(repo, session, entry, [], delete_branch=delete_branch and not prune)
-        except (RuntimeError, OSError) as error:
+        except (RuntimeError, OSError) as error:  # Git still lists it, so nothing was done to it.
             failures.append(f"{entry['name']} wasn't {'pruned' if prune else 'removed'}: {error}")
             continue
         (pruned if prune else removed).append(entry["name"])
