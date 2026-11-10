@@ -57,7 +57,10 @@ RECENT_DAYS = 30
 
 
 def load_branches(cwd, entries, now=None):
-    """Collect branches without worktrees: recent local ones, then remote-only ones, then older local ones."""
+    """Collect branches without worktrees: local ones committed to in the last RECENT_DAYS, then
+    remote-only ones from then, then everything older, each newest first. And the bases a new
+    branch can start from: the default branch, then the current one, each with a note saying
+    which it is."""
     checked_out = {e["branch"].removeprefix("refs/heads/"): e["worktree"] for e in entries if "branch" in e}
     missing = {e["worktree"] for e in entries if worktrees.missing(e)}
 
@@ -84,19 +87,24 @@ def load_branches(cwd, entries, now=None):
     for branch, refs_of_name in remote.items():
         refs_of_name.sort(key=lambda ref: ref != f"{preferred}/{branch}")
     head = util.git_text(cwd, "rev-parse", "--abbrev-ref", "HEAD")
-    if head == "HEAD":
+    detached = head == "HEAD"
+    if detached:
         head = util.git_text(cwd, "rev-parse", "--short", "HEAD")
     # The default branch comes first, so new branches start from it unless you choose otherwise.
-    bases = [{"ref": "HEAD", "label": head}]
+    bases = [{"ref": "HEAD", "label": head, "note": "current commit" if detached else "current branch"}]
     default = worktrees.default_branch(cwd)
     if default and default != head:
-        bases.insert(0, {"ref": default, "label": default})
+        bases.insert(0, {"ref": default, "label": default, "note": "default branch"})
+    elif default:
+        bases[0]["note"] = "default and current branch"
     cutoff = (time.time() if now is None else now) - RECENT_DAYS * 86400
-    available = [(name, stamp) for name, stamp in local if name not in checked_out]
-    suggestions = [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in available if stamp >= cutoff]
-    suggestions += [{"name": name, "ref": ref, "kind": "remote", "time": stamp} for name, ref, stamp in remote_refs
-                    if name not in local_names and name not in checked_out]
-    suggestions += [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in available if stamp < cutoff]
+    available = [{"name": n, "ref": n, "kind": "local", "time": stamp} for n, stamp in local if n not in checked_out]
+    remote_only = [{"name": name, "ref": ref, "kind": "remote", "time": stamp} for name, ref, stamp in remote_refs
+                   if name not in local_names and name not in checked_out]
+    # Each list is newest first already, so the older ones, merged, are sorted again.
+    older = sorted([s for s in available + remote_only if s["time"] < cutoff], key=lambda s: -s["time"])
+    suggestions = [s for s in available if s["time"] >= cutoff] + [s for s in remote_only if s["time"] >= cutoff]
+    suggestions += older
     return {"local": local_names, "remote": remote, "remotes": remotes, "checked_out": checked_out,
             "missing": missing, "suggestions": suggestions, "head": head, "bases": bases,
             "preferred": preferred}
@@ -128,18 +136,19 @@ def query_for(text, suggestion, branches):
 
 
 def plan_branch(cwd, branches, text, suggestion=None, base=None):
-    """Describe what creating a worktree would do: for an existing branch, or a new one named by text.
-    An existing branch's action names it in full, since its row in the list may be cut short, with a
-    shorter form for a small pane; a new branch's leaves its name out, which the screen shows above."""
+    """Describe what creating a worktree would do: for an existing branch, or a new one named by
+    text, started from base. What it does to the branch is a verb, such as "Checks out", and the
+    rest of the sentence ("action"), which names the branch in full, since its row may be cut
+    short, with a shorter form ("short") for a small pane where that helps. Text that can't be a
+    new branch gets an "error" saying why (see existing_branch for a name that's taken)."""
     base = base or {"ref": "HEAD", "label": branches["head"]}
     if suggestion:
         name, ref = suggestion["name"], suggestion["ref"]
         if suggestion["kind"] == "local":
-            plan = {"branch": name, "action": f"check out the existing branch {name}", "short": f"check out {name}",
-                    "args": [name]}
+            plan = {"branch": name, "verb": "Checks out", "action": name, "args": [name]}
         else:
-            plan = {"branch": name, "action": f"create a local branch tracking {ref}", "short": f"track {ref}",
-                    "args": ["--track", "-b", name, None, ref]}
+            plan = {"branch": name, "verb": "Creates", "action": f"{name} tracking {ref}",
+                    "short": f"a branch tracking {ref}", "args": ["--track", "-b", name, None, ref]}
     else:
         name = normalize_branch(text)
         if not name:
@@ -165,17 +174,33 @@ def plan_branch(cwd, branches, text, suggestion=None, base=None):
             # A local origin/x would make Git call origin/x ambiguous.
             return {"branch": name, "remote": split[0],
                     "error": f"A branch can't start with {split[0]}/, a remote's name; name it {split[1]}."}
+        end = text.strip()[-1:]
+        if end in ("/", "."):
+            # Half typed, such as fix/ on the way to fix/login. Git can't end a branch with either,
+            # and leaving it out would make a branch, fix, that wasn't meant; so a hint, as above.
+            return {"branch": name, "hint": True,
+                    "error": "Type the rest of the name; a branch can't end with " + (
+                        "a slash." if end == "/" else "a dot.")}
         clash = ref_clash(name, branches["local"])
         if clash:
             return {"branch": name, "error": f"{name} can't be a branch while {clash} exists."}
-        # --no-track keeps a branch started from origin/main from pushing to or tracking main.
-        plan = {"branch": name, "action": f"create the branch from {base['label']}",
-                "args": ["--no-track", "-b", name, None, base["ref"]]}
+        plan = from_base({"branch": name}, base)
     path = new_path(cwd, plan["branch"])
     if path.exists():
         plan["error"] = "Destination already exists: " + util.tilde(str(path))
     plan["path"] = path
     return plan
+
+
+def from_base(plan, base):
+    """A new branch's plan (see plan_branch) started from base instead, without asking Git again
+    whether its name can be a branch. A plan with an error stays as it is."""
+    if plan.get("error"):
+        return plan
+    name = plan["branch"]
+    # --no-track keeps a branch started from origin/main from pushing to or tracking main.
+    return {**plan, "verb": "Creates", "action": f"{name} from {base['label']}",
+            "short": f"a branch from {base['label']}", "args": ["--no-track", "-b", name, None, base["ref"]]}
 
 
 def other_upstream(cwd, local, ref, branches):
@@ -212,7 +237,7 @@ def existing_branch(name, branches):
             return {"branch": local, "missing": path,
                     "error": "It's checked out in a worktree whose folder is missing; prune it with p in the list."}
         return {"branch": local, "error": "Already checked out at " + util.tilde(path), "open": path,
-                "short": "open its worktree"}
+                "short": "its worktree"}
     if local in branches["local"]:
         return {"branch": local, "exists": [local],
                 "error": "A branch with this name exists; select it under Existing branches."}
@@ -242,7 +267,12 @@ def ref_clash(name, local):
 
 
 def create_worktree(cwd, plan):
+    """Run the plan's git worktree add. Raises RuntimeError when it fails."""
     path = plan["path"]
+    # Checked again, since the plan was made: Git would create a new branch before finding the
+    # folder taken, and leave the branch behind.
+    if path.exists():
+        raise RuntimeError("Destination already exists: " + util.tilde(str(path)))
     path.parent.mkdir(parents=True, exist_ok=True)
     args = plan["args"]
     if None in args:  # -b/--track forms put the path before the start point.

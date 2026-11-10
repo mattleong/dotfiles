@@ -455,31 +455,51 @@ class WorktreeTests(unittest.TestCase):
     def test_plan_new_and_existing_branches(self):
         cwd, branches = self.setup_branches()
         new = branching.plan_branch(cwd, branches, "test branch")
-        self.assertEqual((new["branch"], new["action"]), ("test-branch", "create the branch from main"))
+        self.assertEqual((new["branch"], new["verb"], new["action"]), ("test-branch", "Creates", "test-branch from main"))
         self.assertNotIn("error", new)
         local = branching.plan_branch(cwd, branches, "", self.suggestion(branches, "existing"))
-        self.assertEqual(local["action"], "check out the existing branch existing")  # Named in full.
+        self.assertEqual((local["verb"], local["action"]), ("Checks out", "existing"))  # Named in full.
         remote = branching.plan_branch(cwd, branches, "", self.suggestion(branches, "origin/remote-only"))
-        self.assertEqual(remote["action"], "create a local branch tracking origin/remote-only")
+        self.assertEqual((remote["verb"], remote["action"]), ("Creates", "remote-only tracking origin/remote-only"))
+        # Half typed, a name that Git couldn't end that way isn't created without what's left out.
+        for typed in ("fix/", "v2.", "fix /"):
+            plan = branching.plan_branch(cwd, branches, typed)
+            self.assertTrue(plan["hint"] and plan["error"].startswith("Type the rest of the name"), typed)
+        # Another base changes only where the branch starts.
+        other = branching.from_base(new, {"ref": "origin/main", "label": "origin/main"})
+        self.assertEqual((other["action"], other["args"][-1], other["path"]), ("test-branch from origin/main",
+                                                                              "origin/main", new["path"]))
         # A typed name only ever creates a new branch; existing ones are picked from the list.
         self.assertIn("Already checked out", branching.plan_branch(cwd, branches, "main")["error"])
         self.assertIn("select it under Existing branches", branching.plan_branch(cwd, branches, "existing")["error"])
         self.assertIn("origin/remote-only exists", branching.plan_branch(cwd, branches, "remote-only")["error"])
 
-    def test_branch_order_recent_local_then_remote_then_old_local(self):
+    def test_branch_order_recent_local_then_recent_remote_then_everything_older(self):
         def commit_at(branch, when):
             env = {**os.environ, "GIT_COMMITTER_DATE": when, "GIT_AUTHOR_DATE": when}
             subprocess.run(["git", "-C", str(self.repo), "checkout", "-q", "-b", branch, "main"], check=True)
             subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q",
                             "--allow-empty", "-m", branch], check=True, env=env)
-        commit_at("old-local", "2020-01-01T00:00:00")
-        commit_at("new-local", "2030-01-01T00:00:00")
+        for branch, when in (("ancient-local", "2020-01-01T00:00:00"), ("old-local", "2029-09-01T00:00:00"),
+                             ("ancient-remote", "2025-01-01T00:00:00"), ("new-remote", "2029-12-30T00:00:00"),
+                             ("new-local", "2029-12-25T00:00:00"), ("newer-local", "2030-01-01T00:00:00")):
+            commit_at(branch, when)
         git(self.repo, "checkout", "-q", "main")
         git(self.repo, "remote", "add", "origin", "https://example.invalid/repo.git")
-        git(self.repo, "update-ref", "refs/remotes/origin/remote-only", "old-local")
+        for branch in ("ancient-remote", "new-remote"):
+            git(self.repo, "update-ref", f"refs/remotes/origin/{branch}", branch)
+            git(self.repo, "branch", "-D", branch)
         now = 1893456000 + 86400  # 2030-01-02
         branches = branching.load_branches(str(self.repo), worktrees.worktrees(str(self.repo)), now)
-        self.assertEqual([s["ref"] for s in branches["suggestions"]], ["new-local", "origin/remote-only", "old-local"])
+        # A five-year-old remote branch no longer lists above a four-month-old local one.
+        self.assertEqual([s["ref"] for s in branches["suggestions"]],
+                         ["newer-local", "new-local", "origin/new-remote", "old-local", "origin/ancient-remote",
+                          "ancient-local"])
+        # New branches start from the default branch, else the current one, each saying which.
+        self.assertEqual([(b["label"], b["note"]) for b in branches["bases"]], [("main", "default and current branch")])
+        git(self.repo, "checkout", "-q", "--detach", "new-local")
+        bases = branching.load_branches(str(self.repo), worktrees.worktrees(str(self.repo)), now)["bases"]
+        self.assertEqual([b["note"] for b in bases], ["default branch", "current commit"])
 
     def test_create_worktree_for_each_plan(self):
         cwd, branches = self.setup_branches()
@@ -634,7 +654,7 @@ class WorktreeTests(unittest.TestCase):
         branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
         self.assertEqual([b["label"] for b in branches["bases"]], ["main", "feature"])
         plan = branching.plan_branch(cwd, branches, "from main", None, branches["bases"][0])
-        self.assertEqual(plan["action"], "create the branch from main")
+        self.assertEqual(plan["action"], "from-main from main")
         branching.create_worktree(cwd, plan)
         self.assertEqual(git(cwd, "rev-parse", "from-main").stdout, git(cwd, "rev-parse", "main").stdout)
         upstream = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "from-main@{upstream}"], capture_output=True)
@@ -786,6 +806,13 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(([t for t, _ in row], column), (["/ to filter"], None))
         row, column = ui.search_row("", 0, True, 40)
         self.assertEqual(([t for t, _ in row], column), (["/ ", "type to filter"], 2))
+        # New worktree's prompt, with a mark: neither a placeholder nor long text pushes the mark out.
+        prompt, place = screen_new.PROMPT, screen_new.PLACEHOLDER
+        for text in ("", "feature payments refactor checkout flow for invoices"):
+            row, column = ui.search_row(text, len(text), True, 47, place, "3/6", prompt)
+            line = "".join(t for t, _ in row)
+            self.assertTrue(line.startswith(prompt) and line.endswith("  3/6") and len(line) == 47, line)
+            self.assertEqual(column, len(prompt) + (len(row[1][0]) if text else 0))  # After the text.
 
     def test_paths_wrap_at_slashes(self):
         self.assertEqual(ui.wrap_path("in ~/.local/share/rex/worktrees/app-1234/feature", 34),
@@ -885,10 +912,11 @@ class WorktreeTests(unittest.TestCase):
         picker.branches = lambda: branches
         self.assertFalse(drive(screen, lambda: picker.new_screen(root=True)))  # esc clears, then quits.
         texts = [screen.text(i) for i in range(len(screen.frames))]
-        typed = next(t for t in texts if any(line.startswith("/ quick") for line in t))
-        self.assertTrue(any("Create branch “quick”" in line for line in typed))
+        typed = next(t for t in texts if any(line.startswith(screen_new.PROMPT + "quick") for line in t))
+        self.assertTrue(any(line.startswith("› + Create “quick” from main") for line in typed), typed)
         self.assertTrue(any(line.startswith("New worktree — keys") for t in texts for line in t))
         self.assertTrue(any("esc quit" in line for line in texts[-1]))
+        self.assertFalse(any(line.startswith("/") for t in texts for line in t[:3]))  # / is the list's key.
 
     def test_new_worktree_opens_a_branch_thats_checked_out_already(self):
         cwd, branches = self.setup_branches()
@@ -897,37 +925,131 @@ class WorktreeTests(unittest.TestCase):
         picker = self.picker(screen, [{"name": "main", "worktree": path, "branch": "refs/heads/main", "main": True}])
         picker.session, picker.client = "s", None
         picker.branches = lambda: branches
-        picker.new_branch_screen = lambda *args: self.fail("enter went on to name the branch")
         with patch.object(tabs, "open_tab") as open_tab:
             self.assertTrue(drive(screen, lambda: picker.new_screen()))
         self.assertIs(open_tab.call_args[0][1], picker.entries[0])
         rows = next(screen.text(i) for i in range(len(screen.frames))
-                    if "› → Open the worktree for “main”" in screen.text(i))  # Green, as enter opens it.
+                    if "› Open the worktree for “main”" in screen.text(i))  # Green, as enter opens it.
         self.assertFalse(any("checked out" in line for line in rows), rows)  # The row and the plan say it.
-        self.assertIn("enter: open main's worktree", rows)
-        self.assertIn(("at " + util.tilde(path)).replace(" ", ""), "".join(rows).replace(" ", ""))  # In the plan.
+        self.assertIn("Opens".ljust(screen_new.PLAN_COLUMN) + "the worktree for main", rows)
+        self.assertIn(("In" + util.tilde(path)).replace(" ", ""), "".join(rows).replace(" ", ""))  # In the plan.
         self.assertTrue(rows[-1].startswith("enter open"))
+        self.assertFalse(any("→" in line for line in rows), rows)  # The pointer is the only arrow.
 
-    def test_new_branch_plan_follows_the_bases_and_the_hint_fits(self):
-        cwd, branches = self.setup_branches()
-        screen = FakeScreen(["\n", "\x1b"], (40, 50))
+    @staticmethod
+    def plan_start(rows):
+        """Where the plan below New worktree's list starts: the row with its first label, or None."""
+        return next((i for i, line in enumerate(rows) if line.startswith(("Creates ", "Checks out ", "Opens "))), None)
+
+    def two_bases(self):
+        """Branches whose default, origin/main, is a commit behind main, the current branch."""
+        cwd, _ = self.setup_branches()
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "ahead")
+        return cwd, branching.load_branches(cwd, worktrees.worktrees(cwd))
+
+    def test_new_worktree_creates_a_branch_from_either_base_at_once(self):
+        cwd, branches = self.two_bases()
+        self.assertEqual([(b["label"], b["note"]) for b in branches["bases"]],
+                         [("origin/main", "default branch"), ("main", "current branch")])
+        # With no text, one dim row asks for a name, and the footer leaves enter out; enter makes
+        # the row stand out.
+        screen, styles = self.frames_with_styles(["\n", "\x1b"], branches, (24, 100))
+        rows = screen.text(0)
+        self.assertIn("› + Type a name to create a branch", rows)
+        self.assertEqual(sum(line.startswith("› ") for line in rows), 1)
+        self.assertNotIn("enter", self.footer_keys(screen.frames[0]))
+        self.assertIsNone(self.plan_start(rows))
+        row = next(r for r in screen.frames[1] if "Type a name" in "".join(s[0] for s in r))
+        self.assertTrue(row[1][1] & styles["yellow"] and row[1][1] & styles["bold"], row)
+        # Typed, a row for each base, the default first, each with the name as it will be.
+        screen = FakeScreen(list("Fix the login") + [curses.KEY_DOWN] + list(" now") + ["\x1b", "\x1b"], (24, 100))
         picker = self.picker(screen)
-        drive(screen, lambda: picker.new_branch_screen(cwd, branches))
-        rows = screen.text(0)
-        hint = rows.index("Type a name; spaces become dashes.")
-        self.assertLess(hint, 12)  # Near the name, not at the bottom of a tall pane.
-        self.assertEqual(screen.frames[1][hint][0][1], ui.style("attention"))  # Enter with no name: the hint again.
-        self.assertEqual(sum("Type a name" in line for line in screen.text(1)), 1)
-        long_name = "feature improve worktree picker handling for empty histories and stale tabs in small panes"
+        picker.branches = lambda: branches
         with patch.object(worktrees, "setup_command", return_value="make setup"):
-            screen = FakeScreen(["\x1b"], (16, 50))
+            drive(screen, lambda: picker.new_screen(root=True))
+        frames = [screen.text(i) for i in range(len(screen.frames))]
+        rows = next(f for f in frames if self.search_text(f) == "Fix the login")
+        first = next(line for line in rows if "from origin/main" in line)
+        second = next(line for line in rows if "from main" in line)
+        self.assertTrue(first.startswith("› + Create “Fix-the-login” from origin/main"), rows)
+        self.assertTrue(second.startswith("  + Create “Fix-the-login” from main"), rows)
+        self.assertEqual(first.index("default branch"), second.index("current branch"))  # The notes line up.
+        plan = rows[self.plan_start(rows):]
+        self.assertEqual(plan[0], "Creates".ljust(screen_new.PLAN_COLUMN) + "Fix-the-login from origin/main")
+        self.assertTrue(plan[1].startswith("In".ljust(screen_new.PLAN_COLUMN)), plan)
+        self.assertIn("Then runs".ljust(screen_new.PLAN_COLUMN) + "make setup", plan)
+        self.assertIn("No matching branches", " ".join(rows))
+        self.assertNotIn("EXISTING BRANCHES (0)", rows)  # One line, no heading over it.
+        self.assertEqual(rows[-1].split()[:2], ["enter", "create"])
+        # ↓ chooses main, and typing on keeps it.
+        rows = next(f for f in frames if self.search_text(f) == "Fix the login now")
+        self.assertTrue(any(line.startswith("› + Create “Fix-the-login-now” from main") for line in rows), rows)
+        self.assertIn("Fix-the-login-now from main", rows[self.plan_start(rows)])
+        # Passing main's row on the way to a branch doesn't choose it, and esc starts afresh.
+        frames = self.new_worktree_frames(list("i") + [curses.KEY_DOWN] * 2 + ["s", curses.KEY_DOWN, "x", "\x1b"]
+                                          + list("j") + ["\x1b", "\x1b"], branches, (24, 100))
+        for typed, label in (("is", "› + Create “is” from origin/main"), ("isx", "› + Create “isx” from main"),
+                             ("j", "› + Create “j” from origin/main")):
+            rows = next(f for f in frames if self.search_text(f) == typed)
+            self.assertTrue(any(line.startswith(label) for line in rows), (typed, rows))
+        # Enter creates the branch at once, from the selected row's base, tracking nothing.
+        for keys, start in ((list("from default") + ["\n"], "origin/main"),
+                            (list("from current") + [curses.KEY_DOWN, "\n"], "main")):
+            screen = FakeScreen(keys, (24, 100))
             picker = self.picker(screen)
-            screen.keys.append("\x1b")  # The first esc clears the name; the second goes back.
-            drive(screen, lambda: picker.new_branch_screen(cwd, branches, long_name, "make setup"))
-        rows = screen.text(0)
-        self.assertTrue(any(line.startswith("enter: create the branch from") for line in rows))
-        self.assertTrue(any("then runs make setup" in line for line in rows))
-        self.assertTrue(any(line.strip().endswith("small-panes") for line in rows))  # The whole destination.
+            picker.session, picker.client, picker.branches = "s", None, lambda: branches
+            with patch.object(tabs, "open_tab") as open_tab, patch.object(worktrees, "setup_command", return_value=""):
+                self.assertTrue(drive(screen, lambda: picker.new_screen()))
+            name = branching.normalize_branch("".join(k for k in keys if isinstance(k, str) and k != "\n"))
+            with self.subTest(start=start):
+                self.assertEqual(open_tab.call_args[0][1]["branch"], name)
+                self.assertEqual(git(cwd, "rev-parse", name).stdout, git(cwd, "rev-parse", start).stdout)
+                upstream = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", name + "@{upstream}"],
+                                          capture_output=True)
+                self.assertNotEqual(upstream.returncode, 0)
+
+    def test_new_worktree_stays_with_a_message_when_creating_fails(self):
+        cwd, branches = self.setup_branches()
+
+        class Racing(FakeScreen):
+            """Runs a key that's a function, such as one making the folder the plan named."""
+            def get_wch(self):
+                key = super().get_wch()
+                if callable(key):
+                    key()
+                    return curses.KEY_RESIZE
+                return key
+
+        taken = branching.new_path(cwd, "race")
+        screen = Racing(list("race") + [lambda: (taken.mkdir(parents=True), (taken / "file").write_text("x")), "\n",
+                                        "\n"], (24, 120))
+        picker = self.picker(screen)
+        picker.session, picker.client = "s", None
+        picker.branches = lambda: branching.load_branches(cwd, worktrees.worktrees(cwd))
+        picker.reload = lambda: None
+        with patch.object(tabs, "open_tab") as open_tab, patch.object(worktrees, "setup_command", return_value=""):
+            self.assertTrue(drive(screen, lambda: picker.new_screen()))
+        said = next(screen.text(i) for i in range(len(screen.frames)) if "Destination already exists" in
+                    " ".join(screen.text(i)))
+        self.assertTrue(said[-1].startswith("enter create"), said)  # Still on the screen.
+        # The first enter created nothing, not even the branch; the second used another folder.
+        self.assertEqual(open_tab.call_count, 1)
+        made = Path(open_tab.call_args[0][1]["worktree"])
+        self.assertNotEqual(made, taken)
+        self.assertTrue(made.name.startswith("race-"))
+        self.assertEqual(sorted(os.listdir(taken)), ["file"])
+        # A tab that fails to open after the worktree is made isn't a failure to create: it's said
+        # on the picker's error screen, which exits.
+        screen = FakeScreen(list("tab-fails") + ["\n"], (24, 120))
+        picker = self.picker(screen)
+        picker.session, picker.client, picker.branches = "s", None, lambda: branches
+        with patch.object(tabs, "open_tab", side_effect=RuntimeError("no session")), \
+                patch.object(worktrees, "setup_command", return_value=""):
+            with self.assertRaises(screen_new.TabFailed):
+                drive(screen, lambda: picker.new_screen())
+        self.assertTrue(branching.new_path(cwd, "tab-fails").exists() or
+                        any("tab-fails" in line for line in git(cwd, "worktree", "list").stdout.decode().splitlines()))
 
     def test_long_errors_scroll(self):
         message = "Preparing worktree\nfatal: " + "cannot lock ref because the path is long " * 30 + "the end"
@@ -1039,7 +1161,6 @@ class WorktreeTests(unittest.TestCase):
         screen = FakeScreen(keys, size)
         picker = self.picker(screen)
         picker.branches = lambda: branches
-        picker.new_branch_screen = lambda *args: self.fail("enter went on to name a branch")
         with patch.object(worktrees, "setup_command", return_value=setup):
             drive(screen, lambda: picker.new_screen(root=True))
         return [screen.text(i) for i in range(len(screen.frames))]
@@ -1050,25 +1171,24 @@ class WorktreeTests(unittest.TestCase):
             git(self.repo, "branch", name)
         cwd, branches = self.setup_branches()
         # main is checked out, so its row opens it; remote-pr only matches weakly.
-        for typed, label in (("main", "→ Open the worktree for “main”"),
-                             ("remote-pr", "+ Create branch “remote-pr”…")):
+        for typed, label in (("main", "Open the worktree for “main”"),
+                             ("remote-pr", "+ Create “remote-pr” from main")):
             frames = self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches)
-            rows = next(f for f in frames if any(line.startswith("/ " + typed) for line in f))
-            self.assertIn(f"› {label}", rows, typed)
-        # A word the branch starts with, or its whole name, selects it, and the plan names it.
+            rows = next(f for f in frames if any(line.startswith(screen_new.PROMPT + typed) for line in f))
+            self.assertTrue(any(line.startswith(f"› {label}") for line in rows), (typed, rows))
+        # A word the branch starts with, or its whole name, selects it, and the plan names it, whole,
+        # not broken at its dash.
         frames = self.new_worktree_frames(list("login") + ["\x1b", "\x1b"], branches, (24, 60))
-        rows = next(f for f in frames if any(line.startswith("/ login") for line in f))
+        rows = next(f for f in frames if any(line.startswith(screen_new.PROMPT + "login") for line in f))
         self.assertTrue(any(line.startswith("› release/login-redirect") for line in rows))
-        plan = rows[next(i for i, line in enumerate(rows) if line.startswith("enter:")):]
-        self.assertIn("check out the existing branch release/login-redirect", " ".join(line[7:].strip() for line in plan))
-        self.assertIn("       release/login-redirect", plan)  # Whole, not broken at its dash.
+        self.assertEqual(rows[self.plan_start(rows)], "Checks out".ljust(screen_new.PLAN_COLUMN) + "release/login-redirect")
 
     def test_already_checked_out_shows_whichever_row_is_selected(self):
         git(self.repo, "branch", "main-old")
         cwd, branches = self.setup_branches()
         frames = self.new_worktree_frames(list("main") + [curses.KEY_DOWN, "\x1b", "\x1b"], branches, (24, 60))
         rows = next(f for f in frames if self.search_text(f) == "main" and any(line.startswith("› main-old") for line in f))
-        create = next(i for i, line in enumerate(rows) if "  → Open the worktree for “main”" in line)
+        create = next(i for i, line in enumerate(rows) if "  Open the worktree for “main”" in line)
         self.assertIn("Already checked out", rows[create + 1])  # Right below the create row.
 
     def test_new_worktree_plan_keeps_the_branch_tail_and_setup(self):
@@ -1080,13 +1200,14 @@ class WorktreeTests(unittest.TestCase):
         setup = 'printf "sandbox setup complete\\n"'
         frames = self.new_worktree_frames(list("available") + [curses.KEY_DOWN, "\t", "q", "\x1b", "\x1b"],
                                           branches, (16, 50), setup)
-        rows = next(f for f in frames if any(line.startswith("/ available") for line in f))
-        plan = rows[next(i for i, line in enumerate(rows) if line.startswith("enter:")):]
+        rows = next(f for f in frames if any(line.startswith(screen_new.PROMPT + "available") for line in f))
+        plan = rows[self.plan_start(rows):]
         self.assertTrue(any(line.rstrip().endswith("available-alpha") for line in plan), plan)  # The selected branch.
-        self.assertTrue(any("then runs printf" in line for line in plan))
+        self.assertTrue(any(line.startswith("Then runs   printf") for line in plan), plan)
         self.assertIn("tab details", rows[-1])
         details = next(f for f in frames if f[0].startswith("New worktree — details"))
-        self.assertIn(names[1], "".join(line[7:].strip() for line in details))  # ↓ chose beta; in full.
+        # ↓ chose beta; in full.
+        self.assertIn(names[1], "".join(line[screen_new.PLAN_COLUMN:].strip() for line in details))
         # Long destinations keep their distinguishing ends.
         paths = [branching.new_path(cwd, name).name for name in names]
         self.assertEqual([len(p) for p in paths], [100, 100])
@@ -1198,18 +1319,18 @@ class WorktreeTests(unittest.TestCase):
 
     def test_an_existing_branchs_name_selects_it_without_an_error(self):
         cwd, branches = self.setup_branches()
-        for typed, plan in (("existing", "check out the existing branch existing"),
-                            ("remote-only", "create a local branch tracking origin/remote-only")):
+        for typed, plan in (("existing", "Checks out".ljust(screen_new.PLAN_COLUMN) + "existing"),
+                            ("remote-only", "remote-only tracking origin/remote-only")):
             rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, (24, 60))
-                        if any(line.startswith("/ " + typed) for line in f))
-            self.assertIn(f"  + Create branch “{typed}”", rows)  # No “…”: it can't be created.
+                        if any(line.startswith(screen_new.PROMPT + typed) for line in f))
+            self.assertIn(f"  + Create “{typed}”", rows)  # Dim, with no base: it can't be created.
             self.assertIn("  " + util.ICONS["info"] + " This branch exists; enter checks it out.", rows)
             self.assertFalse(any(util.ICONS["error"] in line for line in rows), rows)
             self.assertTrue(any(line.startswith("› " + typed) for line in rows))
             self.assertIn(plan, " ".join(rows))
         # Moved back to the create row, the error applies again.
         frames = self.new_worktree_frames(list("existing") + [curses.KEY_UP, "\x1b", "\x1b"], branches, (24, 60))
-        rows = next(f for f in frames if "› + Create branch “existing”" in f)
+        rows = next(f for f in frames if "› + Create “existing”" in f)
         self.assertTrue(any(util.ICONS["error"] + " A branch with this name exists" in line for line in rows))
 
     def test_a_remote_qualified_name_means_the_remote_branch(self):
@@ -1228,7 +1349,7 @@ class WorktreeTests(unittest.TestCase):
         for typed, selected in (("origin/remote-only", "› remote-only"), ("origin/exist", "› existing"),
                                 ("origin/remote-o", "› remote-only")):
             rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, (24, 60))
-                        if any(line.startswith("/ " + typed) for line in f))
+                        if any(line.startswith(screen_new.PROMPT + typed) for line in f))
             self.assertTrue(any(line.startswith(selected) for line in rows), (typed, rows))
             self.assertFalse(any(util.ICONS["error"] in line for line in rows), rows)
 
@@ -1385,7 +1506,7 @@ class WorktreeTests(unittest.TestCase):
             typed = f"{remote}/feature/remote-two"
             for size in ((16, 50), (22, 100), (40, 140)):
                 rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, size)
-                            if any(line.startswith("/ " + typed) for line in f))
+                            if any(line.startswith(screen_new.PROMPT + typed) for line in f))
                 with self.subTest(typed=typed, size=size):
                     self.assertEqual(sum(line.startswith("  feature/remote-two") or line.startswith("› feature/remote-two")
                                          for line in rows), 1, rows)  # Only that remote's.
@@ -1451,7 +1572,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertTrue(any(line.rstrip().endswith(screen_new.TAB_CUE.strip()) for line in rows), rows)
         self.assertTrue(all(len(line.rstrip()) <= 47 for line in rows), rows)
         # A wide pane says it in the footer instead.
-        rows = frame((16, 100), "x" * 300)
+        rows = frame((16, 100), "x" * 600)
         self.assertIn("tab details", rows[-1])
         self.assertFalse(any(screen_new.TAB_CUE.strip() in line for line in rows))
 
@@ -1464,11 +1585,11 @@ class WorktreeTests(unittest.TestCase):
         self.assertNotIn("open", plan)
         self.assertIn("folder is missing; prune it with p", plan["error"])
         rows = next(f for f in self.new_worktree_frames(list("chore/gone") + ["\x1b", "\x1b"], branches, (22, 100))
-                    if any(line.startswith("/ chore/gone") for line in f))
+                    if any(line.startswith(screen_new.PROMPT + "chore/gone") for line in f))
         self.assertTrue(any(util.ICONS["error"] + " It's checked out in a worktree whose folder is missing" in line
                             for line in rows), rows)
         self.assertFalse(rows[-1].startswith("enter open"))
-        self.assertFalse(any(line.startswith("enter:") for line in rows))
+        self.assertIsNone(self.plan_start(rows), rows)  # No plan: enter can't go anywhere.
 
     def test_a_remotes_name_alone_cant_be_a_new_branch(self):
         cwd, branches = self.setup_branches()
@@ -1605,13 +1726,18 @@ class WorktreeTests(unittest.TestCase):
                 drive(screen, lambda: picker.new_screen(root=True))
             details = next(screen.text(i) for i in range(len(screen.frames))
                            if any(line.startswith("New worktree — details") for line in screen.text(i)[:2]))
-            lines = [line[len(screen_new.PREFIX):].rstrip() for line in details[:-1]
-                     if line.startswith(screen_new.PREFIX) or line.startswith(" " * len(screen_new.PREFIX))]
-            sentence = "then runs " + setup
-            start = next(i for i, line in enumerate(lines) if line.startswith("then runs"))
+            # The command, after its label, and the rows under it, in the label's column.
+            column = screen_new.PLAN_COLUMN
+            start = next(i for i, line in enumerate(details) if line.startswith("Then runs"))
+            lines = [details[start][column:].rstrip()]
+            for line in details[start + 1:-1]:
+                if not line.strip() or not line.startswith(" " * column):
+                    break
+                lines.append(line[column:].rstrip())
+            sentence = setup
             with self.subTest(size=size):
-                self.assertTrue(all(line in sentence for line in lines[start:]), lines)
-                self.assertEqual("".join(lines[start:]).replace(" ", ""), sentence.replace(" ", ""))
+                self.assertTrue(all(line in sentence for line in lines), lines)
+                self.assertEqual("".join(lines).replace(" ", ""), sentence.replace(" ", ""))
                 if size[1] >= 100:
                     self.assertTrue(any('"keep  two  spaces\\n"' in line for line in lines), lines)
 
@@ -1622,7 +1748,6 @@ class WorktreeTests(unittest.TestCase):
         screen = FakeScreen(keys, size)
         picker = self.picker(screen)
         picker.branches = lambda: branches
-        picker.new_branch_screen = lambda *args: self.fail("enter went on to name a branch")
         with patch.dict(ui.COLORS, styles), patch.object(worktrees, "setup_command", return_value=""):
             drive(screen, lambda: picker.new_screen(root=True))
         return screen, styles
@@ -1630,8 +1755,32 @@ class WorktreeTests(unittest.TestCase):
     @staticmethod
     def search_text(rows):
         """The text in a screen's filter, without the list's position beside it."""
-        line = next((line for line in rows[:3] if line.startswith("/ ")), "")
-        return line[2:].split("  ")[0].rstrip()
+        for prompt in ("/ ", screen_new.PROMPT):  # The list's, or New worktree's.
+            line = next((line for line in rows[:3] if line.startswith(prompt)), None)
+            if line is not None:
+                return line[len(prompt):].split("  ")[0].rstrip()
+        return ""
+
+    def test_why_text_cant_be_a_branch_is_dim_until_its_row_is_selected(self):
+        git(self.repo, "branch", "feat/login-flow")
+        cwd, branches = self.setup_branches()
+        # feat names no branch, but can't be one beside feat/login-flow, which typing selects.
+        screen, styles = self.frames_with_styles(list("feat") + [curses.KEY_UP, "\n", "\x1b", "\x1b"], branches,
+                                                 (24, 100))
+        index = next(i for i in range(len(screen.frames)) if self.search_text(screen.text(i)) == "feat")
+        frames = screen.frames[index:index + 3]  # The branch selected, then the create row, then enter.
+
+        def note(frame):
+            return next(seg for row in frame for seg in row if "can't be a branch while feat/login-flow" in seg[0])
+
+        self.assertTrue(any(line.startswith("› feat/login-flow") for line in screen.text(index)))
+        self.assertTrue(note(frames[0])[1] & styles["dim"] and not note(frames[0])[1] & styles["red"])
+        self.assertIn(util.ICONS["info"], note(frames[0])[0])  # Not an error while enter goes elsewhere.
+        self.assertIn("› + Create “feat”", screen.text(index + 1))
+        self.assertTrue(note(frames[1])[1] & styles["red"] and not note(frames[1])[1] & styles["bold"])
+        self.assertIn(util.ICONS["error"], note(frames[1])[0])
+        self.assertNotIn("enter", self.footer_keys(frames[1]))
+        self.assertTrue(note(frames[2])[1] & styles["red"] and note(frames[2])[1] & styles["bold"])  # Refused.
 
     def test_a_remotes_name_lists_its_branches_with_a_dim_hint(self):
         cwd, branches, shas = self.two_remotes()
@@ -1678,7 +1827,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertFalse(branching.named_remotes([origin, {"kind": "local", "name": "b", "ref": "b"}]))
         cwd, branches = self.setup_branches()  # Only origin: "remote", as before.
         rows = next(f for f in self.new_worktree_frames(list("remote-only") + ["\x1b", "\x1b"], branches, (22, 100))
-                    if any(line.startswith("/ remote-only") for line in f))
+                    if any(line.startswith(screen_new.PROMPT + "remote-only") for line in f))
         self.assertTrue(next(line for line in rows if line.startswith("› remote-only")).rstrip().endswith("remote"))
 
     def test_remove_cut_tab_name_says_tab_shows_all_when_the_footer_cant(self):
@@ -1761,14 +1910,20 @@ class WorktreeTests(unittest.TestCase):
                     check(flash.rows(width), width, "dirty_refusal")
                     check(screen_new.note_rows(name, "error", "danger", width), width, "note_rows")
                     check(screen_new.error_rows(name, width, 3), width, "error_rows")
-                    sentences = [f"check out the existing branch {name}", ("in " + rex_paths + "/" + name, "path"),
-                                 "at " + rex_paths + "/" + name,
-                                 ("then runs " + name, "end")]
+                    sentences = [("Checks out", name), ("In", rex_paths + "/" + name, "path"),
+                                 ("In", rex_paths + "/" + name), ("Then runs", name, "end")]
                     for limit in (1, 3, 1000):
-                        check(screen_new.plan_lines(sentences, width, limit, "check out " + name)[0], width, "plan")
+                        check(screen_new.plan_lines([(t, *k) if k else t for _, t, *k in sentences], width, limit,
+                                                    "a branch from " + name)[0], width, "plan")
                         for cue in (False, True):
-                            rows, _ = screen_new.plan_rows(sentences, width, limit, "check out " + name, cue)
+                            rows, _ = screen_new.plan_rows(sentences, width, limit, "a branch from " + name, cue)
                             check(rendered(rows, width), width, "plan_rows")
+                    bases = [{"ref": "origin/" + name, "label": "origin/" + name, "note": "default branch"},
+                             {"ref": "HEAD", "label": name, "note": "current branch"}]
+                    tops = [{"kind": "create", "base": base} for base in bases]
+                    for index in (0, 1):
+                        check(rendered(screen_new.create_rows(tops, name, width, index).values(), width), width,
+                              "create_rows")
                     entry = {"name": name, "worktree": rex_paths + "/" + name, "branch": "refs/heads/" + name,
                              "track": ["remote deleted", "2 ahead"], "dirty": True, "open": True, "time": 0,
                              "pr": {"number": 12345, "state": "MERGED", "isDraft": False}}
@@ -1809,7 +1964,6 @@ class WorktreeTests(unittest.TestCase):
                                         (height, width))
                     picker = self.picker(screen)
                     picker.branches = lambda: branches
-                    picker.new_branch_screen = lambda *args: False
                     picker.create_and_open = lambda cwd, plan: None  # Rendering only: nothing is created.
                     picker.open_checked_out = lambda plan, flash: False
                     with patch.object(worktrees, "setup_command", return_value="printf '" + name + "'"):
@@ -1886,8 +2040,8 @@ class WorktreeTests(unittest.TestCase):
         # Newer first, so the longer names would come first by their order alone.
         self.assertLess(names.index("feature/login-redirect-v2"), names.index("feature/login-redirect"))
         self.assertLess(names.index("feature/x-2"), names.index("feature/x"))
-        cases = [("fix/a", "› → Open the worktree for “fix/a”", "enter open"),
-                 ("main", "› → Open the worktree for “main”", "enter open"),
+        cases = [("fix/a", "› Open the worktree for “fix/a”", "enter open"),
+                 ("main", "› Open the worktree for “main”", "enter open"),
                  ("chore/gone", "› + Create a new branch", "↑/↓ move"),  # Its folder is missing: no enter.
                  ("feature/login-redirect", "› feature/login-redirect ", "enter create"),
                  ("feature/x", "› feature/x ", "enter create"),
@@ -1935,7 +2089,7 @@ class WorktreeTests(unittest.TestCase):
         branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
         rows = next(f for f in self.new_worktree_frames(list("fork/feature/remote-two") + ["\x1b", "\x1b"], branches,
                                                          (16, 50)) if self.search_text(f) == "fork/feature/remote-two")
-        self.assertTrue(any(line.startswith("› → Open the worktree for") for line in rows), rows)
+        self.assertTrue(any(line.startswith("› Open the worktree for") for line in rows), rows)
         self.assertIn("fork's version differs; the local branch tracks origin.", " ".join(line.strip() for line in rows))
         # At fork's commit, or with no upstream at another, it says so only where they differ.
         git(self.repo, "update-ref", "refs/remotes/fork/feature/remote-two", shas["origin"])
@@ -2010,9 +2164,15 @@ class WorktreeTests(unittest.TestCase):
                 rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, size)
                             if self.search_text(f) == typed)
                 with self.subTest(typed=typed, size=size):
-                    self.assertIn(f"› → Open the worktree for “{branch}”", rows)
+                    # The only row selected, not a longer name that starts so. A narrow pane cuts the
+                    # name's middle, and the plan names it in full.
+                    selected = [line for line in rows if line.startswith("› ")]
+                    self.assertEqual(len(selected), 1, rows)
+                    self.assertTrue(selected[0].startswith("› Open the worktree for “"), rows)
+                    shown = selected[0][len("› Open the worktree for “"):-1]
+                    self.assertTrue(shown == branch or (size[1] == 50 and branch.endswith(shown.split("…")[-1])), rows)
+                    self.assertIn(branch, " ".join(line.strip() for line in rows[self.plan_start(rows):]))
                     self.assertTrue(rows[-1].startswith("enter open"), rows[-1])
-                    self.assertFalse(any(line.startswith("› ") and "→" not in line for line in rows), rows)
         # Its folder missing, it's refused just as the exact name is, naming no branch to create.
         plan = branching.plan_branch(cwd, branches, "CHORE/GONE")
         self.assertEqual((plan["branch"], "missing" in plan), ("chore/gone", True))
@@ -2397,8 +2557,8 @@ class WorktreeTests(unittest.TestCase):
 
     def test_footers_list_only_keys_that_can_act(self):
         """The keys rule (see the README's design rules): a footer lists only the keys that would
-        act now, and pressing one it leaves out is refused, saying why, or for New worktree's and
-        New branch's enter, making the reason on screen stand out. Each scenario is a screen
+        act now, and pressing one it leaves out is refused, saying why, or for New worktree's
+        enter, making the reason on screen stand out. Each scenario is a screen
         reached by some keys, then a key's name, the keys that press it, and whether it's refused
         there: the footer before the press lists the key exactly when the press isn't refused.
         Add scenarios as screens change."""
@@ -2460,21 +2620,19 @@ class WorktreeTests(unittest.TestCase):
 
         cwd, branches = self.setup_branches()
 
-        def run_new(keys):
+        def run_new(keys, branches=branches):
             screen = FakeScreen(keys + ["\x1b"] * 3, (24, 100))
             picker = self.picker(screen)
             picker.branches = lambda: branches
-            picker.create_and_open = picker.new_branch_screen = picker.open_checked_out = act
+            picker.create_and_open = picker.open_checked_out = act
             with patch.object(worktrees, "setup_command", return_value=""):
                 drive(screen, lambda: picker.new_screen(root=True))
             return screen.frames, bool(said) or not acted
 
-        def run_new_branch(keys):
-            screen = FakeScreen(keys + ["\x1b"] * 3, (24, 100))
-            picker = self.picker(screen)
-            picker.create_and_open = act
-            drive(screen, lambda: picker.new_branch_screen(cwd, branches))
-            return screen.frames, bool(said) or not acted
+        # Two bases, so there are two create rows.
+        bases = [{"ref": "HEAD", "label": "origin/main", "note": "default branch"},
+                 {"ref": "HEAD", "label": "main", "note": "current branch"}]
+        run_new_two = lambda keys: run_new(keys, {**branches, "bases": bases})  # noqa: E731
 
         presses = {"enter": ["\n"], "s": ["s"], "dd": ["d", "d"], "c": ["c"], "p": ["p"]}
         # The list's keys refused on each row: with every kind of worktree, then with nothing
@@ -2498,12 +2656,19 @@ class WorktreeTests(unittest.TestCase):
             ("cleanup, on a clean row", run_cleanup, ["j"], "space", [" "], False),
             ("cleanup, one checked", run_cleanup, [], "enter", ["\n"], False),
             ("cleanup, none checked", run_cleanup, ["j", " "], "enter", ["\n"], True),
-            ("new worktree, no text", run_new, [], "enter", ["\n"], False),
+            ("new worktree, no text", run_new, [], "enter", ["\n"], True),
+            ("new worktree, no text, on a branch", run_new, [curses.KEY_DOWN], "enter", ["\n"], False),
+            ("new worktree, a new name", run_new_two, list("fix it"), "enter", ["\n"], False),
+            ("new worktree, a new name from the second base", run_new_two, list("fix it") + [curses.KEY_DOWN],
+             "enter", ["\n"], False),
             ("new worktree, a branch", run_new, list("existing"), "enter", ["\n"], False),
+            ("new worktree, a branch, its create row", run_new, list("existing") + [curses.KEY_UP], "enter",
+             ["\n"], True),
+            ("new worktree, checked out", run_new, list("main"), "enter", ["\n"], False),
             ("new worktree, can't be created", run_new, list("origin/new-idea"), "enter", ["\n"], True),
+            ("new worktree, half typed", run_new, list("fix/"), "enter", ["\n"], True),
+            ("new worktree, nothing usable", run_new, list("///"), "enter", ["\n"], True),
             ("new worktree, ctrl+g on the create row", run_new, [], "ctrl+g", ["\x07"], True),
-            ("new branch, no name", run_new_branch, [], "enter", ["\n"], True),
-            ("new branch, a name", run_new_branch, list("fix-it"), "enter", ["\n"], False),
         ]
         with patch.object(ui.Flash, "set", record):
             for name, run, before, key, keys, expected in scenarios:

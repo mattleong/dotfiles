@@ -33,14 +33,16 @@ python3 -m unittest test_worktrees
 awkward names (empty, one character, very long, unicode, spaces); keep it passing when you add a
 screen or change how one fits.
 
-The list's letters are commands, so its filter starts only with `/`. Screens built around a text
-input (the list's filter while typing, New worktree, and New branch) take every printable key as
-text, and move their list with keys that can't be text: the arrows and ctrl+n/p, plus page up/down
-and home/end where the list scrolls. In New worktree and New branch, esc clears the text, then goes
-back. In the list's filter, esc stops typing and keeps the filter, so the list's keys act on what
-it found (the footer says `esc done`); with the filter kept, esc clears it, and with no filter, esc
-quits. Keep new keys within that split. In New worktree and New branch, tab, which can't be text
-either, shows what enter would do in full; confirmations use it the same way.
+The list's letters are commands, so its filter starts only with `/`, which is its prompt. Screens
+built around a text input (the list's filter while typing, and New worktree) take every printable
+key as text, and move their list with keys that can't be text: the arrows and ctrl+n/p, plus page
+up/down and home/end where the list scrolls. New worktree's input is always typing, so its prompt
+is a word, `Branch`, rather than a key to press. In New worktree, esc clears the text, then goes
+back, or quits when the picker opened straight into it. In the list's filter, esc stops typing and
+keeps the filter, so the list's keys act on what it found (the footer says `esc done`); with the
+filter kept, esc clears it, and with no filter, esc quits. Keep new keys within that split. In New
+worktree, tab, which can't be text either, shows what enter would do in full; confirmations use it
+the same way.
 
 The list puts the main checkout first, then the rest by their latest commit, newest first. `S`
 cycles that (`recent`) with `state` (changes, open pull requests, the rest, finished ones, then
@@ -67,25 +69,48 @@ doesn't find `dependabot/npm_and_yarn/webpack-5.94.0`. Matches score higher for 
 each other and ones that start words, so whole words rank first. The list also matches a word no
 branch matches against the worktree's path, but only as a plain substring, since paths are long.
 
-While you type in New worktree, its first row, which creates a branch from the text, stays
-selected unless the text is an existing branch's name or the start of a word in one (see
-`matching.strong`), so enter never checks out a branch you didn't mean. A name typed in full beats
-longer names that start with it: a listed branch goes first and is selected (see `matching.exact`),
-and a checked-out one, which isn't listed, keeps the first row selected, since that row opens it,
+New worktree is one screen for an existing branch and a new one: the text filters the branches
+that have no worktree, and names a new branch. With no text, the list shows local branches
+committed to in the last 30 days, then remote-only ones from then, then everything older, each
+newest first (see `branching.load_branches`), under a dim row asking for a name; the footer offers
+enter once a row can act. Text that can be a new branch gets a create row for each branch it can
+start from, the default branch first, as `+ Create “fix-login” from origin/main   default branch`,
+then the current branch (one row when they're the same). The row shows the name as it will be, so
+`Fix the login` reads `Fix-the-login`, and a long one loses its middle alike in every row. Enter
+acts on the selected row at once, and the plan below the list says exactly what it does, a
+sentence to a row after a dim label: `Creates` the branch from its base, or tracking a remote
+branch, `Checks out` a local one, or `Opens` a worktree; `In` its folder; `Then runs` the setup
+command (`git config rex.worktreeSetup`). Text Git couldn't end a branch with, such as `fix/` on
+the way to `fix/login`, gets a dim hint to type the rest rather than a row that creates `fix`.
+
+While you type, the first create row stays selected, or the create row you typed on from, unless
+the text is an existing branch's name or the start of a word in one (see `matching.strong`), so
+enter never checks out a branch you didn't mean. A name typed in full beats longer names that start
+with it: a listed branch goes first and is selected (see `matching.exact`), and a checked-out one,
+which isn't listed, gets a row of its own, `Open the worktree for “fix/a”`, which stays selected,
 even typed with spaces or other capitals, such as `fix a` for `fix/a`. Of branches with the same
-name on several remotes, `checkout.defaultRemote`'s, else origin's, goes first. Text such as `origin/fix`,
-as `git branch -r` lists branches, matches the branches on that remote by the rest (see
-`branching.query_for`), never another remote's, even one with the same name, and never creates a
-local `origin/…` branch; `origin/` alone lists all of origin's branches. When `fork/x` means a
-local `x` that tracks another remote and is at another commit, a dim note says so, leading with
-the difference, and tab shows it in full. A remote's name alone
-can't be a new branch either, but it's most likely on the way to `origin/…`, so its note is a dim
-hint. When the text names a branch that exists, the note under the first row is dim too, not an
-error, because enter goes to that branch: it checks out the selected branch, or opens the worktree
-a checked-out one is in, and the first row then says `→ Open the worktree for “…”`. Red, the danger
-role, is for text that can't go anywhere, such as a branch checked out in a worktree whose folder is
-missing. Where enter can't go anywhere, the footer leaves it out, and pressing it makes the note
-stand out.
+name on several remotes, `checkout.defaultRemote`'s, else origin's, goes first. Text such as
+`origin/fix`, as `git branch -r` lists branches, matches the branches on that remote by the rest
+(see `branching.query_for`), never another remote's, even one with the same name, and never
+creates a local `origin/…` branch; `origin/` alone lists all of origin's branches. When `fork/x`
+means a local `x` that tracks another remote and is at another commit, a dim note says so, leading
+with the difference, and tab shows it in full.
+
+Text that can't be a new branch gets one dim row in place of the create rows, with a note under it
+saying why: it names a branch that exists, or one checked out in a worktree whose folder is
+missing; it's a remote's name, or starts with one; it would clash with a branch, as `feat` does
+with `feat/x`; or nothing in it can be a name. While an existing branch is selected, the note is
+dim, since enter goes there instead. Only when that row is selected, or enter is pressed on it,
+does the note take its warning's role: red, the danger role, for text that can't go anywhere, and
+for a remote's name alone, which is most likely on the way to `origin/…`, a hint that stays dim
+until enter makes it stand out. Where enter can't act, the footer leaves it out, and pressing it
+makes the reason stand out.
+
+When creating fails, the screen stays, with Git's message, and lists the branches again, so the
+rows and the plan are made afresh: a folder that appeared since the plan named it means another
+folder, and a branch that appeared means selecting it. Before Git runs, `branching.create_worktree`
+checks the folder is still free, since Git would create the new branch before finding it taken.
+
 Branches only on a remote say so in the FROM column: `remote` for origin, or the remote's name,
 for every remote when more than one has branches. The columns are sized to every branch that
 matches, not just the rows in view, so they stay put while the list scrolls.

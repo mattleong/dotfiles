@@ -719,20 +719,24 @@ def help_row(*items):
 SEARCH_MIN = 12  # The columns a filter's text keeps before a mark beside it drops out.
 
 
-def search_row(text, pos, filtering, width, placeholder="type to filter", mark=""):
-    """A filter input, scrolled to keep the cursor in view, with mark, such as how many rows
-    match, dim at its right while the text keeps SEARCH_MIN columns. Returns (row, cursor column
-    or None)."""
-    if mark and width - len(mark) - 2 >= SEARCH_MIN:
-        row, column = search_row(text, pos, filtering, width - len(mark) - 2, placeholder)
+def search_row(text, pos, filtering, width, placeholder="type to filter", mark="", prompt="/ "):
+    """A text input after its prompt, scrolled to keep the cursor in view, with mark, such as how
+    many rows match, dim at its right while the text keeps SEARCH_MIN columns. The list's prompt
+    is /, the key that starts its filter; a screen whose input takes every key, such as New
+    worktree, has a prompt that doesn't suggest pressing one. Returns (row, cursor column or
+    None)."""
+    if mark and width - len(mark) - len(prompt) >= SEARCH_MIN:
+        row, column = search_row(text, pos, filtering, width - len(mark) - 2, placeholder, prompt=prompt)
         return with_mark(row, mark, width), column
     if not filtering and not text:
         return [("/ to filter", style("dim"))], None
-    prompt = ("/ ", style("select") | style("bold") if filtering else style("dim"))
-    if not text:
-        return [prompt, (placeholder, style("dim"))], 2
-    visible, column = input_view(text, pos, width - 2)
-    return [prompt, (visible, 0)], (2 + column if filtering else None)
+    shown = (prompt, style("select") | style("bold") if filtering else style("dim"))
+    if not text:  # Cut to its width, so a mark beside it still shows.
+        room = max(1, width - len(prompt))
+        placeholder = placeholder if len(placeholder) <= room else placeholder[:room - 1].rstrip() + "…"
+        return [shown, (placeholder, style("dim"))], len(prompt)
+    visible, column = input_view(text, pos, width - len(prompt))
+    return [shown, (visible, 0)], (len(prompt) + column if filtering else None)
 
 
 NAVIGATION_HELP = [
