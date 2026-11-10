@@ -10,9 +10,14 @@ import util
 import worktrees
 
 
-# The input's prompt. Not "/", which is the key that starts the list's filter: here every key types.
+# The input's prompt, a word: the keys that start typing here are i, a, and /, and the list's is
+# just /, its prompt.
 PROMPT = "Branch  "
-PLACEHOLDER = "name a new branch, or filter the list"
+PLACEHOLDER = "name a new branch, or filter the list"  # While typing, before any text.
+# Not typing, with no text: the key that starts typing, as the list's "/ to filter" says.
+IDLE = "i to type a name or filter"
+# A letter pressed while not typing does nothing else: it's never taken as text.
+NUDGE = "Press i to type a name."
 
 # The plan below the list says what enter does, a sentence to a row, each after a dim label in a
 # column, such as "Creates     fix-login from origin/main". The column fits the longest label
@@ -187,17 +192,18 @@ def create_rows(tops, typed, width, index):
     return rows
 
 
-def head_row(head, typed, width, selected, nudge):
+def head_row(head, typed, width, selected, nudge, typing=True):
     """A row above the existing branches, for what the text can do (see heads), other than a create
     row (see create_rows): ask for a name, open a checked-out branch's worktree, or, dim, a branch
     the text can't be. The selected one is bold; nudge, when enter was pressed on the row asking
-    for a name, makes it stand out."""
+    for a name, makes it stand out. Not typing, the row asking for a name says which key starts."""
     kind, plan = head["kind"], head.get("plan") or {}
     bold = ui.style("bold") if selected else 0
     width -= 2  # The pointer.
     if kind == "type":
         attr = (ui.style("attention") | ui.style("bold")) if nudge else ui.style("dim") | bold
-        row = [("+ Type a name to create a branch", attr)]
+        row = [("+ Type a name to create a branch" if typing else "+ Press i and type a name to create a branch",
+                attr)]
     elif kind == "open":
         row = [(quoted("Open the worktree for ", plan["branch"], "", width), ui.style("live") | bold)]
     else:  # Dim: the note below says why the text can't be a new branch.
@@ -235,31 +241,42 @@ def heads(text, create, branches, bases, planned):
 
 class NewScreens:
     def new_screen(self, root=False, text=""):
-        """Create a worktree, for an existing branch or a new one. Every printable key types, so
-        typing a name never runs a command; the list moves with the arrows. Above the existing
-        branches are the rows for what the text can do (see heads); enter acts on the selected
-        row at once, and the plan below the list says what it will do. While typing, the first
-        create row stays selected, or the one typing went on from, unless the text surely means
-        an existing branch (see matching.strong). Returns True once a worktree is created or
-        opened. root is True when the picker opened straight into this screen, so esc quits.
-        text starts the input, such as with the list's filter that found no worktrees.
+        """Create a worktree, for an existing branch or a new one. Like the list's filter, it has
+        two modes, and it always opens in normal mode, where the list's motions move and letters
+        are keys: i, a, or / starts typing, at the end of the text. While typing, every printable
+        key types, so typing a name never runs a command, and the list moves with keys that can't
+        be text, such as the arrows; esc stops typing and keeps the text. Above the existing
+        branches are the rows for what the text can do (see heads); enter acts on the selected row
+        at once, in either mode, and the plan below the list says what it will do. While typing,
+        the first create row stays selected, or the one typing went on from, unless the text
+        surely means an existing branch (see matching.strong). Returns True once a worktree is
+        created or opened. root is True when the picker opened straight into this screen, so
+        going back quits. text starts the input, such as with the list's filter that found no
+        worktrees; the screen opens in normal mode all the same.
 
         Frames aren't drawn while keys are waiting, as when text is pasted, so the screen keeps up;
         and enter acts only on a frame that was drawn with nothing waiting. One pressed before, as
         at the end of pasted text, draws the frame instead and is dropped, so pressing enter again
-        acts on what's on screen."""
+        acts on what's on screen. That holds in either mode, so pasted text that starts typing,
+        such as i, then a name and a newline, types the name and creates nothing."""
         stdscr = self.stdscr
         keyboard.set_timeout(stdscr, -1)
         cwd = self.cwd
         branches = self.branches()
         setup = worktrees.setup_command(cwd)
         tpos, index, top = len(text), None, 0  # index None: choose once the list is filtered.
+        typing = False  # Normal mode first, as the list opens.
+        pending = None  # A motion typed partway, such as a count or a g (see keyboard.motion).
         base = 0  # The create row typing went on from, so a name keeps the base chosen for it.
         reselect = None  # A branch to select again once the branches reload, by its ref.
         moved = False
         plans = {}  # New branches' plans, since checking a name runs Git.
         back = "quit" if root else "back"
         flash = ui.Flash()
+
+        def say(why):  # Why a key can't act.
+            flash.set(why, "attention")
+
         nudge = False  # Enter was pressed where it can't go anywhere: the reason stands out.
         show = False  # Draw the next frame even with keys waiting: an enter was dropped for it.
         while True:
@@ -313,7 +330,9 @@ class NewScreens:
 
             height, _ = stdscr.getmaxyx()
             space = ui.space(stdscr)
-            status = flash.rows(space)
+            # A message, or what a half-typed gg, gp, or count needs next, as in the list.
+            half_typed = keyboard.pending_note(pending, "p to open the pull request")
+            status = flash.rows(space) or ([[(half_typed, ui.style("dim"))]] if half_typed else [])
             # Why the text can't be a new branch, right below the rows for it, whichever row is
             # selected: in its warning's role while those rows are, but dim while an existing
             # branch is, since enter goes there instead. Text such as origin/fi, partway to a remote
@@ -349,7 +368,8 @@ class NewScreens:
             # Tab shows what enter does whenever there's a plan or a note; else, why not.
             no_tab = "Nothing more to show: it's all on screen."
             if kind == "type":
-                no_tab = "Nothing to show yet: type a name, or select a branch, and tab shows what enter does."
+                no_tab = ("Nothing to show yet: " + ("type a name" if typing else "press i and type a name")
+                          + ", or select a branch, and tab shows what enter does.")
             # What enter does, wrapped, below the list, with at least two of the list's rows left.
             limit = max(1, room - fixed - 1 - min(2, max(1, len(existing))))
             # Enter acts on a create row, the row opening a checked-out branch, or a branch whose
@@ -364,15 +384,32 @@ class NewScreens:
                 action, cut = plan_rows(lines, space, limit, short) if lines else ([], False)
             # Once typing selected a branch, ↑ is the way back to the create rows, so it outlasts tab.
             moved = moved and not on_head
+            no_pr = "" if not on_head else "Select an existing branch to open its pull request."
             keys = ui.Keys()
-            keys.add("enter", "open" if kind == "open" else "create", can=can_enter)
-            keys.add("↑/↓", "move", rank=2 if moved else 3, can=len(items) > 1)
             # Tab shows what enter does whenever there's a plan or a note; listed when they're cut.
-            keys.add("tab", "details" if cut or note_hidden else "", rank=3 if moved else 2,
-                     why="" if lines or noted else no_tab)
-            keys.add("?", "help", rank=1)
-            keys.add("esc", "clear" if text else back)
-            keys.add("ctrl+g", why="" if not on_head else "Select an existing branch to open its pull request.")
+            tab = ("details" if cut or note_hidden else "", "" if lines or noted else no_tab)
+            if typing:
+                keys.add("enter", "open" if kind == "open" else "create", can=can_enter)
+                keys.add("↑/↓", "move", rank=2 if moved else 3, can=len(items) > 1)
+                keys.add("tab", tab[0], rank=3 if moved else 2, why=tab[1])
+                keys.add("?", "help", rank=1)
+                keys.add("esc", "done")  # Stops typing, keeping the text.
+            else:
+                # The keys drop in a narrow pane as the list's do: the moves first, then tab, q,
+                # esc, and ?; enter and i, the way to type, stay. On the row asking for a name,
+                # enter starts typing too, but only i is listed, since listing both says it twice.
+                if kind == "type":
+                    keys.add("enter")
+                else:
+                    keys.add("enter", "open" if kind == "open" else "create", can=can_enter)
+                keys.add("i", "type")
+                keys.add("j/k", "move", rank=4 if moved else 5, can=len(items) > 1)
+                keys.add("tab", tab[0], rank=5 if moved else 4, why=tab[1])
+                keys.add("?", "help", rank=1)
+                keys.add("esc", "clear", rank=2, can=bool(text))  # With no text, esc goes back, as q does.
+                keys.add("q", back, rank=3)
+                keys.add("gp", why=no_pr)
+            keys.add("ctrl+g", why=no_pr)  # Also while typing, where gp would be text.
             footer = keys.row()
             if (cut or note_hidden) and not keys.fits("tab", space):
                 # The footer had no room for tab: what's cut says so itself.
@@ -393,14 +430,18 @@ class NewScreens:
             # selected branch's place at the right when the list scrolls.
             mark = f"{list_index + 1}/{len(existing)}" if list_index >= 0 and len(existing) > capacity else ""
             count = f"{len(existing)} of {len(suggestions)}" if text.strip() else ""
-            heading[1], column = ui.search_row(text, tpos, True, space, PLACEHOLDER, mark, PROMPT, count)
+            heading[1], column = ui.search_row(text, tpos, typing, space, PLACEHOLDER, mark, PROMPT, count, IDLE)
+            # The rows in view, for H, M, and L: the rows for the text, always shown, then the
+            # branches the list shows.
+            view = list(range(len(tops))) + [len(tops) + i for i in keyboard.view_rows(top, capacity, len(existing))]
 
             # Keys already waiting were pressed before this frame could be seen.
             ahead = keyboard.pending_input(stdscr)
             if not ahead or show:
                 show = False
                 creates = create_rows(tops, typed, space, index)
-                body = [creates[i] if i in creates else head_row(head, typed, space, i == index, nudge and i == index)
+                body = [creates[i] if i in creates
+                        else head_row(head, typed, space, i == index, nudge and i == index, typing)
                         for i, head in enumerate(tops)] + note + [[]]
                 if existing:
                     visible = existing[top:top + capacity]
@@ -417,15 +458,41 @@ class NewScreens:
                 continue
             flash.clear()
             nudge = False
-            new_index = keyboard.typing_motion(key, index, len(items), capacity)
-            if new_index is not None:
-                index, moved = new_index, False
-            elif key == keyboard.ESCAPE:
-                if not text:
+            if typing:
+                new_index = keyboard.typing_motion(key, index, len(items), capacity)
+                if new_index is not None:
+                    index, moved = new_index, False
+                    continue
+                if key == keyboard.ESCAPE:
+                    typing = False  # Keeping the text and the selected row, for the keys to act on.
+                    continue
+            else:
+                g = bool(pending) and pending.endswith("g")  # A g typed, perhaps after a count.
+                if g and key not in ("g", "p"):
+                    pending = None  # An unfinished gg or gp: the next key only cancels it, as in the list.
+                    continue
+                if g and key == "p":
+                    pending = None
+                    if not keys.refused("gp", say):
+                        self.open_pr({"pr": self.prs.get(items[index]["name"])}, flash)
+                    keyboard.set_timeout(stdscr, flash.wait(-1))
+                    continue
+                new_index, pending = keyboard.motion(key, index, len(items), capacity, pending, view)
+                if new_index is not None:
+                    index, moved = new_index, moved and new_index == index  # Not moved by a count's digits.
+                    continue
+                if key in ("i", "a", "/"):  # As in Vim; / as in the list.
+                    typing, tpos = True, len(text)
+                    continue
+                if key == keyboard.ESCAPE:  # As in the list: the text goes first, then the screen.
+                    if not text:
+                        return False
+                    text, tpos, index, base = "", 0, None, 0
+                    continue
+                if key == "q":
                     return False
-                text, tpos, index, base = "", 0, None, 0
-            elif key == "\t":  # Never part of a branch name.
-                if not keys.refused("tab", lambda why: flash.set(why, "attention")):
+            if key == "\t":  # Never part of a branch name.
+                if not keys.refused("tab", say):
                     ui.page(stdscr, "New worktree — details", lambda width: [[]] + (
                         plan_rows(lines, width, 1000)[0] if lines else []) + (
                         ([[]] if lines else []) + note_rows(*said[:3], width, limit=1000)
@@ -433,12 +500,18 @@ class NewScreens:
             elif key == "?":  # Never part of a branch name.
                 self.new_help(root)
             elif key == "\x07":
-                if not keys.refused("ctrl+g", lambda why: flash.set(why, "attention")):
+                if not keys.refused("ctrl+g", say):
                     self.open_pr({"pr": self.prs.get(items[index]["name"])}, flash)
                 keyboard.set_timeout(stdscr, flash.wait(-1))
             elif key in keyboard.ENTER:
-                if ahead:  # Pressed before this frame could be seen: show it, and wait for another.
+                # Pressed before this frame could be seen: show it, and wait for another. This
+                # holds in both modes, so pasted text that starts typing, such as i or /, then a
+                # name and a newline, never creates what nobody saw.
+                if ahead:
                     show = True
+                    continue
+                if kind == "type" and not typing:  # The row asking for a name: start typing it.
+                    typing, tpos = True, len(text)
                     continue
                 if keys.refused("enter"):
                     nudge = True  # The row, the note, or the plan's error says why; it stands out.
@@ -462,15 +535,32 @@ class NewScreens:
                     index, reselect = None, None if on_head else items[index]["ref"]
                     continue
                 return True
-            else:
+            elif typing:
                 new_text, tpos = keyboard.edit_text(text, tpos, key)
                 if new_text != text:
                     if kind == "create":  # Typing on keeps this base, not one passed on the way down.
                         base = index
                     text, index = new_text, None
+            elif (isinstance(key, str) and key.isprintable() and not key.isspace()) or key in keyboard.BACKSPACE:
+                flash.set(NUDGE, "attention")  # Not typing: a letter is never text, but says how to type.
 
     def new_help(self, root):
-        ui.show_help(self.stdscr, "New worktree", [("Keys", [
+        back = "quit" if root else "go back"
+        ui.show_help(self.stdscr, "New worktree", [("Move", ui.NAVIGATION_HELP + [
+            ("↑ / ↓", "move, also while typing; so do ctrl+p / ctrl+n"),
+            ("pgup / pgdn", "a page up / down, also while typing"),
+            ("home / end", "the first / last row, also while typing"),
+        ]), ("Actions", [
+            ("i / a / /", "start typing, at the end of the text; so does enter on the row asking for a name"),
+            ("enter", "act on the selected row at once, also while typing: create the new branch and its "
+                      "worktree, create a worktree for the branch, or open the worktree a branch is checked out in"),
+            ("tab", "what enter does, in full: the branch, its folder, and the setup command, and "
+                    "a note that's cut short"),
+            ("gp", "open the selected branch's pull request in the browser; ctrl+g does too, also while typing"),
+            ("esc", f"clear the text; with none, {back}"),
+            ("q", back),
+            ("ctrl+c", "quit"),
+        ]), ("Typing", [
             ("typing", "filter the existing branches, or name a new branch"),
             ("create rows", "the typed name as a new branch, from the default branch or from the "
                             "current one, as it will be: spaces become dashes"),
@@ -478,16 +568,7 @@ class NewScreens:
                           "text is a branch's name or the start of one of its words"),
             ("whole name", "wins over longer names that start with it"),
             ("origin/name", "finds name among origin's branches only"),
-            ("↑ / ↓", "move; also ctrl+p / ctrl+n"),
-            ("pgup / pgdn", "a page up / down"),
-            ("home / end", "the first / last row"),
-            ("enter", "act on the selected row at once: create the new branch and its worktree, create "
-                      "a worktree for the branch, or open the worktree a branch is checked out in"),
-            ("tab", "what enter does, in full: the branch, its folder, and the setup command, and "
-                    "a note that's cut short"),
-            ("ctrl+g", "open the selected branch's pull request in the browser"),
-            ("esc", "clear the text; with none, " + ("quit" if root else "go back")),
-            ("ctrl+c", "quit"),
+            ("esc", "stop typing and keep the text, to use the keys above on it"),
         ]), ("Editing", TYPING_HELP), ("Labels", [
             ("3d", "time since the branch's last commit"),
             (ui.pr_cell({"pr": {"number": 12, "state": "OPEN"}})[0],

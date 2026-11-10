@@ -85,12 +85,12 @@ class ListScreen:
             widths = ui.column_widths(self.entries, space)
             index = shown.index(selected) if selected in shown else 0
 
-            # The status line: a message, or the second key a half-typed dd, gg, or gp needs.
+            # The status line: a message, or what a half-typed dd, gg, gp, or count needs next.
             note = ""
             if pending == "d" and selected:
                 note = f"d… press d again to {dd_verb(selected)} " + selected["name"]
-            elif pending == "g":
-                note = "g… then g for the first row, or p to open the pull request"
+            elif pending and pending != "d":
+                note = keyboard.pending_note(pending, "p to open the pull request")
             status = self.flash.rows(space) or [[(note, ui.style("dim"))] if note else []]
             # With nothing matching, enter (while typing) or n starts a new worktree for the filter.
             missing = query.strip() if not shown else ""
@@ -156,10 +156,11 @@ class ListScreen:
                     continue
             # Where the selection goes after an action: the same worktree, or the next one if it's gone.
             paths = [e["worktree"] for e in shown]
-            if pending and key not in (pending, "p" if pending == "g" else pending):
+            g = bool(pending) and pending.endswith("g")  # A g typed, perhaps after a count.
+            if (pending == "d" and key != "d") or (g and key not in ("g", "p")):
                 pending = None  # An unfinished dd, gg, or gp: the next key only cancels it.
                 continue
-            if selected is None and (key in ROW_KEYS or (pending == "g" and key == "p")):
+            if selected is None and (key in ROW_KEYS or (g and key == "p")):
                 pending = None
                 keys.refused(ROW_KEYS.get(key, "gp"), self.refuse)  # No worktree selected.
                 continue
@@ -173,17 +174,20 @@ class ListScreen:
                     selected = self.reselect(paths, index)
                     if self.emptied(shown, query):
                         query, qpos = "", 0
-                elif not keys.refused("dd", self.refuse):  # Refused at once, rather than after a second d.
-                    pending = "d"
+                else:
+                    # Refused at once, rather than after a second d. A count before it is dropped,
+                    # so 2dd removes the selected worktree and no other.
+                    pending = None if keys.refused("dd", self.refuse) else "d"
                 continue
-            if pending == "g" and key == "p":
+            if g and key == "p":
                 pending = None
                 self.open_pr(selected)
                 continue
-            new_index, pending = keyboard.motion(key, index, len(shown), capacity, pending)
+            new_index, pending = keyboard.motion(key, index, len(shown), capacity, pending,
+                                                 keyboard.view_rows(top, capacity, len(shown)))
             if new_index is not None:
                 selected = shown[new_index]
-            elif key == "/":
+            elif key in ("/", "i"):  # i as in Vim's insert; the footer names /, the filter's prompt.
                 filtering, qpos = True, len(query)
             elif key == "?":
                 self.list_help()
@@ -336,7 +340,7 @@ class ListScreen:
             ("r", "refresh"),
             ("q", "quit"),
         ]), ("Filter", [
-            ("/", "start typing a filter; while typing, every letter goes into it"),
+            ("/", "start typing a filter, as i does; while typing, every letter goes into it"),
             ("matching", "a word matches a branch that contains it, or that has its letters in order, "
                          "each right after the one before or at the start of a word: flf finds "
                          "feat/login-flow; a word no branch matches can match the worktree's path"),

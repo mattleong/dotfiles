@@ -680,8 +680,9 @@ class Keys:
 
     A screen builds its Keys afresh for every frame, adding each key it handles. In a narrow
     pane the footer drops its keys by rank, highest first: by convention j/k first, then the
-    screen's own actions from last to first, then tab, esc, and q; enter, /, and ? have rank 0,
-    and stay. On a screen that confirms something, q stays instead, and ? goes before tab."""
+    screen's own actions from last to first, then tab, esc, and q; enter, the key that starts
+    typing (the list's /, New worktree's i), and ? stay. On a screen that confirms something, q
+    stays instead, and ? goes before tab."""
 
     def __init__(self):
         self.offered = {}  # Each key's name -> (label, rank, whether it can act, why not).
@@ -733,23 +734,28 @@ def help_row(*items):
 SEARCH_MIN = 12  # The columns a filter's text keeps before a mark beside it drops out.
 
 
-def search_row(text, pos, filtering, width, placeholder="type to filter", mark="", prompt="/ ", count=""):
+def search_row(text, pos, filtering, width, placeholder="type to filter", mark="", prompt="/ ", count="",
+               idle=None):
     """A text input after its prompt, scrolled to keep the cursor in view. count, such as how many
     rows the text matches, goes right after the text, dim, so it reads with it, when the whole
     text fits beside it; mark, such as the selected row's place in a list that scrolls, goes dim
     at the right while the text keeps SEARCH_MIN columns. The list's prompt is /, the key that
-    starts its filter; a screen whose input takes every key, such as New worktree, has a prompt
-    that doesn't suggest pressing one. Returns (row, cursor column or None)."""
+    starts its filter; a screen whose prompt is a word, such as New worktree's, gives idle, what
+    its input says, after the prompt, when it's empty and not being typed in, such as which key
+    starts typing. Not typing, the prompt is dim and there's no cursor. Returns (row, cursor
+    column or None)."""
     if mark and width - len(mark) - len(prompt) >= SEARCH_MIN:
-        row, column = search_row(text, pos, filtering, width - len(mark) - 2, placeholder, prompt=prompt, count=count)
+        row, column = search_row(text, pos, filtering, width - len(mark) - 2, placeholder, prompt=prompt, count=count,
+                                 idle=idle)
         return with_mark(row, mark, width), column
-    if not filtering and not text:
+    if not filtering and not text and idle is None:
         return [("/ to filter", style("dim"))], None
     shown = (prompt, style("select") | style("bold") if filtering else style("dim"))
     if not text:  # Cut to its width, so a mark beside it still shows.
         room = max(1, width - len(prompt))
+        placeholder = placeholder if filtering else idle
         placeholder = placeholder if len(placeholder) <= room else placeholder[:room - 1].rstrip() + "…"
-        return [shown, (placeholder, style("dim"))], len(prompt)
+        return [shown, (placeholder, style("dim"))], len(prompt) if filtering else None
     # The text and the cursor after it come first: the count shows only where they fit whole.
     tail = [("  " + count, style("dim"))] if count and len(prompt) + len(text) + 1 + 2 + len(count) <= width else []
     visible, column = input_view(text, pos, width - len(prompt))
@@ -759,6 +765,8 @@ def search_row(text, pos, filtering, width, placeholder="type to filter", mark="
 NAVIGATION_HELP = [
     ("j / k", "move down / up"),
     ("gg / G", "first / last"),
+    ("5j / 5G", "a count first: 5j or 5k moves 5 rows, and 5G or 5gg goes to row 5; esc cancels it"),
+    ("H / M / L", "the top / middle / bottom row in view"),
     ("ctrl+d / ctrl+u", "half page down / up"),
     ("ctrl+f / ctrl+b", "page down / up"),
 ]
@@ -790,12 +798,16 @@ def page(stdscr, title, body_for, close="back"):
         keys = Keys().add("j/k", "scroll", can=scrolls).add("q", close)
         render(stdscr, compose(height, [title_row], body[top:top + visible], [keys.row()]))
         key = keyboard.read_key(stdscr)
-        if key in keyboard.CLOSE or key in keyboard.ENTER or key == "?":
-            return
+        if key is None or key == curses.KEY_RESIZE:
+            continue
+        # A motion first, so esc cancels a count or a g typed partway rather than closing. There's
+        # no H, M, or L: the index here is the scroll position, not a row.
         last = max(0, len(body) - visible)
         moved, pending = keyboard.motion(key, top, last + 1, visible, pending)
         if moved is not None:
             top = moved
+        elif key in keyboard.CLOSE or key in keyboard.ENTER or key == "?":
+            return
 
 
 HELP_WIDTH = 80  # Help wraps at this width even in a wider pane, so its lines stay easy to read.

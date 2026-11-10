@@ -41,24 +41,65 @@ def edit_text(text, pos, key):
     return text, pos
 
 
-def motion(key, index, count, page, pending):
-    """Apply a Vim-style motion. Returns (new index or None if not a motion, pending key)."""
+DIGITS = set("0123456789")
+COUNT_DIGITS = 6  # A longer count adds nothing in a list, and would only make the note about it long.
+
+
+def motion(key, index, count, page, pending, view=None):
+    """Apply a Vim-style motion. pending is what's typed so far of one that takes more than a key:
+    a count, such as "5", a g, or both, as in "5g". Returns (the new index, or None when key
+    isn't a motion, what's pending now).
+
+    A count before j or k, or an arrow or ctrl+n/p, moves that many rows, and before G or gg goes
+    to that row. Any other key drops it and does its one thing, so 2dd is just dd, never more. 0
+    doesn't start a count, and esc with something pending cancels just that, and does nothing
+    else. view is the rows in view, in order, for H, M, and L: the top, middle, and bottom of
+    them; a screen whose index is a scroll position, such as help, leaves it out, since there
+    they'd mean nothing."""
+    pending = pending or ""
+    if key == ESCAPE and pending:
+        return index, None
     if count == 0:
         return None, None
-    half = max(1, page // 2)
-    if key == "g":
-        return (0, None) if pending == "g" else (index, "g")
+    digits = pending.rstrip("g")
+    if key in DIGITS and pending == digits and (digits or key != "0"):
+        return index, (digits + key)[:COUNT_DIGITS]
+    times = int(digits) if digits else None
+    if key == "g" and not pending.endswith("g"):
+        return index, digits + "g"
+    step, half = times or 1, max(1, page // 2)
     moves = {
-        "j": index + 1, curses.KEY_DOWN: index + 1, "\x0e": index + 1,
-        "k": index - 1, curses.KEY_UP: index - 1, "\x10": index - 1,
-        "G": count - 1, curses.KEY_END: count - 1, curses.KEY_HOME: 0,
+        "g": (times or 1) - 1,  # The second g of gg.
+        "j": index + step, curses.KEY_DOWN: index + step, "\x0e": index + step,
+        "k": index - step, curses.KEY_UP: index - step, "\x10": index - step,
+        "G": (times or count) - 1, curses.KEY_END: count - 1, curses.KEY_HOME: 0,
         "\x04": index + half, "\x15": index - half,
         "\x06": index + page, curses.KEY_NPAGE: index + page,
         "\x02": index - page, curses.KEY_PPAGE: index - page,
     }
+    if view:
+        moves.update(H=view[0], M=view[(len(view) - 1) // 2], L=view[-1])
     if key not in moves:
         return None, None
     return min(count - 1, max(0, moves[key])), None
+
+
+def pending_note(pending, also=""):
+    """What a motion typed partway still needs, for the status line, such as "5… then j or k to
+    move 5 rows, or G for row 5". also is what else a g can start, such as "p to open the pull
+    request"."""
+    if not pending:
+        return ""
+    digits = pending.rstrip("g")
+    if pending.endswith("g"):
+        return f"{pending}… then g for " + (f"row {digits}" if digits else "the first row") + (
+            f", or {also}" if also else "")
+    return f"{digits}… then j or k to move {digits} row{'s' if digits != '1' else ''}, or G for row {digits}"
+
+
+def view_rows(top, capacity, count):
+    """The rows in view, for motion's H, M, and L, in a list showing capacity rows from top."""
+    return list(range(top, min(top + capacity, count)))
 
 
 # While typing in a filter, every printable key types, so the list moves with keys that can't be

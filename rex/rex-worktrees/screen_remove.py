@@ -460,11 +460,14 @@ class RemovalScreens:
                 continue
             nudged = False
             flash.clear()
-            if key in keyboard.CLOSE:
-                return None
-            new_cursor, pending = keyboard.motion(key, cursor, len(options), len(options), pending)
+            # A motion first, so esc cancels a count or a g typed partway rather than the screen.
+            # Every option is in view, so H, M, and L choose among them all.
+            new_cursor, pending = keyboard.motion(key, cursor, len(options), len(options), pending,
+                                                  range(len(options)))
             if new_cursor is not None:
                 cursor = new_cursor
+            elif key in keyboard.CLOSE:
+                return None
             elif key == " ":
                 if not keys.refused("space", lambda why: flash.set(why, "attention")):
                     options[cursor]["checked"] = not options[cursor]["checked"]
@@ -615,12 +618,15 @@ class RemovalScreens:
             if key is None:
                 continue
             flash.clear()
-            if key in keyboard.CLOSE:
-                return False
-            # The last row is the "Also delete their branches" option, when it's offered.
-            new_cursor, pending = keyboard.motion(key, cursor, len(items) + bool(branches), capacity, pending)
+            # The last row is the "Also delete their branches" option, when it's offered, which is
+            # always in view below the list, so H, M, and L count it. A motion goes first, so esc
+            # cancels a count or a g typed partway rather than the screen.
+            view = keyboard.view_rows(top, capacity, len(items)) + ([index] if branches else [])
+            new_cursor, pending = keyboard.motion(key, cursor, len(items) + bool(branches), capacity, pending, view)
             if new_cursor is not None:
                 cursor = new_cursor
+            elif key in keyboard.CLOSE:
+                return False
             elif key == "\t":
                 ui.page(stdscr, "Clean up worktrees — details", lambda width: self.cleanup_details(
                     items, delete_branches["checked"] if branches else None, closes, width, self.session, self.label))

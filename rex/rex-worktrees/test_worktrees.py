@@ -94,6 +94,15 @@ def drive(screen, run, waiting=lambda: False):
         return run()
 
 
+def typing(text):
+    """The keys that type text in New worktree, which opens in normal mode: i, then the text."""
+    return ["i"] + list(text)
+
+
+# The keys that leave New worktree while typing: esc stops typing, esc clears the text, and esc,
+# with no text left, goes back.
+LEAVE = ["\x1b"] * 3
+
 PAUSE = "pause"  # Among a Typed screen's keys: the end of a burst, as when someone reads the screen.
 
 
@@ -445,6 +454,52 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(motion("\x04", 0, 10, 4, None), (2, None))
         self.assertEqual(motion("\x15", 1, 10, 4, None), (0, None))
         self.assertEqual(motion("x", 1, 10, 4, None), (None, None))
+
+    def test_vim_counts_and_rows_in_view(self):
+        motion = keyboard.motion
+
+        def press(keys, index=2, count=20, view=None):
+            """Each key in turn. Returns (the index, what's pending, whether the last key was a motion)."""
+            pending, moved = None, None
+            for key in keys:
+                moved, pending = motion(key, index, count, 6, pending, view)
+                index = index if moved is None else moved
+            return index, pending, moved is not None
+
+        self.assertEqual(press("5j"), (7, None, True))
+        self.assertEqual(press("3k"), (0, None, True))  # Clamped.
+        self.assertEqual(press("12j"), (14, None, True))  # Digits add up.
+        self.assertEqual(press("5G"), (4, None, True))  # Row 5.
+        self.assertEqual(press("5gg"), (4, None, True))
+        self.assertEqual(press("99G"), (19, None, True))  # Clamped to the last row.
+        self.assertEqual(press("gg"), (0, None, True))
+        self.assertEqual(press("G"), (19, None, True))
+        self.assertEqual(press("10"), (2, "10", True))  # 0 adds to a count,
+        self.assertEqual(press("0"), (2, None, False))  # but doesn't start one.
+        self.assertEqual(press("5"), (2, "5", True))
+        self.assertEqual(press("5g"), (2, "5g", True))
+        self.assertEqual(press(["5", "\x1b"]), (2, None, True))  # esc cancels just the count,
+        self.assertEqual(press(["5", "g", "\x1b"]), (2, None, True))  # or the g,
+        self.assertEqual(press(["\x1b"]), (2, None, False))  # and is no motion of its own.
+        # Any other key drops the count and does its one thing: d starts dd, never 5 of them.
+        self.assertEqual(press("5d"), (2, None, False))
+        self.assertEqual(press(["5", curses.KEY_DOWN]), (7, None, True))  # Arrows take a count too.
+        self.assertEqual(press(["5", "\x04"]), (5, None, True))  # Half a page, as without it.
+        self.assertEqual(press("g5"), (2, None, False))  # A count goes before g, not after it.
+        self.assertEqual(press("9" * 20), (2, "9" * keyboard.COUNT_DIGITS, True))
+        # H, M, and L: the top, middle, and bottom of the rows in view, where they're given.
+        view = list(range(8, 14))
+        self.assertEqual([press(key, 10, view=view)[0] for key in "HML"], [8, 10, 13])
+        self.assertEqual([press(key, 10, view=[0, 1] + view)[0] for key in "HML"], [0, 9, 13])  # Not one run.
+        self.assertEqual(press("H", 10), (10, None, False))  # No view, as in help: not motions.
+        self.assertEqual(press("5L", 10, view=view), (13, None, True))  # A count before them is dropped.
+        # A list with no rows takes no motion, nor a count.
+        self.assertEqual(press("5", 0, 0), (0, None, False))
+        self.assertEqual(keyboard.pending_note("5"), "5… then j or k to move 5 rows, or G for row 5")
+        self.assertEqual(keyboard.pending_note("1"), "1… then j or k to move 1 row, or G for row 1")
+        self.assertEqual(keyboard.pending_note("5g", "p to open the pull request"),
+                         "5g… then g for row 5, or p to open the pull request")
+        self.assertEqual(keyboard.pending_note("g"), "g… then g for the first row")
 
     def test_normalize_branch_names(self):
         cases = {
@@ -954,20 +1009,84 @@ class WorktreeTests(unittest.TestCase):
 
     def test_new_worktree_types_every_letter(self):
         cwd, branches = self.setup_branches()
-        screen = FakeScreen(list("quick") + [curses.KEY_END, "?", "q", "\x1b", "\x1b"], (16, 50))
+        screen = FakeScreen(typing("quick") + [curses.KEY_END, "?", "q"] + LEAVE, (16, 50))
         picker = self.picker(screen)
         picker.branches = lambda: branches
-        self.assertFalse(drive(screen, lambda: picker.new_screen(root=True)))  # esc clears, then quits.
+        # esc stops typing, esc clears the text, and esc quits.
+        self.assertFalse(drive(screen, lambda: picker.new_screen(root=True)))
         texts = [screen.text(i) for i in range(len(screen.frames))]
         typed = next(t for t in texts if any(line.startswith(screen_new.PROMPT + "quick") for line in t))
         self.assertTrue(any(line.startswith("› + Create “quick” from main") for line in typed), typed)
         self.assertTrue(any(line.startswith("New worktree — keys") for t in texts for line in t))
-        self.assertTrue(any("esc quit" in line for line in texts[-1]))
+        self.assertTrue(any("q quit" in line for line in texts[-1]))
         self.assertFalse(any(line.startswith("/") for t in texts for line in t[:3]))  # / is the list's key.
+
+    def test_new_worktree_opens_in_normal_mode_where_letters_are_keys(self):
+        cwd, branches = self.setup_branches()
+        screen = FakeScreen(["x", "j", "k", "a", "x", "\x1b", "/", "\x1b", "\x1b", "q"], (16, 50))
+        picker = self.picker(screen)
+        picker.branches = lambda: branches
+        with patch.dict(ui.COLORS, {"dim": 1 << 20, "bold": 1 << 21, "yellow": 1 << 22, "cyan": 1 << 25}):
+            self.assertFalse(drive(screen, lambda: picker.new_screen(root=True)))
+        texts = [screen.text(i) for i in range(len(screen.frames))]
+        # Not typing: the prompt is dim, there's no cursor, and the row asking for a name says
+        # which key starts typing, as the input does.
+        first = texts[0]
+        self.assertIn(screen_new.PROMPT + screen_new.IDLE, first)
+        prompt = next(row[0] for row in screen.frames[0] if row and row[0][0] == screen_new.PROMPT)
+        self.assertEqual(prompt[1], 1 << 20)  # Dim, not the select role's cyan.
+        self.assertIn("› + Press i and type a name to create a branch", first)
+        footer = self.footer_keys(screen.frames[0])
+        self.assertTrue({"i", "j/k", "q"} <= set(footer) and not {"esc", "enter"} & set(footer), footer)
+        self.assertIn("i type", first[-1])
+        # A letter that isn't a key does nothing but say how to type, in the attention role.
+        said = next(seg for row in screen.frames[1] for seg in row if screen_new.NUDGE in seg[0])
+        self.assertTrue(said[1] & (1 << 22), said)
+        self.assertEqual(self.search_text(texts[1]), screen_new.IDLE)
+        self.assertFalse(any(line.startswith("› + Press i") for line in texts[2]))  # j moved to a branch,
+        self.assertIn("› + Press i and type a name to create a branch", texts[3])  # and k back.
+        # a starts typing: x is text now, and esc stops typing, keeping the text and the row.
+        self.assertEqual(self.search_text(texts[5]), "x")
+        self.assertIn("esc done", texts[5][-1])
+        self.assertEqual(self.search_text(texts[6]), "x")
+        self.assertIn("esc clear", texts[6][-1])
+        self.assertEqual([line for line in texts[5] if line.startswith("› ")],
+                         [line for line in texts[6] if line.startswith("› ")])
+        # / types too, at the end of the text; esc stops, esc clears, and q goes back at once.
+        self.assertIn("esc done", texts[7][-1])
+        self.assertEqual(self.search_text(texts[9]), screen_new.IDLE)
+        self.assertEqual(len(texts), 10)
+        # Opened from the list with text, as when its filter matched nothing, it's not typing
+        # either: letters are keys, and the create row is selected.
+        screen = FakeScreen(["x", "\x1b", "\x1b"], (16, 50))
+        picker = self.picker(screen)
+        picker.branches = lambda: branches
+        self.assertFalse(drive(screen, lambda: picker.new_screen(text="fix-login")))
+        texts = [screen.text(i) for i in range(len(screen.frames))]
+        self.assertTrue(any(line.startswith("› + Create “fix-login” from main") for line in texts[0]), texts[0])
+        self.assertEqual(self.search_text(texts[1]), "fix-login")  # x wasn't typed.
+        self.assertIn(screen_new.NUDGE, " ".join(texts[1]))
+        self.assertEqual(self.search_text(texts[2]), screen_new.IDLE)  # esc cleared, then went back.
+        self.assertIn("q back", texts[2][-1])
+        # Enter on the row asking for a name starts typing; while typing, it can't act there.
+        screen = FakeScreen(["\n", "z", "\x1b", "\x1b", "\x1b"], (24, 100))
+        picker = self.picker(screen)
+        picker.branches = lambda: branches
+        drive(screen, lambda: picker.new_screen(root=True))
+        self.assertNotIn("enter", screen.text(0)[-1])  # It starts typing, but only i is listed.
+        self.assertIn("› + Type a name to create a branch", screen.text(1))
+        self.assertIn("esc done", screen.text(1)[-1])
+        self.assertEqual(self.search_text(screen.text(2)), "z")
+        # Only the input being typed in has a cursor.
+        self.assertIsNone(ui.search_row("", 0, False, 47, screen_new.PLACEHOLDER, "", screen_new.PROMPT, "",
+                                        screen_new.IDLE)[1])
+        self.assertIsNone(ui.search_row("fix", 3, False, 47, prompt=screen_new.PROMPT, idle=screen_new.IDLE)[1])
+        self.assertEqual(ui.search_row("fix", 3, True, 47, prompt=screen_new.PROMPT, idle=screen_new.IDLE)[1],
+                         len(screen_new.PROMPT) + 3)
 
     def test_new_worktree_opens_a_branch_thats_checked_out_already(self):
         cwd, branches = self.setup_branches()
-        screen = FakeScreen(list("main") + [curses.KEY_HOME, "\n"], (16, 60))
+        screen = FakeScreen(typing("main") + [curses.KEY_HOME, "\n"], (16, 60))
         path = branches["checked_out"]["main"]
         picker = self.picker(screen, [{"name": "main", "worktree": path, "branch": "refs/heads/main", "main": True}])
         picker.session, picker.client = "s", None
@@ -999,18 +1118,18 @@ class WorktreeTests(unittest.TestCase):
         cwd, branches = self.two_bases()
         self.assertEqual([(b["label"], b["note"]) for b in branches["bases"]],
                          [("origin/main", "default branch"), ("main", "current branch")])
-        # With no text, one dim row asks for a name, and the footer leaves enter out; enter makes
-        # the row stand out.
-        screen, styles = self.frames_with_styles(["\n", "\x1b"], branches, (24, 100))
-        rows = screen.text(0)
+        # With no text, one dim row asks for a name, and while typing, the footer leaves enter out;
+        # enter makes the row stand out.
+        screen, styles = self.frames_with_styles(["i", "\n"] + LEAVE[1:], branches, (24, 100))
+        rows = screen.text(1)
         self.assertIn("› + Type a name to create a branch", rows)
         self.assertEqual(sum(line.startswith("› ") for line in rows), 1)
-        self.assertNotIn("enter", self.footer_keys(screen.frames[0]))
+        self.assertNotIn("enter", self.footer_keys(screen.frames[1]))
         self.assertIsNone(self.plan_start(rows))
-        row = next(r for r in screen.frames[1] if "Type a name" in "".join(s[0] for s in r))
+        row = next(r for r in screen.frames[2] if "Type a name" in "".join(s[0] for s in r))
         self.assertTrue(row[1][1] & styles["yellow"] and row[1][1] & styles["bold"], row)
         # Typed, a row for each base, the default first, each with the name as it will be.
-        screen = FakeScreen(list("Fix the login") + [curses.KEY_DOWN] + list(" now") + ["\x1b", "\x1b"], (24, 100))
+        screen = FakeScreen(typing("Fix the login") + [curses.KEY_DOWN] + list(" now") + LEAVE, (24, 100))
         picker = self.picker(screen)
         picker.branches = lambda: branches
         with patch.object(worktrees, "setup_command", return_value="make setup"):
@@ -1034,21 +1153,21 @@ class WorktreeTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("› + Create “Fix-the-login-now” from main") for line in rows), rows)
         self.assertIn("Fix-the-login-now from main", rows[self.plan_start(rows)])
         # Passing main's row on the way to a branch doesn't choose it, and esc starts afresh.
-        frames = self.new_worktree_frames(list("i") + [curses.KEY_DOWN] * 2 + ["s", curses.KEY_DOWN, "x", "\x1b"]
-                                          + list("j") + ["\x1b", "\x1b"], branches, (24, 100))
+        frames = self.new_worktree_frames(typing("i") + [curses.KEY_DOWN] * 2 + ["s", curses.KEY_DOWN, "x", "\x1b",
+                                                                              "\x1b"] + typing("j") + LEAVE,
+                                          branches, (24, 100))
         for typed, label in (("is", "› + Create “is” from origin/main"), ("isx", "› + Create “isx” from main"),
                              ("j", "› + Create “j” from origin/main")):
             rows = next(f for f in frames if self.search_text(f) == typed)
             self.assertTrue(any(line.startswith(label) for line in rows), (typed, rows))
         # Enter creates the branch at once, from the selected row's base, tracking nothing.
-        for keys, start in ((list("from default") + ["\n"], "origin/main"),
-                            (list("from current") + [curses.KEY_DOWN, "\n"], "main")):
-            screen = FakeScreen(keys, (24, 100))
+        for text, moves, start in (("from default", [], "origin/main"), ("from current", [curses.KEY_DOWN], "main")):
+            screen = FakeScreen(typing(text) + moves + ["\n"], (24, 100))
             picker = self.picker(screen)
             picker.session, picker.client, picker.branches = "s", None, lambda: branches
             with patch.object(tabs, "open_tab") as open_tab, patch.object(worktrees, "setup_command", return_value=""):
                 self.assertTrue(drive(screen, lambda: picker.new_screen()))
-            name = branching.normalize_branch("".join(k for k in keys if isinstance(k, str) and k != "\n"))
+            name = branching.normalize_branch(text)
             with self.subTest(start=start):
                 self.assertEqual(open_tab.call_args[0][1]["branch"], name)
                 self.assertEqual(git(cwd, "rev-parse", name).stdout, git(cwd, "rev-parse", start).stdout)
@@ -1069,7 +1188,7 @@ class WorktreeTests(unittest.TestCase):
                 return key
 
         taken = branching.new_path(cwd, "race")
-        screen = Racing(list("race") + [lambda: (taken.mkdir(parents=True), (taken / "file").write_text("x")), "\n",
+        screen = Racing(typing("race") + [lambda: (taken.mkdir(parents=True), (taken / "file").write_text("x")), "\n",
                                         "\n"], (24, 120))
         picker = self.picker(screen)
         picker.session, picker.client = "s", None
@@ -1088,7 +1207,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(taken)), ["file"])
         # A tab that fails to open after the worktree is made isn't a failure to create: it's said
         # on the picker's error screen, which exits.
-        screen = FakeScreen(list("tab-fails") + ["\n"], (24, 120))
+        screen = FakeScreen(typing("tab-fails") + ["\n"], (24, 120))
         picker = self.picker(screen)
         picker.session, picker.client, picker.branches = "s", None, lambda: branches
         with patch.object(tabs, "open_tab", side_effect=RuntimeError("no session")), \
@@ -1247,12 +1366,12 @@ class WorktreeTests(unittest.TestCase):
         # main is checked out, so its row opens it; remote-pr only matches weakly.
         for typed, label in (("main", "Open the worktree for “main”"),
                              ("remote-pr", "+ Create “remote-pr” from main")):
-            frames = self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches)
+            frames = self.new_worktree_frames(typing(typed) + LEAVE, branches)
             rows = next(f for f in frames if any(line.startswith(screen_new.PROMPT + typed) for line in f))
             self.assertTrue(any(line.startswith(f"› {label}") for line in rows), (typed, rows))
         # A word the branch starts with, or its whole name, selects it, and the plan names it, whole,
         # not broken at its dash.
-        frames = self.new_worktree_frames(list("login") + ["\x1b", "\x1b"], branches, (24, 60))
+        frames = self.new_worktree_frames(typing("login") + LEAVE, branches, (24, 60))
         rows = next(f for f in frames if any(line.startswith(screen_new.PROMPT + "login") for line in f))
         self.assertTrue(any(line.startswith("› release/login-redirect") for line in rows))
         self.assertEqual(rows[self.plan_start(rows)], "Checks out".ljust(screen_new.PLAN_COLUMN) + "release/login-redirect")
@@ -1260,7 +1379,7 @@ class WorktreeTests(unittest.TestCase):
     def test_already_checked_out_shows_whichever_row_is_selected(self):
         git(self.repo, "branch", "main-old")
         cwd, branches = self.setup_branches()
-        frames = self.new_worktree_frames(list("main") + [curses.KEY_DOWN, "\x1b", "\x1b"], branches, (24, 60))
+        frames = self.new_worktree_frames(typing("main") + [curses.KEY_DOWN] + LEAVE, branches, (24, 60))
         rows = next(f for f in frames if self.search_text(f) == "main" and any(line.startswith("› main-old") for line in f))
         create = next(i for i, line in enumerate(rows) if "  Open the worktree for “main”" in line)
         self.assertIn("Already checked out", rows[create + 1])  # Right below the create row.
@@ -1272,7 +1391,7 @@ class WorktreeTests(unittest.TestCase):
             git(self.repo, "branch", name)
         cwd, branches = self.setup_branches()
         setup = 'printf "sandbox setup complete\\n"'
-        frames = self.new_worktree_frames(list("available") + [curses.KEY_DOWN, "\t", "q", "\x1b", "\x1b"],
+        frames = self.new_worktree_frames(typing("available") + [curses.KEY_DOWN, "\t", "q"] + LEAVE,
                                           branches, (16, 50), setup)
         rows = next(f for f in frames if any(line.startswith(screen_new.PROMPT + "available") for line in f))
         plan = rows[self.plan_start(rows):]
@@ -1406,7 +1525,7 @@ class WorktreeTests(unittest.TestCase):
         cwd, branches = self.setup_branches()
         for typed, plan in (("existing", "Checks out".ljust(screen_new.PLAN_COLUMN) + "existing"),
                             ("remote-only", "remote-only tracking origin/remote-only")):
-            rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, (24, 60))
+            rows = next(f for f in self.new_worktree_frames(typing(typed) + LEAVE, branches, (24, 60))
                         if any(line.startswith(screen_new.PROMPT + typed) for line in f))
             self.assertIn(f"  + Create “{typed}”", rows)  # Dim, with no base: it can't be created.
             self.assertIn("  " + util.ICONS["info"] + " This branch exists; enter checks it out.", rows)
@@ -1414,7 +1533,7 @@ class WorktreeTests(unittest.TestCase):
             self.assertTrue(any(line.startswith("› " + typed) for line in rows))
             self.assertIn(plan, " ".join(rows))
         # Moved back to the create row, the error applies again.
-        frames = self.new_worktree_frames(list("existing") + [curses.KEY_UP, "\x1b", "\x1b"], branches, (24, 60))
+        frames = self.new_worktree_frames(typing("existing") + [curses.KEY_UP] + LEAVE, branches, (24, 60))
         rows = next(f for f in frames if "› + Create “existing”" in f)
         self.assertTrue(any(util.ICONS["error"] + " A branch with this name exists" in line for line in rows))
 
@@ -1433,7 +1552,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(branching.plan_branch(cwd, branches, "origin/existing")["exists"], ["existing"])
         for typed, selected in (("origin/remote-only", "› remote-only"), ("origin/exist", "› existing"),
                                 ("origin/remote-o", "› remote-only")):
-            rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, (24, 60))
+            rows = next(f for f in self.new_worktree_frames(typing(typed) + LEAVE, branches, (24, 60))
                         if any(line.startswith(screen_new.PROMPT + typed) for line in f))
             self.assertTrue(any(line.startswith(selected) for line in rows), (typed, rows))
             self.assertFalse(any(util.ICONS["error"] in line for line in rows), rows)
@@ -1451,7 +1570,7 @@ class WorktreeTests(unittest.TestCase):
         name = "experiment/very-long-branch-name-to-test-truncation-behaviour-" + "x" * 40 + "-available-alpha"
         git(self.repo, "branch", name)
         cwd, branches = self.setup_branches()
-        screen = FakeScreen(list("available") + ["\x1b", "\x1b"], (16, 50))
+        screen = FakeScreen(typing("available") + LEAVE, (16, 50))
         picker = self.picker(screen)
         picker.branches = lambda: branches
         with patch.object(worktrees, "setup_command", return_value='printf "setup complete\\n"'):
@@ -1700,7 +1819,7 @@ class WorktreeTests(unittest.TestCase):
         for remote in ("origin", "fork"):
             typed = f"{remote}/feature/remote-two"
             for size in ((16, 50), (22, 100), (40, 140)):
-                rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, size)
+                rows = next(f for f in self.new_worktree_frames(typing(typed) + LEAVE, branches, size)
                             if any(line.startswith(screen_new.PROMPT + typed) for line in f))
                 with self.subTest(typed=typed, size=size):
                     self.assertEqual(sum(line.startswith("  feature/remote-two") or line.startswith("› feature/remote-two")
@@ -1710,7 +1829,7 @@ class WorktreeTests(unittest.TestCase):
                     self.assertIn(f"tracking {remote}/feature/remote-two", " ".join(" ".join(rows).split()))
                     self.assertFalse(any(util.ICONS["error"] in line for line in rows), rows)
         # Enter checks out origin's commit, tracking origin, though fork's is listed first.
-        screen = FakeScreen(list("origin/feature/remote-two") + ["\n"], (16, 50))
+        screen = FakeScreen(typing("origin/feature/remote-two") + ["\n"], (16, 50))
         picker = self.picker(screen)
         picker.session, picker.client = "s", None
         picker.branches = lambda: branches
@@ -1752,7 +1871,7 @@ class WorktreeTests(unittest.TestCase):
         cwd, branches = self.setup_branches()
 
         def frame(size, setup):
-            screen = FakeScreen(list("login") + ["\x1b", "\x1b"], size)
+            screen = FakeScreen(typing("login") + LEAVE, size)
             picker = self.picker(screen)
             picker.branches = lambda: branches
             with patch.object(worktrees, "setup_command", return_value=setup):
@@ -1779,7 +1898,7 @@ class WorktreeTests(unittest.TestCase):
         plan = branching.plan_branch(cwd, branches, "chore/gone")
         self.assertNotIn("open", plan)
         self.assertIn("folder is missing; prune it with dd", plan["error"])
-        rows = next(f for f in self.new_worktree_frames(list("chore/gone") + ["\x1b", "\x1b"], branches, (22, 100))
+        rows = next(f for f in self.new_worktree_frames(typing("chore/gone") + LEAVE, branches, (22, 100))
                     if any(line.startswith(screen_new.PROMPT + "chore/gone") for line in f))
         self.assertTrue(any(util.ICONS["error"] + " It's checked out in a worktree whose folder is missing" in line
                             for line in rows), rows)
@@ -1914,7 +2033,7 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "branch", "fix/login")
         cwd, branches = self.setup_branches()
         for size in ((16, 50), (22, 100), (40, 140)):
-            screen = FakeScreen(list("login") + ["\t", "q", "\x1b", "\x1b"], size)
+            screen = FakeScreen(typing("login") + ["\t", "q"] + LEAVE, size)
             picker = self.picker(screen)
             picker.branches = lambda: branches
             with patch.object(worktrees, "setup_command", return_value=setup):
@@ -1960,7 +2079,7 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "branch", "feat/login-flow")
         cwd, branches = self.setup_branches()
         # feat names no branch, but can't be one beside feat/login-flow, which typing selects.
-        screen, styles = self.frames_with_styles(list("feat") + [curses.KEY_UP, "\n", "\x1b", "\x1b"], branches,
+        screen, styles = self.frames_with_styles(typing("feat") + [curses.KEY_UP, "\n"] + LEAVE, branches,
                                                  (24, 100))
         index = next(i for i in range(len(screen.frames)) if self.search_text(screen.text(i)) == "feat")
         frames = screen.frames[index:index + 3]  # The branch selected, then the create row, then enter.
@@ -1982,7 +2101,7 @@ class WorktreeTests(unittest.TestCase):
         for size in ((16, 50), (22, 100), (40, 140)):
             for typed, hint in (("origin/", "origin is a remote; its branches are below."),
                                 ("origin", "origin is a remote; type origin/ to list its branches.")):
-                screen, styles = self.frames_with_styles(list(typed) + ["\n", "\x1b", "\x1b"], branches, size)
+                screen, styles = self.frames_with_styles(typing(typed) + ["\n"] + LEAVE, branches, size)
                 index = next(i for i in range(len(screen.frames)) if self.search_text(screen.text(i)) == typed)
                 rows, before, after = screen.text(index), screen.frames[index], screen.frames[index + 1]
                 with self.subTest(typed=typed, size=size):
@@ -2007,7 +2126,7 @@ class WorktreeTests(unittest.TestCase):
                     # Enter, which can't go anywhere, makes the hint stand out.
                     self.assertTrue(nudged and nudged[0][1] & styles["yellow"] and nudged[0][1] & styles["bold"])
         # A red note stands out the same way.
-        screen, styles = self.frames_with_styles(list("origin/new-idea") + ["\n", "\x1b", "\x1b"], branches, (22, 100))
+        screen, styles = self.frames_with_styles(typing("origin/new-idea") + ["\n"] + LEAVE, branches, (22, 100))
         index = next(i for i in range(len(screen.frames)) if self.search_text(screen.text(i)) == "origin/new-idea")
         self.assertFalse(screen.text(index)[-1].startswith("enter"))
         red = [seg for row in screen.frames[index + 1] for seg in row if "can't start with origin/" in seg[0]]
@@ -2021,7 +2140,7 @@ class WorktreeTests(unittest.TestCase):
         self.assertTrue(branching.named_remotes([origin, fork]))
         self.assertFalse(branching.named_remotes([origin, {"kind": "local", "name": "b", "ref": "b"}]))
         cwd, branches = self.setup_branches()  # Only origin: "remote", as before.
-        rows = next(f for f in self.new_worktree_frames(list("remote-only") + ["\x1b", "\x1b"], branches, (22, 100))
+        rows = next(f for f in self.new_worktree_frames(typing("remote-only") + LEAVE, branches, (22, 100))
                     if any(line.startswith(screen_new.PROMPT + "remote-only") for line in f))
         self.assertTrue(next(line for line in rows if line.startswith("› remote-only")).rstrip().endswith("remote"))
 
@@ -2155,8 +2274,9 @@ class WorktreeTests(unittest.TestCase):
             for i, (height, width) in enumerate(sizes):
                 name = picks[i % len(picks)]
                 with self.subTest(screen="new", size=(height, width), name=name[:30]):
-                    screen = FakeScreen([curses.KEY_DOWN, "\t", "q", curses.KEY_UP, "\t", "q", "\n"] + ["\x1b"] * 4,
-                                        (height, width))
+                    # Both modes: it opens in normal mode, then i types, and esc stops typing.
+                    screen = FakeScreen([curses.KEY_DOWN, "\t", "q", "5", "j", "H", "L", "M", "i", curses.KEY_UP,
+                                         "\t", "q", "\x1b", "g", "g", "\n"] + ["\x1b"] * 4, (height, width))
                     picker = self.picker(screen)
                     picker.branches = lambda: branches
                     picker.create_and_open = lambda cwd, plan: None  # Rendering only: nothing is created.
@@ -2186,7 +2306,8 @@ class WorktreeTests(unittest.TestCase):
                                    "dirty": j % 3 == 0, "open": False, **({"prunable": "gone", "dirty": None}
                                                                           if j % 4 == 2 or i % 7 == 3 else {})}
                                   for j, n in enumerate(picks[:i % 6 + 1])]
-                    screen = FakeScreen(["j", " ", "G", " ", "\t", "q", "q"], (height, width))
+                    screen = FakeScreen(["j", " ", "G", " ", "2", "k", "L", "M", "H", "\t", "q", "q"],
+                                        (height, width))
                     picker = self.picker(screen, candidates)
                     picker.session, picker.terminals = "s", []
                     drive(screen, picker.cleanup)
@@ -2206,7 +2327,8 @@ class WorktreeTests(unittest.TestCase):
                                 "open": False, "track": []}]
                     entries += [{"name": n, "worktree": "/w/" + str(j), "track": ["remote deleted"], "dirty": True,
                                  "open": j % 2 == 0, "time": 0} for j, n in enumerate(picks[:i % 9 + 1])]
-                    screen = FakeScreen(["j", "G", "c", "/", *name[:3], "\x1b", "?", "q", "q"], (height, width))
+                    screen = FakeScreen(["j", "G", "3", "k", "L", "M", "H", "c", "/", *name[:3], "\x1b", "?", "q", "q"],
+                                        (height, width))
                     picker = self.picker(screen, entries)
                     picker.terminals = []
                     for e in entries:
@@ -2246,7 +2368,7 @@ class WorktreeTests(unittest.TestCase):
                  ("origin/feature/x", "› feature/x ", "enter create")]
         for typed, selected, footer in cases:
             for size in ((16, 50), (22, 100), (40, 140)):
-                frames = self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, size)
+                frames = self.new_worktree_frames(typing(typed) + LEAVE, branches, size)
                 rows = next(f for f in frames if self.search_text(f) == typed)
                 with self.subTest(typed=typed, size=size):
                     self.assertTrue(any(line.startswith(selected) for line in rows), rows)
@@ -2255,7 +2377,7 @@ class WorktreeTests(unittest.TestCase):
                     if selected.startswith("› feature"):  # The whole name goes first, above longer ones.
                         self.assertTrue(listed[0].startswith(selected), listed)
         # Enter opens fix/a's worktree; it doesn't check out fix/a-followup.
-        screen = FakeScreen(list("fix/a") + ["\n"], (16, 50))
+        screen = FakeScreen(typing("fix/a") + ["\n"], (16, 50))
         picker = self.picker(screen)
         picker.branches = lambda: branches
         opened = []
@@ -2265,7 +2387,7 @@ class WorktreeTests(unittest.TestCase):
             self.assertTrue(drive(screen, lambda: picker.new_screen()))
         self.assertEqual(opened, ["fix/a"])
         # Typing on past the checked-out name still finds the longer one.
-        rows = next(f for f in self.new_worktree_frames(list("fix/a-f") + ["\x1b", "\x1b"], branches)
+        rows = next(f for f in self.new_worktree_frames(typing("fix/a-f") + LEAVE, branches)
                     if self.search_text(f) == "fix/a-f")
         self.assertTrue(any(line.startswith("› fix/a-followup") for line in rows), rows)
 
@@ -2276,7 +2398,7 @@ class WorktreeTests(unittest.TestCase):
         plan = branching.plan_branch(cwd, branches, "fork/feature/remote-two")
         self.assertEqual(plan["tracks"], ("origin", "fork"))
         self.assertNotIn("tracks", branching.plan_branch(cwd, branches, "origin/feature/remote-two"))
-        rows = next(f for f in self.new_worktree_frames(list("fork/feature/remote-two") + ["\x1b", "\x1b"], branches,
+        rows = next(f for f in self.new_worktree_frames(typing("fork/feature/remote-two") + LEAVE, branches,
                                                          (22, 100)) if self.search_text(f) == "fork/feature/remote-two")
         self.assertTrue(any(line.startswith("› feature/remote-two") for line in rows), rows)
         self.assertIn("fork's version differs; enter checks out the local branch, which tracks origin.",
@@ -2285,7 +2407,7 @@ class WorktreeTests(unittest.TestCase):
         self.add("two", "feature/remote-two-other")
         git(self.repo, "worktree", "add", "-q", str(Path(self.tmp.name) / "remote-two"), "feature/remote-two")
         branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
-        rows = next(f for f in self.new_worktree_frames(list("fork/feature/remote-two") + ["\x1b", "\x1b"], branches,
+        rows = next(f for f in self.new_worktree_frames(typing("fork/feature/remote-two") + LEAVE, branches,
                                                          (16, 50)) if self.search_text(f) == "fork/feature/remote-two")
         self.assertTrue(any(line.startswith("› Open the worktree for") for line in rows), rows)
         self.assertIn("fork's version differs; the local branch tracks origin.", " ".join(line.strip() for line in rows))
@@ -2299,14 +2421,14 @@ class WorktreeTests(unittest.TestCase):
     def test_remote_qualified_text_that_cant_be_created_names_no_branch(self):
         cwd, branches = self.setup_branches()
         for typed in ("origin/remote-only", "origin/new-idea"):
-            frames = self.new_worktree_frames(list(typed) + [curses.KEY_HOME, "\x1b", "\x1b"], branches, (22, 100))
+            frames = self.new_worktree_frames(typing(typed) + [curses.KEY_HOME] + LEAVE, branches, (22, 100))
             rows = [f for f in frames if self.search_text(f) == typed][-1]  # Home: the first row.
             self.assertIn("› + Create a new branch", rows, typed)
             self.assertFalse(any(f"“{typed}”" in line for line in rows), rows)
 
     def test_pull_requests_show_their_number_before_rows_turn_compact(self):
         cwd, branches, shas = self.two_remotes()
-        screen = FakeScreen(list("feature/remote-two") + ["\x1b", "\x1b"], (16, 50))
+        screen = FakeScreen(typing("feature/remote-two") + LEAVE, (16, 50))
         picker = self.picker(screen)
         picker.branches = lambda: branches
         picker.prs = {"feature/remote-two": {"number": 12, "state": "MERGED", "isDraft": False}}
@@ -2359,7 +2481,7 @@ class WorktreeTests(unittest.TestCase):
             plan = branching.plan_branch(cwd, branches, typed)
             self.assertEqual((plan["branch"], plan.get("open") is not None), (branch, True), typed)
             for size in ((16, 50), (22, 100), (40, 140)):
-                rows = next(f for f in self.new_worktree_frames(list(typed) + ["\x1b", "\x1b"], branches, size)
+                rows = next(f for f in self.new_worktree_frames(typing(typed) + LEAVE, branches, size)
                             if self.search_text(f) == typed)
                 with self.subTest(typed=typed, size=size):
                     # The only row selected, not a longer name that starts so. A narrow pane cuts the
@@ -2374,12 +2496,12 @@ class WorktreeTests(unittest.TestCase):
         # Its folder missing, it's refused just as the exact name is, naming no branch to create.
         plan = branching.plan_branch(cwd, branches, "CHORE/GONE")
         self.assertEqual((plan["branch"], "missing" in plan), ("chore/gone", True))
-        rows = next(f for f in self.new_worktree_frames(list("CHORE/GONE") + ["\x1b", "\x1b"], branches)
+        rows = next(f for f in self.new_worktree_frames(typing("CHORE/GONE") + LEAVE, branches)
                     if self.search_text(f) == "CHORE/GONE")
         self.assertIn("› + Create a new branch", rows)
         self.assertTrue(rows[-1].startswith("↑/↓ move"), rows[-1])
         # Enter on fix a opens fix/a; it doesn't check out fix/a-followup.
-        screen = FakeScreen(list("fix a") + ["\n"], (16, 50))
+        screen = FakeScreen(typing("fix a") + ["\n"], (16, 50))
         picker = self.picker(screen)
         picker.branches = lambda: branches
         opened = []
@@ -2392,7 +2514,7 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "branch", "fix-a", newer)
         branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
         self.assertNotIn("open", branching.plan_branch(cwd, branches, "fix a"))
-        rows = next(f for f in self.new_worktree_frames(list("fix a") + ["\x1b", "\x1b"], branches)
+        rows = next(f for f in self.new_worktree_frames(typing("fix a") + LEAVE, branches)
                     if self.search_text(f) == "fix a")
         self.assertTrue(any(line.startswith("› fix-a ") for line in rows), rows)
 
@@ -2429,13 +2551,20 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "remote", "add", long_remote, "https://example.invalid/up.git")
         git(self.repo, "update-ref", f"refs/remotes/{long_remote}/only-upstream", "HEAD")
         branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
-        rows = self.new_worktree_frames(["\x1b"], branches, (16, 50))[0]
+        screen = FakeScreen(["\x1b"], (16, 50))
+        picker = self.picker(screen)
+        picker.branches = lambda: branches
+        with patch.object(worktrees, "setup_command", return_value=""):
+            drive(screen, lambda: picker.new_screen(root=True))
+        rows = screen.text(0)
         title = next(line for line in rows if line.startswith("  BRANCH"))
         self.assertIn("FROM", title)  # Not compact: the long name is cut instead.
         listed = next(line for line in rows if "only-upstream" in line)
         self.assertIn(util.ICONS["remote"] + " upstrea", listed)
         self.assertTrue(listed.rstrip().endswith("…"), listed)
-        self.assertTrue(all(len(line) <= 47 for line in rows), rows)
+        # Every row fits, the footer once its keys drop by rank, as render draws it.
+        self.assertTrue(all(len(line) <= 47 for line in rows[:-1]), rows)
+        self.assertLessEqual(len("".join(t for t, _ in ui.fit(screen.frames[0][-1], 47)).rstrip()), 47)
 
     def test_a_long_remote_names_note_leads_with_the_difference_and_tab_shows_it(self):
         cwd, branches = self.setup_branches()
@@ -2449,7 +2578,7 @@ class WorktreeTests(unittest.TestCase):
         full = f"{fork}'s version differs; enter checks out the local branch, which tracks {upstream}."
 
         def check(branches, full):
-            screen = FakeScreen(list(typed) + ["\t", "q", "\x1b", "\x1b"], (16, 50))
+            screen = FakeScreen(typing(typed) + ["\t", "q"] + LEAVE, (16, 50))
             picker = self.picker(screen)
             picker.branches = lambda: branches
             with patch.object(worktrees, "setup_command", return_value=""):
@@ -2477,7 +2606,7 @@ class WorktreeTests(unittest.TestCase):
             if preferred == "fork":
                 git(self.repo, "config", "checkout.defaultRemote", "fork")
                 branches = branching.load_branches(cwd, worktrees.worktrees(cwd))
-            rows = next(f for f in self.new_worktree_frames(list("feature/remote-two") + ["\x1b", "\x1b"], branches)
+            rows = next(f for f in self.new_worktree_frames(typing("feature/remote-two") + LEAVE, branches)
                         if self.search_text(f) == "feature/remote-two")
             selected = next(line for line in rows if line.startswith("› feature/remote-two"))
             self.assertTrue(selected.rstrip().endswith(preferred), rows)
@@ -2604,6 +2733,128 @@ class WorktreeTests(unittest.TestCase):
         # tab doesn't stop typing.
         _, frames = self.run_list(["/"] + list("log") + ["\t", "x", "\x1b", "\x1b", "\x1b"], entries)
         self.assertTrue(any(self.search_text(f) == "logx" for f in frames))
+
+    @staticmethod
+    def list_rows(frame):
+        """The worktrees a list frame shows, and which of them is selected."""
+        names = [line[4:].split()[0] for line in frame
+                 if line[:4] in ("    ", "›   ", "  ● ", "› ● ") and line[4:].startswith(("main", "fix/"))]
+        selected = next((line[4:].split()[0] for line in frame if line.startswith("› ")), None)
+        return names, selected
+
+    def test_list_takes_counts_and_the_rows_in_view(self):
+        entries = self.list_entries([f"fix/{i:02}" for i in range(30)])  # main, then fix/00 to fix/29.
+        keys = ["5", "j", "3", "k", "1", "2", "G", "H", "L", "M", "2", "\x1b", "j", "5", "g", "g", "G", "q"]
+        _, frames = self.run_list(keys, entries)
+        rows = [self.list_rows(f) for f in frames]
+        self.assertIn("5… then j or k to move 5 rows, or G for row 5", frames[1])
+        self.assertEqual(rows[2][1], "fix/04")  # 5j: five rows down from main.
+        self.assertEqual(rows[4][1], "fix/01")  # 3k.
+        self.assertEqual(rows[7][1], "fix/10")  # 12G: row 12.
+        shown = rows[8][0]
+        self.assertGreater(len(shown), 3)
+        self.assertEqual([rows[i][1] for i in (8, 9, 10)], [shown[0], shown[-1], shown[(len(shown) - 1) // 2]])
+        middle = rows[10][1]
+        # esc cancels the count and does nothing else: the list stays, and j moves one row.
+        self.assertEqual(rows[12][1], middle)
+        self.assertNotIn("2…", " ".join(frames[12]))
+        self.assertEqual(entries[[e["name"] for e in entries].index(middle) + 1]["name"], rows[13][1])
+        self.assertEqual(rows[16][1], "fix/03")  # 5gg: row 5, counting main.
+        self.assertEqual(rows[17][1], "fix/29")
+        self.assertEqual(len(frames), 18)  # The q quit.
+
+    def test_list_count_before_dd_removes_just_the_selected_worktree(self):
+        entries = self.list_entries(["fix/a", "fix/b", "fix/c"])
+        for keys, removed in ((["j", "2", "d", "d", "q"], ["fix/a"]), (["j", "2", "d", "\x1b", "d", "\x1b", "q"], []),
+                              (["3", "\x1b", "d", "d", "q"], [])):
+            screen = FakeScreen(keys, (24, 100))
+            picker = self.picker(screen, [dict(e) for e in entries])
+            picker.terminals, gone = [], []
+            picker.remove = lambda entry: gone.append(entry["name"]) or False
+            with patch.object(worktrees, "missing", return_value=False):
+                drive(screen, picker.list_screen)
+            with self.subTest(keys=keys):
+                self.assertEqual(gone, removed)  # Not 2: the count was dropped. Nor main, which dd refuses.
+
+    def test_list_i_starts_the_filter_as_slash_does(self):
+        entries = self.list_entries(["fix/05", "fix/50"])
+        _, frames = self.run_list(["i", "0", "5", "\x1b", "q"], entries)
+        self.assertEqual(self.search_text(frames[3]), "05")  # Digits are text while typing, and so is i after.
+        self.assertIn("/ filter", frames[0][-1])  # The footer names /, the filter's prompt.
+        self.assertNotIn("i ", frames[0][-1].replace("ii", ""))
+
+    def test_new_worktree_and_cleanup_take_counts_and_the_rows_in_view(self):
+        names = [f"feature/topic-{i:02}" for i in range(24)]
+        for name in names:
+            git(self.repo, "branch", name)
+        cwd, branches = self.setup_branches()
+        keys = ["5", "j", "L", "H", "M", "G", "H", "M", "2", "\x1b", "k", "3", "g", "g", "x", "q"]
+        frames = self.new_worktree_frames(keys, branches, (22, 100))
+
+        def rows(frame):
+            """The rows in view, by name, the one asking for a name first, as "+", and the selected one's."""
+            known = [s["name"] for s in branches["suggestions"]]
+            listed = ["+" if "Press i" in line else line[2:].split(" ")[0] for line in frame
+                      if line.startswith(("› ", "  ")) and ("Press i" in line or line[2:].split(" ")[0] in known)]
+            selected = next(line for line in frame if line.startswith("› "))
+            return listed, "+" if "Press i" in selected else selected[2:].split(" ")[0]
+
+        def middle(listed):
+            return listed[(len(listed) - 1) // 2]
+
+        # H, M, and L choose among the rows on screen as the key is pressed: frame i shows what the
+        # key read after frame i - 1 did. Selecting a branch shows its plan, which shortens the
+        # list, so the frame after can show fewer rows, though always the one chosen.
+        self.assertIn("5… then j or k to move 5 rows, or G for row 5", frames[1])
+        listed, at = rows(frames[2])
+        self.assertEqual(listed.index(at), 5)  # 5j: five rows down from the one asking for a name.
+        self.assertEqual(rows(frames[3])[1], rows(frames[2])[0][-1])  # L: the bottom row in view.
+        self.assertEqual(rows(frames[4])[1], "+")  # H: the top, the row asking for a name.
+        self.assertEqual(rows(frames[5])[1], middle(rows(frames[4])[0]))  # M.
+        self.assertEqual(rows(frames[6])[1], [s["name"] for s in branches["suggestions"]][-1])  # G: the last.
+        self.assertEqual(rows(frames[7])[1], "+")  # H, scrolled: the row asking for a name is still the top.
+        at = rows(frames[8])[1]
+        self.assertEqual(at, middle(rows(frames[7])[0]))  # M, among the rows scrolled to.
+        self.assertEqual(rows(frames[10])[1], at)  # esc cancelled the count, and stayed;
+        listed = rows(frames[11])[0]
+        self.assertEqual(listed.index(rows(frames[11])[1]), listed.index(at) - 1)  # k moved one row.
+        self.assertEqual(rows(frames[14])[0].index(rows(frames[14])[1]), 2)  # 3gg: row 3.
+        self.assertIn(screen_new.NUDGE, " ".join(frames[15]))  # A count isn't text either.
+        self.assertEqual(len(frames), 16)  # q went back.
+        # Clean up: the rows in view, and the option below them, which is always in view.
+        entries = [{"name": f"fix/{i:02}", "worktree": f"/w/{i}", "track": ["remote deleted"], "dirty": False}
+                   for i in range(12)]
+        screen = FakeScreen(["3", "j", "L", "H", "M", "5", "G", "2", "\x1b", "j", "G", "q"], (16, 100))
+        picker = self.picker(screen, entries)
+        picker.session, picker.terminals = "s", []
+        with patch.object(worktrees, "missing", return_value=False):
+            self.assertFalse(drive(screen, picker.cleanup))
+        texts = [screen.text(i) for i in range(len(screen.frames))]
+
+        def cursor(rows):
+            """The selected row's name, or "branches" on the option to delete them."""
+            line = next(line for line in rows if line.startswith("› "))
+            return "branches" if "Also delete" in line else line[6:].split()[0]
+
+        def shown(rows):
+            return [line[6:].split()[0] for line in rows if line[2:6] in ("[x] ", "[ ] ") and "fix/" in line]
+
+        self.assertEqual(cursor(texts[2]), "fix/03")  # 3j.
+        self.assertEqual(cursor(texts[3]), "branches")  # L: the option, the bottom row in view.
+        self.assertEqual(cursor(texts[4]), shown(texts[4])[0])  # H.
+        view = shown(texts[5]) + ["branches"]
+        self.assertEqual(cursor(texts[5]), view[(len(view) - 1) // 2])  # M.
+        self.assertEqual(cursor(texts[7]), "fix/04")  # 5G: row 5.
+        self.assertEqual(cursor(texts[10]), "fix/05")  # esc cancelled the count, and j moved one row.
+        self.assertEqual(cursor(texts[11]), "branches")  # G.
+        self.assertEqual(len(texts), 12)  # The esc didn't cancel cleanup; the q did.
+
+    def test_help_and_details_scroll_with_counts_and_esc_cancels_one(self):
+        message = "fatal: " + "cannot lock ref because the path is long " * 30
+        screen = FakeScreen(["5", "j", "2", "\x1b", "j", "H", "q"], (16, 50))
+        drive(screen, lambda: ui.show_error(screen, message))
+        tops = [int(screen.text(i)[0].split()[-3].split("–")[0]) for i in range(len(screen.frames))]
+        self.assertEqual(tops, [1, 1, 6, 6, 6, 7, 7])  # 5j, then esc only cancels the 2; H isn't a motion here.
 
     def test_list_offers_n_when_the_main_checkout_is_alone(self):
         alone = self.list_entries([])
@@ -2897,26 +3148,49 @@ class WorktreeTests(unittest.TestCase):
              "j/k", ["j", "k"], True),
             ("cleanup, one missing, unchecked", run_cleanup([entry("docs/gone", prunable="gone")]), [],
              "enter", ["\n"], True),
-            ("new worktree, no text", run_new, [], "enter", ["\n"], True),
-            ("new worktree, no text, on a branch", run_new, [curses.KEY_DOWN], "enter", ["\n"], False),
-            ("new worktree, no text", run_new, [], "↑/↓", [curses.KEY_DOWN, curses.KEY_UP], False),
+            # New worktree opens in normal mode, where the list's motions move. Enter on the row
+            # asking for a name starts typing there, which another test checks, since it's not
+            # an action this one can see.
+            ("new worktree, no text, on a branch", run_new, ["j"], "enter", ["\n"], False),
+            ("new worktree, no text", run_new, [], "j/k", ["j", "k"], False),
             ("new worktree, no text", run_new, [], "tab", ["\t"], True),
-            ("new worktree, no text, on a branch", run_new, [curses.KEY_DOWN], "tab", ["\t"], False),
-            ("new worktree, no branches", run_new_none, [], "↑/↓", [curses.KEY_DOWN, curses.KEY_UP], True),
-            ("new worktree, a new name", run_new_two, list("fix it"), "enter", ["\n"], False),
-            ("new worktree, a new name", run_new_two, list("fix it"), "tab", ["\t"], False),
-            ("new worktree, a new name from the second base", run_new_two, list("fix it") + [curses.KEY_DOWN],
-             "enter", ["\n"], False),
-            ("new worktree, a branch", run_new, list("existing"), "enter", ["\n"], False),
-            ("new worktree, a branch, its create row", run_new, list("existing") + [curses.KEY_UP], "enter",
-             ["\n"], True),
-            ("new worktree, checked out", run_new, list("main"), "enter", ["\n"], False),
-            ("new worktree, can't be created", run_new, list("origin/new-idea"), "enter", ["\n"], True),
-            ("new worktree, can't be created", run_new, list("origin/new-idea"), "tab", ["\t"], True),
-            ("new worktree, half typed", run_new, list("fix/"), "enter", ["\n"], True),
-            ("new worktree, half typed with a dash", run_new, list("fix-"), "enter", ["\n"], True),
-            ("new worktree, nothing usable", run_new, list("///"), "enter", ["\n"], True),
+            ("new worktree, no text, on a branch", run_new, ["j"], "tab", ["\t"], False),
+            ("new worktree, no branches", run_new_none, [], "j/k", ["j", "k"], True),
+            ("new worktree, gp on the create row", run_new, [], "gp", ["g", "p"], True),
             ("new worktree, ctrl+g on the create row", run_new, [], "ctrl+g", ["\x07"], True),
+            # Typing, the moves are keys that can't be text.
+            ("new worktree, typing, no text", run_new, ["i"], "enter", ["\n"], True),
+            ("new worktree, typing, no text, on a branch", run_new, ["i", curses.KEY_DOWN], "enter", ["\n"], False),
+            ("new worktree, typing, no text", run_new, ["i"], "↑/↓", [curses.KEY_DOWN, curses.KEY_UP], False),
+            ("new worktree, typing, no text", run_new, ["/"], "tab", ["\t"], True),
+            ("new worktree, typing, no text, on a branch", run_new, ["a", curses.KEY_DOWN], "tab", ["\t"], False),
+            ("new worktree, typing, no branches", run_new_none, ["i"], "↑/↓", [curses.KEY_DOWN, curses.KEY_UP], True),
+            ("new worktree, a new name", run_new_two, typing("fix it"), "enter", ["\n"], False),
+            ("new worktree, a new name", run_new_two, typing("fix it"), "tab", ["\t"], False),
+            ("new worktree, a new name from the second base", run_new_two, typing("fix it") + [curses.KEY_DOWN],
+             "enter", ["\n"], False),
+            ("new worktree, a branch", run_new, typing("existing"), "enter", ["\n"], False),
+            ("new worktree, a branch, its create row", run_new, typing("existing") + [curses.KEY_UP], "enter",
+             ["\n"], True),
+            ("new worktree, checked out", run_new, typing("main"), "enter", ["\n"], False),
+            ("new worktree, can't be created", run_new, typing("origin/new-idea"), "enter", ["\n"], True),
+            ("new worktree, can't be created", run_new, typing("origin/new-idea"), "tab", ["\t"], True),
+            ("new worktree, half typed", run_new, typing("fix/"), "enter", ["\n"], True),
+            ("new worktree, half typed with a dash", run_new, typing("fix-"), "enter", ["\n"], True),
+            ("new worktree, nothing usable", run_new, typing("///"), "enter", ["\n"], True),
+            ("new worktree, typing, ctrl+g on the create row", run_new, ["i"], "ctrl+g", ["\x07"], True),
+            # Done typing, the text stays, and the keys act on it.
+            ("new worktree, a new name, done typing", run_new_two, typing("fix it") + ["\x1b"], "enter", ["\n"],
+             False),
+            ("new worktree, a new name, done typing", run_new_two, typing("fix it") + ["\x1b"], "j/k", ["j", "k"],
+             False),
+            ("new worktree, a branch, done typing", run_new, typing("existing") + ["\x1b"], "enter", ["\n"], False),
+            ("new worktree, a branch's create row, done typing", run_new, typing("existing") + ["\x1b", "k"],
+             "enter", ["\n"], True),
+            ("new worktree, can't be created, done typing", run_new, typing("origin/new-idea") + ["\x1b"], "enter",
+             ["\n"], True),
+            ("new worktree, can't be created, done typing", run_new, typing("origin/new-idea") + ["\x1b"], "tab",
+             ["\t"], True),
         ]
 
         def text(frame):
@@ -2952,24 +3226,37 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "branch", "feat/login-flow")
         cwd, branches = self.setup_branches()
 
-        def new(keys):
-            screen = Typed(keys + [PAUSE, "\x1b", "\x1b"], (24, 100))
+        def new(keys, text=""):
+            screen = Typed(keys + [PAUSE] + LEAVE, (24, 100))
             picker = self.picker(screen)
             picker.branches = lambda: branches
             made = []
             picker.create_and_open = lambda cwd, plan: made.append(plan["branch"])
             with patch.object(worktrees, "setup_command", return_value=""):
-                screen.drive(lambda: picker.new_screen(root=True))
+                screen.drive(lambda: picker.new_screen(root=True, text=text))
             return screen, made
 
+        # New worktree opens in normal mode, so a paste that starts typing, with i or /, as the
+        # list's filter does, then names a branch and ends in a newline, types the name and
+        # creates nothing: the frame its enter would act on wasn't drawn.
+        for start in ("i", "/"):
+            screen, made = new([start] + list("login") + ["\n"])
+            with self.subTest(start=start):
+                self.assertEqual(made, [])  # Nothing was checked out unseen,
+                rows = screen.text(0)  # and the first frame drawn is the one enter would have acted on.
+                self.assertEqual(self.search_text(rows), "login")
+                self.assertIn("esc done", rows[-1])  # Still typing.
+                self.assertTrue(any(line.startswith("› feat/login-flow") for line in rows), rows)
+                self.assertIn("Checks out".ljust(screen_new.PLAN_COLUMN) + "feat/login-flow", rows)
+        self.assertEqual(new(typing("login") + ["\n", PAUSE, "\n"])[1], ["feat/login-flow"])  # Seen, then pressed.
+        self.assertEqual(new(typing("login") + ["\n", "\n"])[1], [])  # Every enter in a paste is dropped.
+        # A name pasted without starting to type isn't text, and its newline is dropped all the same.
         screen, made = new(list("login") + ["\n"])
-        self.assertEqual(made, [])  # Nothing was checked out unseen,
-        rows = screen.text(0)  # and the first frame drawn is the one enter would have acted on.
-        self.assertEqual(self.search_text(rows), "login")
-        self.assertTrue(any(line.startswith("› feat/login-flow") for line in rows), rows)
-        self.assertIn("Checks out".ljust(screen_new.PLAN_COLUMN) + "feat/login-flow", rows)
-        self.assertEqual(new(list("login") + ["\n", PAUSE, "\n"])[1], ["feat/login-flow"])  # Seen, then pressed.
-        self.assertEqual(new(list("login") + ["\n", "\n"])[1], [])  # Every enter in a paste is dropped.
+        self.assertEqual((made, self.search_text(screen.text(0))), ([], screen_new.IDLE))
+        # Opened with text, as from the list's filter, in normal mode: an enter already waiting as
+        # it opens, such as the rest of a paste, is dropped too; one pressed after it shows acts.
+        self.assertEqual(new(["\n"], "login")[1], [])
+        self.assertEqual(new([PAUSE, "\n"], "login")[1], ["feat/login-flow"])
 
         entry = {"name": "fix/x", "worktree": str(self.repo), "branch": "refs/heads/fix/x"}
 
@@ -3112,12 +3399,14 @@ class WorktreeTests(unittest.TestCase):
         cwd, branches = self.setup_branches()
         for size in ((32, 120), (22, 100), (16, 50)):
             # A branch selected with every branch listed, then with only the one the text matches.
-            frames = self.new_worktree_frames([curses.KEY_DOWN] + list("login") + ["\x1b", "\x1b"], branches, size,
+            frames = self.new_worktree_frames([curses.KEY_DOWN] + typing("login") + LEAVE, branches, size,
                                               setup="make setup")
             planned = [f for f in frames if self.plan_start(f) is not None]
             gap = 1 if size[0] >= 22 else 0  # A blank row between the plan and the footer, with room.
             with self.subTest(size=size):
-                self.assertEqual(len(planned), 6)
+                # The branch, then i, the five letters, and esc, which stops typing; the next esc
+                # clears the text, leaving no plan.
+                self.assertEqual(len(planned), 8)
                 for rows in planned:  # Wherever the list ends, the plan ends right above the footer.
                     self.assertTrue(rows[-2 - gap].startswith("Then runs"), rows)
                     self.assertEqual(rows[-2:-1], [""] if gap else [rows[-2]], rows)

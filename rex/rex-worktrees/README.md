@@ -33,16 +33,34 @@ python3 -m unittest test_worktrees
 awkward names (empty, one character, very long, unicode, spaces); keep it passing when you add a
 screen or change how one fits.
 
-The list's letters are commands, so its filter starts only with `/`, which is its prompt. Screens
-built around a text input (the list's filter while typing, and New worktree) take every printable
-key as text, and move their list with keys that can't be text: the arrows and ctrl+n/p, plus page
-up/down and home/end where the list scrolls. New worktree's input is always typing, so its prompt
-is a word, `Branch`, rather than a key to press. In New worktree, esc clears the text, then goes
-back, or quits when the picker opened straight into it. In the list's filter, esc stops typing and
-keeps the filter, so the list's keys act on what it found (the footer says `esc done`); with the
-filter kept, esc clears it, and with no filter, esc quits. Keep new keys within that split. In New
-worktree, tab, which can't be text either, shows what enter would do in full; confirmations use it
-the same way.
+Screens with a text input, the list's filter and New worktree, have two modes, as Vim does, and
+start in normal mode, where letters are keys. The list's filter starts with `/`, its prompt, or `i`;
+the footer names `/`. New worktree opens in normal mode too, even with text already in its input,
+as when the list's filter found nothing, and `i`, `a`, or `/` starts typing at the end of the text
+(the footer says `i type`); its prompt is a word, `Branch`, since no one key starts it. There, a
+letter that isn't a key is never taken as text: it says `Press i to type a name.` While typing,
+every printable key is text, and the list moves with keys that can't be: the arrows and ctrl+n/p,
+plus page up/down and home/end. An input shows its mode: typing, its prompt is in the select role,
+with the cursor after the text; not typing, the prompt is dim, with no cursor, and an empty input
+says which key starts, as `/ to filter` and New worktree's `i to type a name or filter` do. esc is
+the same ladder in both: typing, it stops typing and keeps the text, so the keys act on it (the
+footer says `esc done`); then it clears the text; then, with none, it quits, or New worktree goes
+back to the list, or quits when the picker opened straight into it. q does that last step at once.
+Keep new keys within that split. In New worktree, tab, which can't be text either, shows what enter
+would do in full, in either mode; confirmations use it the same way.
+
+Every list, and help and details, moves with Vim's motions (see `keyboard.motion`): `j`/`k`,
+`gg`/`G`, ctrl+d/u, ctrl+f/b, and the arrows. A count before `j` or `k` (or an arrow) moves that many rows, and
+before `G` or `gg` goes to that row, as `5j` and `12G` do; `0` doesn't start one, and no screen uses
+digits otherwise. Any other key drops the count and does its one thing, so `2dd` removes just the
+selected worktree, and esc with a count, a `g`, or a `d` typed cancels just that. `H`, `M`, and `L`
+go to the top, middle, and bottom row in view where there's a row cursor (the list, New worktree,
+cleanup, and the confirmations' options); help and details scroll instead, so they have none. In
+New worktree, the rows above the branches are always in view, so `H` is their first; and a branch
+selected shows its plan, which shortens the list, so `L` or `M` pressed on the first row chooses
+among the rows on screen as it's pressed, then the list scrolls to keep that row in view. The list
+and New worktree say on the status line what a half-typed motion needs, such as `5… then j or k to
+move 5 rows, or G for row 5`. There's no `n` for the next match: in the list, `n` is New worktree.
 
 The list puts the main checkout first, then the rest by their latest commit, newest first. `S`
 cycles that (`recent`) with `state` (changes, open pull requests, the rest, finished ones, then
@@ -77,8 +95,9 @@ branch matches against the worktree's path, but only as a plain substring, since
 New worktree is one screen for an existing branch and a new one: the text filters the branches
 that have no worktree, and names a new branch. With no text, the list shows local branches
 committed to in the last 30 days, then remote-only ones from then, then everything older, each
-newest first (see `branching.load_branches`), under a dim row asking for a name; the footer offers
-enter once a row can act. Text that can be a new branch gets a create row for each branch it can
+newest first (see `branching.load_branches`), under a dim row asking for a name: `+ Press i and
+type a name to create a branch`, where enter starts typing too, or while typing, `+ Type a name to
+create a branch`, where enter can't act. The footer offers enter once a row can act. Text that can be a new branch gets a create row for each branch it can
 start from, the default branch first, as `+ Create “fix-login” from origin/main   default branch`,
 then the current branch (one row when they're the same). The current branch is read as the screen
 opens, and a new branch starts from the one its row names, by its full name (`refs/heads/main`), or
@@ -98,7 +117,10 @@ row that would create `fix`; spaces at the end don't count.
 The screen isn't drawn while keys are waiting, as when text is pasted, so it keeps up; but enter
 acts only on a frame that was drawn with nothing waiting. One that was waiting, such as the newline
 at the end of pasted text, draws the frame instead and is dropped, so you see the row and the plan
-and press enter again. The confirmations that remove, prune, or repair drop an enter that was
+and press enter again. That holds in both modes, so a paste that starts typing, such as `i` or `/`,
+then a name and a newline, types the name and creates nothing (held by
+`test_enter_acts_only_on_a_frame_that_was_drawn`). A name pasted in normal mode isn't text, though
+an `i` in it starts typing, as in Vim, and the rest goes in. The confirmations that remove, prune, or repair drop an enter that was
 waiting before they were drawn the same way, so `dd` or `c` followed at once by enter, as in pasted
 text, never confirms something nobody saw.
 
