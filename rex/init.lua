@@ -16,7 +16,7 @@ rex.bind("ctrl+b>shift+j", "pane.move", { direction = "down" })
 rex.bind("ctrl+b>shift+k", "pane.move", { direction = "up" })
 rex.bind("ctrl+b>shift+l", "pane.move", { direction = "right" })
 rex.bind("ctrl+b>z", "pane.zoom")
-rex.bind("ctrl+b>x", "client.close")
+-- Ctrl+B, x closes the pane; it is bound below, with the action that hides a subagent's pane.
 rex.bind("ctrl+b>b", "client.sidebar.toggle")
 -- Ctrl+B, s, then h/j/k/l splits in that direction.
 for key, direction in pairs({ h = "left", j = "down", k = "up", l = "right" }) do
@@ -46,7 +46,7 @@ for key, direction in pairs({ h = "left", j = "down", k = "up", l = "right" }) d
 end
 rex.bind("pane/t", "move_pane_to_new_tab_and_exit")
 rex.bind("pane/z", "pane.zoom")
-rex.bind("pane/x", "client.close")
+-- pane/x is bound below, with the action that hides a subagent's pane.
 rex.bind("pane/=", "pane.balance")
 rex.bind("pane/r", "client.mode.enter", { name = "resize" })
 
@@ -134,6 +134,31 @@ local function client_pane(session_id, block_id, client_id)
 	end
 	return best or block_id
 end
+
+-- A pane that hosts a Pi subagent (pi-subagents labels it "subagent: <name>") is hidden instead of
+-- closed: closing would end the subagent, while a hidden one keeps running and Activity's `p`
+-- shows it again. Every other pane closes as usual.
+local SUBAGENT_LABEL = "subagent: "
+rex.action({
+	name = "close_pane_or_hide_subagent",
+	title = "Close Pane (Hide a Subagent's)",
+	run = function(ctx)
+		if ctx.session_id and ctx.block_id then
+			local where = locate(ctx.session_id, ctx.block_id)
+			local session_id = (where and where.session_id) or ctx.session_id
+			local pane = client_pane(session_id, ctx.block_id, ctx.client_id)
+			if pane ~= ctx.block_id then where = locate(session_id, pane) or where end
+			local label = where and where.label
+			if type(label) == "string" and label:sub(1, #SUBAGENT_LABEL) == SUBAGENT_LABEL then
+				rex.call("session.detach_block", { session_id = where.session_id, block_id = where.block_id })
+				return
+			end
+		end
+		rex.client.queue("client.close")
+	end,
+})
+rex.bind("ctrl+b>x", "close_pane_or_hide_subagent")
+rex.bind("pane/x", "close_pane_or_hide_subagent")
 
 -- The picker's floating pane is sized to its screens, which are designed for about 120 columns by 32
 -- rows, rather than to a share of the window, which leaves most of a large window empty. It's
